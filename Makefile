@@ -85,6 +85,7 @@ deb: $(TARGET)
 	@echo "Architecture: $(DEB_ARCH)" >> $(DEB_STAGING)/DEBIAN/control
 	@echo "Maintainer: Anders <anders@localhost>" >> $(DEB_STAGING)/DEBIAN/control
 	@echo "Depends: libc6, libncursesw6 (>= 6)" >> $(DEB_STAGING)/DEBIAN/control
+	@echo "Suggests: pandoc" >> $(DEB_STAGING)/DEBIAN/control
 	@echo "Description: Full-screen text-mode Markdown editor" >> $(DEB_STAGING)/DEBIAN/control
 	@echo " mde is a specialized terminal text editor designed for editing and viewing" >> $(DEB_STAGING)/DEBIAN/control
 	@echo " Markdown (.md) documents with dual-pane live preview, in-place rich" >> $(DEB_STAGING)/DEBIAN/control

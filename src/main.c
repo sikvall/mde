@@ -49,6 +49,7 @@ static void print_usage(const char *prog) {
     printf("  Ctrl+Q           Quit\n");
     printf("  Ctrl+P / F2      Toggle View Mode (Split / In-place / Preview)\n");
     printf("  Ctrl+L / F4      Set automatic line break column (20-255 or off)\n");
+    printf("  F5 / Ctrl+D      Open Export Menu (HTML, XML, EPUB, LaTeX)\n");
     printf("  Ctrl+T           Toggle checkbox [- [ ] <-> - [x]]\n");
     printf("  Ctrl+B           Insert bold markers (**)\n");
     printf("  Ctrl+K           Insert inline code markers (`)\n");
@@ -240,6 +241,9 @@ int main(int argc, char *argv[]) {
                     editor_set_status(&g_editor, "Invalid wrap column: use 20-255 or off");
                 }
             }
+        } else if (ch == KEY_F(5) || ch == CTRL_KEY('d')) {
+            // Export menu (HTML, XML, EPUB, LaTeX)
+            ui_export_menu(&g_editor);
         } else if (ch == KEY_F(1) || ch == CTRL_KEY('h')) {
             // Help overlay (Cheat sheet & Markdown guide)
             ui_show_help(&g_editor);

@@ -45,6 +45,10 @@
   - Shows file names, directories with `<DIR>`, and file sizes formatted in B, KB, or MB.
   - In Save As mode (`Ctrl+W`), an editable filename input field is available with `Tab` switching between list and input box.
   - Arrow keys (`↑`/`↓`/`PgUp`/`PgDn`), `Backspace` to navigate up a directory, `Enter` to open or save, and `Esc` to cancel.
+- **Export Menu (`F5` / `Ctrl+D`) — HTML, XML, EPUB, LaTeX**:
+  - Export the current Markdown buffer directly to **HTML5** (`.html`), **XML / DocBook 5** (`.xml`), **EPUB 3** (`.epub`), or **LaTeX** (`.tex`).
+  - Automatically detects and uses **`pandoc`** (invoked safely via `fork`/`execvp`, never a shell) when installed, with full built-in C11 exporters for HTML5, structured XML, and LaTeX as zero-dependency fallbacks (EPUB requires `pandoc`).
+  - Pre-fills the output filename based on the current file and updates extensions automatically as you choose a format; press `Tab` to customize the destination path or `E` to toggle between Pandoc and Built-in engines.
 - **Persistent Bottom Shortcut Hint Rows**:
   - Displays two rows of prominent shortcut key hints at the bottom of the screen (or three on taller displays $\ge 28$ rows), styled with reverse-video key badges and clear labels.
 - **Selection & Clipboard Editing**:
@@ -103,6 +107,7 @@ Updating this single file automatically updates the CLI output (`mde -v`), the h
 | **`Ctrl+S`** | Save file (opens Save As dialogue if untitled) |
 | **`Ctrl+O`** | Open File dialogue to browse and open a file |
 | **`Ctrl+W`** | Save As file dialogue to choose directory & name |
+| **`F5` / `Ctrl+D`** | Open Export Menu (**HTML**, **XML**, **EPUB**, **LaTeX**) |
 | **`Ctrl+Q`** | Quit editor (prompts to save unsaved changes) |
 | **`Ctrl+P` / `F2`** | Cycle View Modes (**Split** → **In-Place** → **Preview**) |
 | **`Ctrl+L` / `F4`** | Set automatic line break column (`20`–`255` or `off`; default `78`) |
@@ -209,6 +214,7 @@ mde/
 │   ├── version.h       # Centralized name, version, and build date
 │   ├── buffer.h / .c   # Text buffer with UTF-8 & dynamic reallocation
 │   ├── editor.h / .c   # Editor state, auto line break, selection & Markdown helpers
+│   ├── export.h / .c   # Export to HTML, XML, EPUB, LaTeX (pandoc + built-in C11)
 │   ├── markdown.h / .c # Markdown lexer, AST spans & block/inline tokenizer
 │   ├── renderer.h / .c # Formatted preview renderer with synchronized line mapping
 │   ├── theme.h / .c    # 256-color & 16-color ncurses palette & token styles
@@ -217,7 +223,7 @@ mde/
 │   ├── utf8.h / .c     # UTF-8 boundary checks, visual column conversions (wcwidth)
 │   └── main.c          # Event loop, CLI parsing, signals, key & mouse dispatch
 └── tests/
-    └── test_runner.c   # Comprehensive C11 unit test suite (175 tests)
+    └── test_runner.c   # Comprehensive C11 unit test suite (237 tests)
 ```
 
 ---

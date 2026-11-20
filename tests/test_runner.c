@@ -11,6 +11,7 @@
 #include <string.h>
 #include <assert.h>
 #include <locale.h>
+#include <sys/stat.h>
 
 #include "../src/version.h"
 #include "../src/utf8.h"
@@ -19,6 +20,7 @@
 #include "../src/renderer.h"
 #include "../src/theme.h"
 #include "../src/editor.h"
+#include "../src/export.h"
 #include "../src/ui.h"
 
 static int g_tests_run = 0;
@@ -680,6 +682,189 @@ static void test_resize_graceful(void) {
     editor_free(&ed);
 }
 
+static char *read_entire_file(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (sz < 0) { fclose(f); return NULL; }
+    char *buf = (char *)malloc((size_t)sz + 1);
+    if (!buf) { fclose(f); return NULL; }
+    size_t n = fread(buf, 1, (size_t)sz, f);
+    buf[n] = '\0';
+    fclose(f);
+    return buf;
+}
+
+static void test_export_subsystem(void) {
+    printf("--- Testing Export Subsystem (HTML, XML, EPUB, LaTeX & Pandoc) ---\n");
+
+    // Format names & extensions
+    TEST_ASSERT(strcmp(export_format_name(EXPORT_HTML), "HTML") == 0, "HTML format name");
+    TEST_ASSERT(strcmp(export_format_name(EXPORT_XML), "XML") == 0, "XML format name");
+    TEST_ASSERT(strcmp(export_format_name(EXPORT_EPUB), "EPUB") == 0, "EPUB format name");
+    TEST_ASSERT(strcmp(export_format_name(EXPORT_LATEX), "LaTeX") == 0, "LaTeX format name");
+
+    // Default output path derivation
+    char path[256];
+    export_default_path("notes.md", EXPORT_HTML, path, sizeof(path));
+    TEST_ASSERT(strcmp(path, "notes.html") == 0, "notes.md -> notes.html");
+    export_default_path("/tmp/doc.markdown", EXPORT_XML, path, sizeof(path));
+    TEST_ASSERT(strcmp(path, "/tmp/doc.xml") == 0, "/tmp/doc.markdown -> /tmp/doc.xml");
+    export_default_path("book.md", EXPORT_EPUB, path, sizeof(path));
+    TEST_ASSERT(strcmp(path, "book.epub") == 0, "book.md -> book.epub");
+    export_default_path("paper.md", EXPORT_LATEX, path, sizeof(path));
+    TEST_ASSERT(strcmp(path, "paper.tex") == 0, "paper.md -> paper.tex");
+    export_default_path(NULL, EXPORT_HTML, path, sizeof(path));
+    TEST_ASSERT(strcmp(path, "untitled.html") == 0, "NULL -> untitled.html");
+
+    // Build sample Markdown buffer with rich features
+    Buffer buf;
+    buffer_init(&buf);
+    const char *sample_lines[] = {
+        "# Export Title",
+        "",
+        "Paragraph with **bold**, *italic*, `code`, and [Link](https://example.com) & <tag>.",
+        "",
+        "- [x] Done task",
+        "- [ ] Open task",
+        "",
+        "> Quoted wisdom",
+        "",
+        "```c",
+        "int x = 1 < 2;",
+        "```",
+        "",
+        "| Key | Val |",
+        "| --- | --- |",
+        "| A   | B   |",
+        "",
+        "---"
+    };
+    size_t nsample = sizeof(sample_lines) / sizeof(sample_lines[0]);
+    for (size_t i = 0; i < nsample; ++i) {
+        if (i > 0) {
+            buffer_split_line(&buf, i - 1, buffer_line_len(&buf, i - 1), 0);
+        }
+        buffer_replace_line(&buf, i, sample_lines[i], strlen(sample_lines[i]), 0);
+    }
+
+    char used[32] = {0};
+    char err[256] = {0};
+
+    // 1. Built-in HTML5 export
+    const char *html_out = "/tmp/test_mde_export.html";
+    bool ok = export_document(&buf, EXPORT_HTML, html_out, EXPORT_ENGINE_BUILTIN,
+                              used, sizeof(used), err, sizeof(err));
+    TEST_ASSERT(ok, "Built-in HTML export succeeded");
+    TEST_ASSERT(strcmp(used, "built-in") == 0, "HTML engine reported as built-in");
+    char *html = read_entire_file(html_out);
+    TEST_ASSERT(html != NULL, "Read exported HTML file");
+    if (html) {
+        TEST_ASSERT(strstr(html, "<!DOCTYPE html>") != NULL, "HTML has DOCTYPE");
+        TEST_ASSERT(strstr(html, "<h1>Export Title</h1>") != NULL, "HTML has H1");
+        TEST_ASSERT(strstr(html, "<strong>bold</strong>") != NULL, "HTML has strong tag");
+        TEST_ASSERT(strstr(html, "<em>italic</em>") != NULL, "HTML has em tag");
+        TEST_ASSERT(strstr(html, "<code>code</code>") != NULL, "HTML has inline code");
+        TEST_ASSERT(strstr(html, "<a href=\"https://example.com\">Link</a>") != NULL, "HTML has link");
+        TEST_ASSERT(strstr(html, "&amp; &lt;tag&gt;") != NULL, "HTML escapes entities");
+        TEST_ASSERT(strstr(html, "type=\"checkbox\" disabled checked") != NULL, "HTML has checked task");
+        TEST_ASSERT(strstr(html, "<blockquote>") != NULL, "HTML has blockquote");
+        TEST_ASSERT(strstr(html, "<pre><code class=\"language-c\">") != NULL, "HTML has fenced code block");
+        TEST_ASSERT(strstr(html, "<table>") != NULL && strstr(html, "<th>") != NULL, "HTML has table");
+        TEST_ASSERT(strstr(html, "<hr>") != NULL, "HTML has horizontal rule");
+        free(html);
+    }
+    remove(html_out);
+
+    // 2. Built-in XML export
+    const char *xml_out = "/tmp/test_mde_export.xml";
+    ok = export_document(&buf, EXPORT_XML, xml_out, EXPORT_ENGINE_BUILTIN,
+                         used, sizeof(used), err, sizeof(err));
+    TEST_ASSERT(ok, "Built-in XML export succeeded");
+    char *xml = read_entire_file(xml_out);
+    TEST_ASSERT(xml != NULL, "Read exported XML file");
+    if (xml) {
+        TEST_ASSERT(strstr(xml, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>") != NULL, "XML has declaration");
+        TEST_ASSERT(strstr(xml, "<heading level=\"1\">Export Title</heading>") != NULL, "XML has heading");
+        TEST_ASSERT(strstr(xml, "<bold>bold</bold>") != NULL, "XML has bold element");
+        TEST_ASSERT(strstr(xml, "<task checked=\"true\">") != NULL, "XML has task element");
+        TEST_ASSERT(strstr(xml, "<codeblock language=\"c\">") != NULL, "XML has codeblock");
+        TEST_ASSERT(strstr(xml, "<table>") != NULL && strstr(xml, "<hrule/>") != NULL, "XML has table and hrule");
+        TEST_ASSERT(strstr(xml, "</document>") != NULL, "XML closes root element");
+        free(xml);
+    }
+    remove(xml_out);
+
+    // 3. Built-in LaTeX export
+    const char *tex_out = "/tmp/test_mde_export.tex";
+    ok = export_document(&buf, EXPORT_LATEX, tex_out, EXPORT_ENGINE_BUILTIN,
+                         used, sizeof(used), err, sizeof(err));
+    TEST_ASSERT(ok, "Built-in LaTeX export succeeded");
+    char *tex = read_entire_file(tex_out);
+    TEST_ASSERT(tex != NULL, "Read exported LaTeX file");
+    if (tex) {
+        TEST_ASSERT(strstr(tex, "\\documentclass") != NULL, "LaTeX has documentclass");
+        TEST_ASSERT(strstr(tex, "\\section{Export Title}") != NULL, "LaTeX has section");
+        TEST_ASSERT(strstr(tex, "\\textbf{bold}") != NULL, "LaTeX has textbf");
+        TEST_ASSERT(strstr(tex, "\\textit{italic}") != NULL, "LaTeX has textit");
+        TEST_ASSERT(strstr(tex, "\\texttt{code}") != NULL, "LaTeX has texttt");
+        TEST_ASSERT(strstr(tex, "\\href{https://example.com}{Link}") != NULL, "LaTeX has href");
+        TEST_ASSERT(strstr(tex, "\\&") != NULL, "LaTeX escapes ampersand");
+        TEST_ASSERT(strstr(tex, "\\begin{verbatim}") != NULL, "LaTeX has verbatim block");
+        TEST_ASSERT(strstr(tex, "\\begin{tabular}") != NULL, "LaTeX has tabular");
+        TEST_ASSERT(strstr(tex, "\\end{document}") != NULL, "LaTeX closes document");
+        free(tex);
+    }
+    remove(tex_out);
+
+    // 4. EPUB built-in rejection (requires pandoc)
+    const char *epub_out = "/tmp/test_mde_export.epub";
+    ok = export_document(&buf, EXPORT_EPUB, epub_out, EXPORT_ENGINE_BUILTIN,
+                         used, sizeof(used), err, sizeof(err));
+    TEST_ASSERT(!ok, "EPUB fails gracefully when built-in engine is forced");
+    TEST_ASSERT(strstr(err, "pandoc") != NULL, "EPUB error mentions pandoc");
+
+    // 5. Pandoc execution pipeline verified with mock pandoc script on PATH
+    const char *mock_dir = "/tmp/mde_mock_bin";
+    mkdir(mock_dir, 0755);
+    const char *mock_pandoc = "/tmp/mde_mock_bin/pandoc";
+    FILE *mf = fopen(mock_pandoc, "wb");
+    if (mf) {
+        fputs("#!/bin/sh\n"
+              "out=\"\"\n"
+              "while [ $# -gt 0 ]; do\n"
+              "  if [ \"$1\" = \"-o\" ]; then shift; out=\"$1\"; fi\n"
+              "  shift\n"
+              "done\n"
+              "echo \"MOCK_PANDOC_OUTPUT\" > \"$out\"\n", mf);
+        fclose(mf);
+        chmod(mock_pandoc, 0755);
+
+        const char *old_path = getenv("PATH");
+        char new_path[2048];
+        snprintf(new_path, sizeof(new_path), "%s:%s", mock_dir, old_path ? old_path : "");
+        setenv("PATH", new_path, 1);
+
+        TEST_ASSERT(export_has_pandoc(), "export_has_pandoc detects pandoc on PATH");
+        ok = export_document(&buf, EXPORT_EPUB, epub_out, EXPORT_ENGINE_AUTO,
+                             used, sizeof(used), err, sizeof(err));
+        TEST_ASSERT(ok, "EPUB export succeeds via pandoc");
+        TEST_ASSERT(strcmp(used, "pandoc") == 0, "EPUB engine reported as pandoc");
+        char *epub_txt = read_entire_file(epub_out);
+        TEST_ASSERT(epub_txt != NULL && strstr(epub_txt, "MOCK_PANDOC_OUTPUT") != NULL,
+                    "Pandoc wrote destination EPUB file");
+        free(epub_txt);
+        remove(epub_out);
+
+        if (old_path) setenv("PATH", old_path, 1);
+        remove(mock_pandoc);
+    }
+
+    buffer_free(&buf);
+}
+
 static void test_shortcut_hints_and_dialog(void) {
     printf("--- Testing Shortcut Hints & File Dialogue API ---\n");
 
@@ -723,6 +908,7 @@ int main(void) {
     test_home_and_end();
     test_auto_line_break();
     test_resize_graceful();
+    test_export_subsystem();
     test_shortcut_hints_and_dialog();
 
     printf("==========================================\n");

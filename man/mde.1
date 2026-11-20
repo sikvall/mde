@@ -64,6 +64,13 @@ Open interactive file dialogue to browse directories and open a file.
 Open Save As interactive file dialogue to browse directories and select or type
 the destination file name.
 .TP
+.BR F5 " or " Ctrl+D
+Open the interactive Export Menu to export the current Markdown document to
+\fBHTML\fR (\fI.html\fR), \fBXML\fR (\fI.xml\fR), \fBEPUB\fR (\fI.epub\fR), or
+\fBLaTeX\fR (\fI.tex\fR). Uses \fBpandoc\fR(1) automatically when available
+(and requires \fBpandoc\fR for EPUB), with built-in C11 converters for HTML5,
+structured XML, and LaTeX as fallbacks.
+.TP
 .B Ctrl+Q
 Quit mde. Prompts to save or discard if unsaved changes exist.
 .TP

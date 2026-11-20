@@ -93,6 +93,15 @@ int ui_get_shortcut_hint_rows(int screen_rows);
  */
 void ui_show_help(Editor *ed);
 
+/**
+ * @brief Display an interactive Export Menu modal for exporting Markdown to
+ *        HTML, XML, EPUB, or LaTeX (using pandoc when appropriate).
+ *
+ * @param ed Pointer to the Editor instance.
+ * @return true if a document was exported, false if cancelled.
+ */
+bool ui_export_menu(Editor *ed);
+
 #ifdef __cplusplus
 }
 #endif
