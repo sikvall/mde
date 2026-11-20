@@ -1,0 +1,62 @@
+.TH MDE 1 "November 2026" "mde 1.0.0" "User Commands"
+.SH NAME
+mde \- full-screen text-mode Markdown editor
+.SH SYNOPSIS
+.B mde
+[\fIOPTIONS\fR] [\fIFILENAME.md\fR]
+.SH DESCRIPTION
+.B mde
+is a specialized terminal text editor designed for editing and reading Markdown documents.
+It supports real-time dual-pane split preview, in-place rich formatting, an active line
+column ruler, task checkboxes, smart list continuation, and multi-level undo/redo.
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Print usage instructions and exit.
+.TP
+.BR \-v ", " \-\-version
+Print program version and build date.
+.SH KEYBINDINGS
+.TP
+.B Ctrl+S
+Save current file. Prompts for a file name if untitled.
+.TP
+.B Ctrl+O
+Open a file dialog.
+.TP
+.B Ctrl+Q
+Quit mde. Prompts to save if unsaved changes exist.
+.TP
+.BR Ctrl+P " or " F2
+Cycle view modes: Split View, In-Place Rich View, Fullscreen Rendered View. All modes support full editing and cursor tracking.
+.TP
+.B Ctrl+T
+Toggle checkbox (\- [ ] <-> \- [x]) on the active line.
+.TP
+.B Ctrl+B
+Insert bold formatting markers (**).
+.TP
+.B Ctrl+K
+Insert inline code formatting markers (`).
+.TP
+.BR Ctrl+Z " / " Ctrl+Y
+Undo and Redo changes.
+.TP
+.BR Ctrl+F " / " F3
+Search / find text in the document.
+.TP
+.BR F1 " or " Ctrl+H
+Display the interactive two-tab help overlay (Tab 1: Editor Cheat Sheet, Tab 2: Markdown Syntax Guide).
+.TP
+.B Enter
+Smart list auto-continuation. Hitting Enter on an empty list bullet cancels the list.
+.TP
+.BR Tab " / " Shift+Tab
+Indent or unindent line by 2 spaces.
+.TP
+.B Ins
+Toggle between Insert mode (steady underscore cursor) and Normal mode (steady block cursor). Cursor does not flash.
+.SH AUTHORS
+Written by Anders.
+.SH COPYRIGHT
+MIT License.
