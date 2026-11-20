@@ -21,6 +21,19 @@ void rendered_doc_init(RenderedDoc *doc) {
     doc->cap = 0;
 }
 
+/**
+ * @brief Return true if a token is a raw inline delimiter stripped in preview mode.
+ */
+static bool is_stripped_inline_marker(MdTokenType type) {
+    return type == MD_BOLD_MARKER ||
+           type == MD_ITALIC_MARKER ||
+           type == MD_BOLD_ITALIC_MARKER ||
+           type == MD_INLINE_CODE_MARKER;
+}
+
+/**
+ * @brief Release all styled chunks owned by a single RenderedLine.
+ */
 static void rendered_line_free(RenderedLine *rl) {
     if (!rl) return;
     for (size_t i = 0; i < rl->chunk_count; ++i) {
@@ -169,9 +182,8 @@ void render_document(const Buffer *buf, int width, RenderedDoc *out_doc) {
                 const char *chunk_txt = raw_line + sp->start;
                 size_t chunk_len = sp->end - sp->start;
 
-                // Strip bold/italic markers inside headers for clean look
-                if (sp->type == MD_BOLD_MARKER || sp->type == MD_ITALIC_MARKER ||
-                    sp->type == MD_BOLD_ITALIC_MARKER || sp->type == MD_INLINE_CODE_MARKER) {
+                // Strip inline formatting markers inside headers for a clean presentation
+                if (is_stripped_inline_marker(sp->type)) {
                     continue;
                 }
                 line_add_chunk(rl, chunk_txt, chunk_len, head_attr);
@@ -210,9 +222,7 @@ void render_document(const Buffer *buf, int width, RenderedDoc *out_doc) {
 
             for (size_t i = 0; i < pl.span_count; ++i) {
                 MdSpan *sp = &pl.spans[i];
-                if (sp->type == MD_BLOCKQUOTE_MARKER) continue;
-                if (sp->type == MD_BOLD_MARKER || sp->type == MD_ITALIC_MARKER ||
-                    sp->type == MD_BOLD_ITALIC_MARKER || sp->type == MD_INLINE_CODE_MARKER) {
+                if (sp->type == MD_BLOCKQUOTE_MARKER || is_stripped_inline_marker(sp->type)) {
                     continue;
                 }
                 attr_t a = theme_token_attr(sp->type, false);
@@ -248,8 +258,7 @@ void render_document(const Buffer *buf, int width, RenderedDoc *out_doc) {
                     line_add_chunk(rl, "☑  ", 5, COLOR_PAIR(CP_TASK_CHECKED) | A_BOLD);
                     continue;
                 }
-                if (sp->type == MD_BOLD_MARKER || sp->type == MD_ITALIC_MARKER ||
-                    sp->type == MD_BOLD_ITALIC_MARKER || sp->type == MD_INLINE_CODE_MARKER) {
+                if (is_stripped_inline_marker(sp->type)) {
                     continue;
                 }
                 attr_t a = theme_token_attr(sp->type, false);
@@ -261,8 +270,7 @@ void render_document(const Buffer *buf, int width, RenderedDoc *out_doc) {
             if (raw_len > 0) {
                 for (size_t i = 0; i < pl.span_count; ++i) {
                     MdSpan *sp = &pl.spans[i];
-                    if (sp->type == MD_BOLD_MARKER || sp->type == MD_ITALIC_MARKER ||
-                        sp->type == MD_BOLD_ITALIC_MARKER || sp->type == MD_INLINE_CODE_MARKER) {
+                    if (is_stripped_inline_marker(sp->type)) {
                         continue;
                     }
                     attr_t a = theme_token_attr(sp->type, false);
@@ -347,10 +355,7 @@ int renderer_get_cursor_vcol(const Buffer *buf, const RenderedDoc *doc, size_t r
             (sp->type == MD_LIST_BULLET && !isdigit((unsigned char)raw_line[sp->start])) ||
             sp->type == MD_TASK_UNCHECKED ||
             sp->type == MD_TASK_CHECKED ||
-            sp->type == MD_BOLD_MARKER ||
-            sp->type == MD_ITALIC_MARKER ||
-            sp->type == MD_BOLD_ITALIC_MARKER ||
-            sp->type == MD_INLINE_CODE_MARKER) {
+            is_stripped_inline_marker(sp->type)) {
             continue;
         }
 

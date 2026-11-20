@@ -49,7 +49,7 @@ enum ColorPairId {
     CP_GUTTER_MARKER,     /**< Active line pointer in gutter (▶) */
     CP_RULER,             /**< Column ruler base ticks and numbers */
     CP_RULER_CURSOR,      /**< Column ruler cursor indicator (▼) */
-    CP_RULER_LIMIT,       /**< Column 80 guide tick */
+    CP_RULER_LIMIT,       /**< Active auto line break guide tick (┆) */
     CP_STATUS_BAR,
     CP_STATUS_BAR_ACCENT,
     CP_STATUS_BAR_DIRTY,

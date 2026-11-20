@@ -40,7 +40,7 @@ void theme_init(void) {
         init_pair(CP_GUTTER_MARKER,    220,  -1); // Bright Yellow pointer (▶)
         init_pair(CP_RULER,            241, 234); // Ruler numbers and ticks
         init_pair(CP_RULER_CURSOR,     220, 236); // Column cursor marker (▼)
-        init_pair(CP_RULER_LIMIT,      203, 234); // Column 80 guide tick
+        init_pair(CP_RULER_LIMIT,      203, 234); // Auto line break column guide tick
         init_pair(CP_STATUS_BAR,       254, 237); // White on Slate
         init_pair(CP_STATUS_BAR_ACCENT, 81, 237); // Cyan on Slate
         init_pair(CP_STATUS_BAR_DIRTY, 203, 237); // Coral Red on Slate

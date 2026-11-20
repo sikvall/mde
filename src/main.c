@@ -1,6 +1,6 @@
 /**
  * @file main.c
- * @brief Application entry point, CLI arguments, and main event loop.
+ * @brief Application entry point, CLI option parsing, and Nano-compatible event loop.
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -17,15 +17,15 @@
 #include <unistd.h>
 #include <limits.h>
 
-/**
- * @brief Macro to compute ASCII control key code.
- */
-#define CTRL_KEY(k) ((k) & 0x1f)
-
+/** Global editor state instance managed by the main event loop. */
 static Editor g_editor;
 
+/* =========================================================================
+ * Signals & CLI Information
+ * ========================================================================= */
+
 /**
- * @brief Signal handler for program termination (SIGINT, SIGTERM).
+ * @brief Signal handler for clean terminal restoration on SIGINT / SIGTERM.
  */
 static void handle_sigint(int sig) {
     (void)sig;
@@ -34,7 +34,7 @@ static void handle_sigint(int sig) {
 }
 
 /**
- * @brief Print command-line usage information.
+ * @brief Print command-line usage instructions and Nano-compatible keybindings.
  */
 static void print_usage(const char *prog) {
     printf("%s - %s\n\n", MDE_APP_NAME, MDE_DESCRIPTION);
@@ -76,8 +76,25 @@ static void print_usage(const char *prog) {
 }
 
 /**
- * @brief Confirm saving/discarding unsaved changes before switching files.
- * @return true if safe to proceed, false if user cancelled.
+ * @brief Print all application metadata, version, and build information from src/version.h.
+ */
+static void print_version(void) {
+    printf("%s (%s) version %s (%d.%d.%d)\n",
+           MDE_APP_NAME, MDE_APP_TITLE, MDE_VERSION_STRING,
+           MDE_VERSION_MAJOR, MDE_VERSION_MINOR, MDE_VERSION_PATCH);
+    printf("Description: %s\n", MDE_DESCRIPTION);
+    printf("Built:       %s %s\n", MDE_BUILD_DATE, MDE_BUILD_TIME);
+    printf("Author:      %s\n", MDE_AUTHOR);
+    printf("Maintainer:  %s\n", MDE_MAINTAINER);
+}
+
+/* =========================================================================
+ * Interactive Command Helpers
+ * ========================================================================= */
+
+/**
+ * @brief Confirm saving or discarding unsaved edits before switching files.
+ * @return true if safe to proceed, false if the user cancelled.
  */
 static bool confirm_switch_file(void) {
     if (!g_editor.buffer.is_dirty) return true;
@@ -96,7 +113,7 @@ static bool confirm_switch_file(void) {
 }
 
 /**
- * @brief Open file picker to insert a relative Markdown hyperlink at cursor.
+ * @brief Open the file picker to insert a relative Markdown hyperlink at the cursor.
  */
 static void handle_insert_file_link(void) {
     char link_path[PATH_MAX];
@@ -106,7 +123,7 @@ static void handle_insert_file_link(void) {
 }
 
 /**
- * @brief Follow a Markdown file or #heading link under the cursor.
+ * @brief Follow a local Markdown file link or `#heading` anchor under the cursor.
  */
 static void handle_follow_link(void) {
     char url[PATH_MAX] = {0};
@@ -115,7 +132,7 @@ static void handle_follow_link(void) {
         editor_set_status(&g_editor, "No link found on current line");
         return;
     }
-    // Only prompt about unsaved changes when switching to a different local file
+    // Only prompt about unsaved changes when navigating to a different local file
     if (url[0] && strncmp(url, "http://", 7) != 0 && strncmp(url, "https://", 8) != 0 &&
         strncmp(url, "mailto:", 7) != 0 && strncmp(url, "ftp://", 6) != 0) {
         if (!confirm_switch_file()) return;
@@ -124,7 +141,7 @@ static void handle_follow_link(void) {
 }
 
 /**
- * @brief Navigate back to the previously visited linked file.
+ * @brief Return to the previously visited linked file in navigation history.
  */
 static void handle_navigate_back(void) {
     if (g_editor.link_history_count == 0) {
@@ -136,7 +153,7 @@ static void handle_navigate_back(void) {
 }
 
 /**
- * @brief Prompt the user to configure automatic line break column width.
+ * @brief Prompt the user to configure the automatic line break column width (20-255 or off).
  */
 static void prompt_wrap_col(void) {
     char prompt_label[80];
@@ -159,7 +176,7 @@ static void prompt_wrap_col(void) {
 }
 
 /**
- * @brief Prompt the user for a target line number (and optional column).
+ * @brief Prompt the user for a 1-based line number and optional column to jump to.
  */
 static void prompt_goto_line(void) {
     char goto_buf[64];
@@ -183,18 +200,319 @@ static void prompt_goto_line(void) {
     }
 }
 
+/* =========================================================================
+ * Input Event Dispatch (Mouse, Meta/Alt, Control & Printable Keys)
+ * ========================================================================= */
+
 /**
- * @brief Print all application metadata, version, and build information from src/version.h.
+ * @brief Handle ncurses mouse wheel scrolling and left-click cursor placement.
  */
-static void print_version(void) {
-    printf("%s (%s) version %s (%d.%d.%d)\n",
-           MDE_APP_NAME, MDE_APP_TITLE, MDE_VERSION_STRING,
-           MDE_VERSION_MAJOR, MDE_VERSION_MINOR, MDE_VERSION_PATCH);
-    printf("Description: %s\n", MDE_DESCRIPTION);
-    printf("Built:       %s %s\n", MDE_BUILD_DATE, MDE_BUILD_TIME);
-    printf("Author:      %s\n", MDE_AUTHOR);
-    printf("Maintainer:  %s\n", MDE_MAINTAINER);
+static void handle_mouse_event(void) {
+    MEVENT mevent;
+    if (getmouse(&mevent) != OK) return;
+
+    if (mevent.bstate & BUTTON4_PRESSED) {
+        editor_move_up(&g_editor);
+        editor_move_up(&g_editor);
+    } else if (mevent.bstate & BUTTON5_PRESSED) {
+        editor_move_down(&g_editor);
+        editor_move_down(&g_editor);
+    } else if (mevent.bstate & BUTTON1_CLICKED) {
+        int click_y = mevent.y;
+        int click_x = mevent.x;
+        int num_hints = ui_get_shortcut_hint_rows(g_editor.screen_rows);
+        int text_max_y = g_editor.screen_rows - num_hints - 1;
+
+        // Only handle clicks inside the text body (below row 0 ruler/header, above status bar)
+        if (click_y >= 1 && click_y < text_max_y) {
+            if (g_editor.view_mode == VIEW_PREVIEW) {
+                size_t rend_idx = g_editor.preview_scroll_row + (size_t)(click_y - 1);
+                if (rend_idx < g_editor.rendered_doc.count) {
+                    size_t target_row = g_editor.rendered_doc.lines[rend_idx].source_row;
+                    if (target_row < buffer_line_count(&g_editor.buffer)) {
+                        g_editor.cursor_row = target_row;
+                        const char *l = buffer_line(&g_editor.buffer, target_row);
+                        int target_vcol = click_x >= 2 ? (click_x - 2) : 0;
+                        g_editor.cursor_col = utf8_col_to_byte(l, target_vcol);
+                        g_editor.target_visual_col = utf8_byte_to_col(l, g_editor.cursor_col);
+                    }
+                }
+            } else {
+                size_t target_row = g_editor.scroll_row + (size_t)(click_y - 1);
+                if (target_row < buffer_line_count(&g_editor.buffer)) {
+                    g_editor.cursor_row = target_row;
+                    const char *l = buffer_line(&g_editor.buffer, target_row);
+                    int gutter = 7;
+                    int target_vcol = (click_x >= gutter) ? (click_x - gutter + (int)g_editor.scroll_col) : 0;
+                    g_editor.cursor_col = utf8_col_to_byte(l, target_vcol);
+                    g_editor.target_visual_col = utf8_byte_to_col(l, g_editor.cursor_col);
+                }
+            }
+        }
+    }
 }
+
+/**
+ * @brief Dispatch an Escape / Meta (`Alt+key`) sequence using Nano conventions.
+ */
+static void handle_meta_key(const char *search_buf, bool *last_search_forward) {
+    nodelay(stdscr, TRUE);
+    int next = getch();
+    nodelay(stdscr, FALSE);
+
+    if (next == ERR) {
+        // Standalone Escape keypress: clear active selection mark
+        if (g_editor.mark_active) {
+            editor_clear_mark(&g_editor);
+        }
+        return;
+    }
+
+    switch (next) {
+        case 'u':
+        case 'U':
+            editor_undo(&g_editor);
+            break;
+        case 'e':
+        case 'E':
+            editor_redo(&g_editor);
+            break;
+        case 'a':
+        case 'A':
+            editor_toggle_mark(&g_editor);
+            break;
+        case '6':
+            if (editor_has_selection(&g_editor)) {
+                editor_copy(&g_editor);
+            } else {
+                editor_copy_line(&g_editor);
+            }
+            break;
+        case 'w':
+        case 'W':
+            if (search_buf[0]) {
+                *last_search_forward = true;
+                editor_search_find_next(&g_editor, search_buf, true);
+            } else {
+                editor_set_status(&g_editor, "No previous search string");
+            }
+            break;
+        case 'q':
+        case 'Q':
+            if (search_buf[0]) {
+                *last_search_forward = false;
+                editor_search_find_next(&g_editor, search_buf, false);
+            } else {
+                editor_set_status(&g_editor, "No previous search string");
+            }
+            break;
+        case 'g':
+        case 'G':
+            prompt_goto_line();
+            break;
+        case '\\':
+            editor_move_doc_start(&g_editor);
+            break;
+        case '/':
+            editor_move_doc_end(&g_editor);
+            break;
+        case '}':
+            editor_indent(&g_editor);
+            break;
+        case '{':
+            editor_unindent(&g_editor);
+            break;
+        case 'p':
+        case 'P':
+            editor_cycle_view_mode(&g_editor);
+            break;
+        case 'l':
+        case 'L':
+            prompt_wrap_col();
+            break;
+        case 'b':
+        case 'B':
+            editor_wrap_format(&g_editor, "**");
+            break;
+        case 'x':
+        case 'X':
+            ui_export_menu(&g_editor);
+            break;
+        case 'h':
+        case 'H':
+            handle_insert_file_link();
+            break;
+        case 'o':
+        case 'O':
+            handle_follow_link();
+            break;
+        case '-':
+            handle_navigate_back();
+            break;
+        default:
+            break;
+    }
+}
+
+/**
+ * @brief Dispatch a single control, function, navigation, or UTF-8 character key event.
+ */
+static void handle_key_event(int ch, char *search_buf, size_t search_cap,
+                             bool *last_search_forward) {
+    if (ch == CTRL_KEY('x')) {
+        // Exit requested (Nano ^X)
+        int action = ui_confirm_quit(&g_editor);
+        if (action == 1) {
+            if (!g_editor.buffer.file_path) {
+                char save_path[PATH_MAX];
+                if (ui_file_dialog(&g_editor, FILE_DIALOG_SAVE_AS, save_path, sizeof(save_path))) {
+                    editor_save(&g_editor, save_path);
+                    g_editor.quit_requested = true;
+                }
+            } else {
+                editor_save(&g_editor, NULL);
+                g_editor.quit_requested = true;
+            }
+        } else if (action == 0) {
+            g_editor.quit_requested = true;
+        }
+    } else if (ch == CTRL_KEY('s')) {
+        // Save current file directly (Nano ^S)
+        if (!g_editor.buffer.file_path) {
+            char save_path[PATH_MAX];
+            if (ui_file_dialog(&g_editor, FILE_DIALOG_SAVE_AS, save_path, sizeof(save_path))) {
+                editor_save(&g_editor, save_path);
+            }
+        } else {
+            editor_save(&g_editor, NULL);
+        }
+    } else if (ch == CTRL_KEY('o')) {
+        // Write Out / Save As file dialog (Nano ^O)
+        char save_path[PATH_MAX];
+        if (ui_file_dialog(&g_editor, FILE_DIALOG_SAVE_AS, save_path, sizeof(save_path))) {
+            editor_save(&g_editor, save_path);
+        }
+    } else if (ch == CTRL_KEY('r')) {
+        // Read / Open file dialog (Nano ^R)
+        char open_path[PATH_MAX];
+        if (ui_file_dialog(&g_editor, FILE_DIALOG_OPEN, open_path, sizeof(open_path))) {
+            editor_open(&g_editor, open_path);
+        }
+    } else if (ch == CTRL_KEY('g') || ch == KEY_F(1)) {
+        // Get Help overlay (Nano ^G / F1)
+        ui_show_help(&g_editor);
+    } else if (ch == CTRL_KEY('w')) {
+        // Where Is: Search forward (Nano ^W)
+        if (ui_prompt(&g_editor, "Search", search_buf, search_cap)) {
+            *last_search_forward = true;
+            editor_search_find_next(&g_editor, search_buf, true);
+        } else {
+            g_editor.search_active = false;
+        }
+    } else if (ch == CTRL_KEY('q')) {
+        // Where Was: Search backward (Nano ^Q)
+        if (ui_prompt(&g_editor, "Search Backward", search_buf, search_cap)) {
+            *last_search_forward = false;
+            editor_search_find_next(&g_editor, search_buf, false);
+        } else {
+            g_editor.search_active = false;
+        }
+    } else if (ch == KEY_F(3)) {
+        if (search_buf[0]) {
+            editor_search_find_next(&g_editor, search_buf, *last_search_forward);
+        }
+    } else if (ch == CTRL_KEY('k')) {
+        // Cut active selection, or cut entire current line if no mark is set (Nano ^K)
+        if (editor_has_selection(&g_editor)) {
+            editor_cut(&g_editor);
+        } else {
+            editor_cut_line(&g_editor);
+        }
+    } else if (ch == CTRL_KEY('u')) {
+        // Paste / Uncut from clipboard (Nano ^U)
+        editor_paste(&g_editor);
+    } else if (ch == CTRL_KEY('c')) {
+        // Report cursor location (Nano ^C)
+        editor_report_position(&g_editor);
+    } else if (ch == CTRL_KEY('l')) {
+        // Refresh / redraw screen (Nano ^L)
+        g_editor.rendered_dirty = true;
+        clearok(stdscr, TRUE);
+        erase();
+    } else if (ch == CTRL_KEY('_')) {
+        // Go to line (Nano ^_ / ^/)
+        prompt_goto_line();
+    } else if (ch == 0 || ch == CTRL_KEY('^')) {
+        // Set / unset selection mark (Nano ^^ / Ctrl+Space)
+        editor_toggle_mark(&g_editor);
+    } else if (ch == CTRL_KEY('t')) {
+        // Toggle Markdown task checkbox [- [ ] <-> - [x]]
+        editor_toggle_checkbox(&g_editor);
+    } else if (ch == KEY_F(2)) {
+        editor_cycle_view_mode(&g_editor);
+    } else if (ch == KEY_F(4)) {
+        prompt_wrap_col();
+    } else if (ch == KEY_F(5)) {
+        ui_export_menu(&g_editor);
+    } else if (ch == KEY_F(6)) {
+        handle_insert_file_link();
+    } else if (ch == KEY_F(7) || ch == CTRL_KEY(']')) {
+        handle_follow_link();
+    } else if (ch == KEY_F(8)) {
+        handle_navigate_back();
+    } else if (ch == KEY_LEFT || ch == CTRL_KEY('b')) {
+        editor_move_left(&g_editor);
+    } else if (ch == KEY_RIGHT || ch == CTRL_KEY('f')) {
+        editor_move_right(&g_editor);
+    } else if (ch == KEY_UP || ch == CTRL_KEY('p')) {
+        editor_move_up(&g_editor);
+    } else if (ch == KEY_DOWN || ch == CTRL_KEY('n')) {
+        editor_move_down(&g_editor);
+    } else if (ch == KEY_HOME || ch == CTRL_KEY('a')) {
+        editor_move_home(&g_editor);
+    } else if (ch == KEY_END || ch == CTRL_KEY('e')) {
+        editor_move_end(&g_editor);
+    } else if (ch == KEY_PPAGE || ch == CTRL_KEY('y')) {
+        editor_move_page_up(&g_editor);
+    } else if (ch == KEY_NPAGE || ch == CTRL_KEY('v')) {
+        editor_move_page_down(&g_editor);
+    } else if (ch == KEY_BACKSPACE || ch == 127 || ch == CTRL_KEY('h')) {
+        editor_backspace(&g_editor);
+    } else if (ch == KEY_DC || ch == CTRL_KEY('d')) {
+        editor_delete(&g_editor);
+    } else if (ch == '\n' || ch == '\r') {
+        editor_smart_enter(&g_editor);
+    } else if (ch == '\t') {
+        editor_indent(&g_editor);
+    } else if (ch == KEY_BTAB) {
+        editor_unindent(&g_editor);
+    } else if (ch == KEY_IC
+#ifdef KEY_SIC
+               || ch == KEY_SIC
+#endif
+               ) {
+        editor_toggle_insert_mode(&g_editor);
+    } else if (ch >= 0xC0 && ch <= 0xFF) {
+        // Multi-byte UTF-8 sequence leading byte
+        char utf8_buf[8] = {0};
+        utf8_buf[0] = (char)ch;
+        size_t ulen = utf8_char_len((unsigned char)ch);
+        for (size_t b = 1; b < ulen; ++b) {
+            int next_b = getch();
+            if (next_b == ERR) break;
+            utf8_buf[b] = (char)next_b;
+        }
+        editor_insert_char(&g_editor, utf8_buf, ulen);
+    } else if (ch >= 32 && ch <= 126) {
+        // Printable ASCII character
+        char c = (char)ch;
+        editor_insert_char(&g_editor, &c, 1);
+    }
+}
+
+/* =========================================================================
+ * Application Entry Point
+ * ========================================================================= */
 
 int main(int argc, char *argv[]) {
     const char *file_to_open = NULL;
@@ -229,11 +547,10 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Set up signal handling (leave SIGWINCH to ncurses for async-signal-safe KEY_RESIZE)
+    // Leave SIGWINCH to ncurses for async-signal-safe KEY_RESIZE delivery
     signal(SIGINT, handle_sigint);
     signal(SIGTERM, handle_sigint);
 
-    // Initialize UI and Editor state
     ui_init();
     editor_init(&g_editor, file_to_open);
     if (has_cli_wrap) {
@@ -243,7 +560,6 @@ int main(int argc, char *argv[]) {
     char search_buf[128] = {0};
     bool last_search_forward = true;
 
-    // Main event loop
     while (!g_editor.quit_requested) {
         ui_draw(&g_editor);
 
@@ -252,314 +568,15 @@ int main(int argc, char *argv[]) {
 
         editor_touch_key(&g_editor);
 
-        // Terminal resize event (handled safely via ncurses KEY_RESIZE)
         if (ch == KEY_RESIZE) {
             g_editor.rendered_dirty = true;
             erase();
-            continue;
-        }
-
-        // Mouse events (clicks and wheel scrolls)
-        if (ch == KEY_MOUSE) {
-            MEVENT mevent;
-            if (getmouse(&mevent) == OK) {
-                if (mevent.bstate & BUTTON4_PRESSED) { // Wheel Up
-                    editor_move_up(&g_editor);
-                    editor_move_up(&g_editor);
-                } else if (mevent.bstate & BUTTON5_PRESSED) { // Wheel Down
-                    editor_move_down(&g_editor);
-                    editor_move_down(&g_editor);
-                } else if (mevent.bstate & BUTTON1_CLICKED) {
-                    // Left click to position cursor
-                    int click_y = mevent.y;
-                    int click_x = mevent.x;
-                    int num_hints = ui_get_shortcut_hint_rows(g_editor.screen_rows);
-                    int text_max_y = g_editor.screen_rows - num_hints - 1;
-                    // Click is below the header/ruler (row 0) and above the status bar
-                    if (click_y >= 1 && click_y < text_max_y) {
-                        if (g_editor.view_mode == VIEW_PREVIEW) {
-                            size_t rend_idx = g_editor.preview_scroll_row + (size_t)(click_y - 1);
-                            if (rend_idx < g_editor.rendered_doc.count) {
-                                size_t target_row = g_editor.rendered_doc.lines[rend_idx].source_row;
-                                if (target_row < buffer_line_count(&g_editor.buffer)) {
-                                    g_editor.cursor_row = target_row;
-                                    const char *l = buffer_line(&g_editor.buffer, target_row);
-                                    int target_vcol = click_x >= 2 ? (click_x - 2) : 0;
-                                    g_editor.cursor_col = utf8_col_to_byte(l, target_vcol);
-                                    g_editor.target_visual_col = utf8_byte_to_col(l, g_editor.cursor_col);
-                                }
-                            }
-                        } else {
-                            size_t target_row = g_editor.scroll_row + (size_t)(click_y - 1);
-                            if (target_row < buffer_line_count(&g_editor.buffer)) {
-                                g_editor.cursor_row = target_row;
-                                const char *l = buffer_line(&g_editor.buffer, target_row);
-                                int gutter = 7;
-                                int target_vcol = (click_x >= gutter) ? (click_x - gutter + (int)g_editor.scroll_col) : 0;
-                                g_editor.cursor_col = utf8_col_to_byte(l, target_vcol);
-                                g_editor.target_visual_col = utf8_byte_to_col(l, g_editor.cursor_col);
-                            }
-                        }
-                    }
-                }
-            }
-            continue;
-        }
-
-        // Escape / Meta (Alt+key) sequences (Nano-compatible)
-        if (ch == 27) {
-            nodelay(stdscr, TRUE);
-            int next = getch();
-            nodelay(stdscr, FALSE);
-            if (next != ERR) {
-                switch (next) {
-                    case 'u':
-                    case 'U':
-                        editor_undo(&g_editor);
-                        break;
-                    case 'e':
-                    case 'E':
-                        editor_redo(&g_editor);
-                        break;
-                    case 'a':
-                    case 'A':
-                        editor_toggle_mark(&g_editor);
-                        break;
-                    case '6':
-                        if (editor_has_selection(&g_editor)) {
-                            editor_copy(&g_editor);
-                        } else {
-                            editor_copy_line(&g_editor);
-                        }
-                        break;
-                    case 'w':
-                    case 'W':
-                        if (search_buf[0]) {
-                            last_search_forward = true;
-                            editor_search_find_next(&g_editor, search_buf, true);
-                        } else {
-                            editor_set_status(&g_editor, "No previous search string");
-                        }
-                        break;
-                    case 'q':
-                    case 'Q':
-                        if (search_buf[0]) {
-                            last_search_forward = false;
-                            editor_search_find_next(&g_editor, search_buf, false);
-                        } else {
-                            editor_set_status(&g_editor, "No previous search string");
-                        }
-                        break;
-                    case 'g':
-                    case 'G':
-                        prompt_goto_line();
-                        break;
-                    case '\\':
-                        editor_move_doc_start(&g_editor);
-                        break;
-                    case '/':
-                        editor_move_doc_end(&g_editor);
-                        break;
-                    case '}':
-                        editor_indent(&g_editor);
-                        break;
-                    case '{':
-                        editor_unindent(&g_editor);
-                        break;
-                    case 'p':
-                    case 'P':
-                        editor_cycle_view_mode(&g_editor);
-                        break;
-                    case 'l':
-                    case 'L':
-                        prompt_wrap_col();
-                        break;
-                    case 'b':
-                    case 'B':
-                        editor_wrap_format(&g_editor, "**");
-                        break;
-                    case 'x':
-                    case 'X':
-                        ui_export_menu(&g_editor);
-                        break;
-                    case 'h':
-                    case 'H':
-                        handle_insert_file_link();
-                        break;
-                    case 'o':
-                    case 'O':
-                        handle_follow_link();
-                        break;
-                    case '-':
-                        handle_navigate_back();
-                        break;
-                    default:
-                        break;
-                }
-            } else {
-                // Standalone Escape: clear active selection mark
-                if (g_editor.mark_active) {
-                    editor_clear_mark(&g_editor);
-                }
-            }
-            continue;
-        }
-
-        // Key bindings dispatch (Nano-compatible)
-        if (ch == CTRL_KEY('x')) {
-            // Exit requested (Nano ^X)
-            int action = ui_confirm_quit(&g_editor);
-            if (action == 1) { // Save and quit
-                if (!g_editor.buffer.file_path) {
-                    char save_path[PATH_MAX];
-                    if (ui_file_dialog(&g_editor, FILE_DIALOG_SAVE_AS, save_path, sizeof(save_path))) {
-                        editor_save(&g_editor, save_path);
-                        g_editor.quit_requested = true;
-                    }
-                } else {
-                    editor_save(&g_editor, NULL);
-                    g_editor.quit_requested = true;
-                }
-            } else if (action == 0) { // Discard and quit
-                g_editor.quit_requested = true;
-            }
-        } else if (ch == CTRL_KEY('s')) {
-            // Save file directly (Nano ^S)
-            if (!g_editor.buffer.file_path) {
-                char save_path[PATH_MAX];
-                if (ui_file_dialog(&g_editor, FILE_DIALOG_SAVE_AS, save_path, sizeof(save_path))) {
-                    editor_save(&g_editor, save_path);
-                }
-            } else {
-                editor_save(&g_editor, NULL);
-            }
-        } else if (ch == CTRL_KEY('o')) {
-            // Write Out / Save As file dialog (Nano ^O)
-            char save_path[PATH_MAX];
-            if (ui_file_dialog(&g_editor, FILE_DIALOG_SAVE_AS, save_path, sizeof(save_path))) {
-                editor_save(&g_editor, save_path);
-            }
-        } else if (ch == CTRL_KEY('r')) {
-            // Read / Open file dialog (Nano ^R)
-            char open_path[PATH_MAX];
-            if (ui_file_dialog(&g_editor, FILE_DIALOG_OPEN, open_path, sizeof(open_path))) {
-                editor_open(&g_editor, open_path);
-            }
-        } else if (ch == CTRL_KEY('g') || ch == KEY_F(1)) {
-            // Get Help overlay (Nano ^G / F1)
-            ui_show_help(&g_editor);
-        } else if (ch == CTRL_KEY('w')) {
-            // Where Is: Search forward (Nano ^W)
-            if (ui_prompt(&g_editor, "Search", search_buf, sizeof(search_buf))) {
-                last_search_forward = true;
-                editor_search_find_next(&g_editor, search_buf, true);
-            } else {
-                g_editor.search_active = false;
-            }
-        } else if (ch == CTRL_KEY('q')) {
-            // Where Was: Search backward (Nano ^Q)
-            if (ui_prompt(&g_editor, "Search Backward", search_buf, sizeof(search_buf))) {
-                last_search_forward = false;
-                editor_search_find_next(&g_editor, search_buf, false);
-            } else {
-                g_editor.search_active = false;
-            }
-        } else if (ch == KEY_F(3)) {
-            if (search_buf[0]) {
-                editor_search_find_next(&g_editor, search_buf, last_search_forward);
-            }
-        } else if (ch == CTRL_KEY('k')) {
-            // Cut selection if mark active, otherwise cut entire current line (Nano ^K)
-            if (editor_has_selection(&g_editor)) {
-                editor_cut(&g_editor);
-            } else {
-                editor_cut_line(&g_editor);
-            }
-        } else if (ch == CTRL_KEY('u')) {
-            // Paste / Uncut from clipboard (Nano ^U)
-            editor_paste(&g_editor);
-        } else if (ch == CTRL_KEY('c')) {
-            // Report cursor location (Nano ^C)
-            editor_report_position(&g_editor);
-        } else if (ch == CTRL_KEY('l')) {
-            // Refresh / redraw screen (Nano ^L)
-            g_editor.rendered_dirty = true;
-            clearok(stdscr, TRUE);
-            erase();
-        } else if (ch == CTRL_KEY('_')) {
-            // Go to line (Nano ^_ / ^/)
-            prompt_goto_line();
-        } else if (ch == 0 || ch == CTRL_KEY('^')) {
-            // Set / unset selection mark (Nano ^^ / Ctrl+Space)
-            editor_toggle_mark(&g_editor);
-        } else if (ch == CTRL_KEY('t')) {
-            // Toggle checkbox [- [ ] <-> - [x]]
-            editor_toggle_checkbox(&g_editor);
-        } else if (ch == KEY_F(2)) {
-            // Cycle view mode: Split <-> In-place <-> Preview
-            editor_cycle_view_mode(&g_editor);
-        } else if (ch == KEY_F(4)) {
-            // Configure automatic line break column (20-255 or off)
-            prompt_wrap_col();
-        } else if (ch == KEY_F(5)) {
-            // Export menu (HTML, XML, EPUB, LaTeX; includes linked files)
-            ui_export_menu(&g_editor);
-        } else if (ch == KEY_F(6)) {
-            // Insert hypertext file link [Label](file.md)
-            handle_insert_file_link();
-        } else if (ch == KEY_F(7) || ch == CTRL_KEY(']')) {
-            // Follow hypertext file or #heading link under cursor
-            handle_follow_link();
-        } else if (ch == KEY_F(8)) {
-            // Navigate back to previous linked file
-            handle_navigate_back();
-        } else if (ch == KEY_LEFT || ch == CTRL_KEY('b')) {
-            editor_move_left(&g_editor);
-        } else if (ch == KEY_RIGHT || ch == CTRL_KEY('f')) {
-            editor_move_right(&g_editor);
-        } else if (ch == KEY_UP || ch == CTRL_KEY('p')) {
-            editor_move_up(&g_editor);
-        } else if (ch == KEY_DOWN || ch == CTRL_KEY('n')) {
-            editor_move_down(&g_editor);
-        } else if (ch == KEY_HOME || ch == CTRL_KEY('a')) {
-            editor_move_home(&g_editor);
-        } else if (ch == KEY_END || ch == CTRL_KEY('e')) {
-            editor_move_end(&g_editor);
-        } else if (ch == KEY_PPAGE || ch == CTRL_KEY('y')) {
-            editor_move_page_up(&g_editor);
-        } else if (ch == KEY_NPAGE || ch == CTRL_KEY('v')) {
-            editor_move_page_down(&g_editor);
-        } else if (ch == KEY_BACKSPACE || ch == 127 || ch == CTRL_KEY('h')) {
-            editor_backspace(&g_editor);
-        } else if (ch == KEY_DC || ch == CTRL_KEY('d')) {
-            editor_delete(&g_editor);
-        } else if (ch == '\n' || ch == '\r') {
-            editor_smart_enter(&g_editor);
-        } else if (ch == '\t') {
-            editor_indent(&g_editor);
-        } else if (ch == KEY_BTAB) {
-            editor_unindent(&g_editor);
-        } else if (ch == KEY_IC
-#ifdef KEY_SIC
-                   || ch == KEY_SIC
-#endif
-                   ) {
-            editor_toggle_insert_mode(&g_editor);
-        } else if (ch >= 0xC0 && ch <= 0xFF) {
-            // Multi-byte UTF-8 character leading byte
-            char utf8_buf[8] = {0};
-            utf8_buf[0] = (char)ch;
-            size_t ulen = utf8_char_len((unsigned char)ch);
-            for (size_t b = 1; b < ulen; ++b) {
-                int next_b = getch();
-                if (next_b == ERR) break;
-                utf8_buf[b] = (char)next_b;
-            }
-            editor_insert_char(&g_editor, utf8_buf, ulen);
-        } else if (ch >= 32 && ch <= 126) {
-            // Standard printable ASCII character
-            char c = (char)ch;
-            editor_insert_char(&g_editor, &c, 1);
+        } else if (ch == KEY_MOUSE) {
+            handle_mouse_event();
+        } else if (ch == 27) {
+            handle_meta_key(search_buf, &last_search_forward);
+        } else {
+            handle_key_event(ch, search_buf, sizeof(search_buf), &last_search_forward);
         }
     }
 

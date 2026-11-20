@@ -131,89 +131,265 @@ void editor_set_status(Editor *ed, const char *fmt, ...);
  */
 void editor_cycle_view_mode(Editor *ed);
 
-// Cursor movement operations
+/* =========================================================================
+ * Cursor Movement & Position Reporting
+ * ========================================================================= */
+
+/** @brief Move cursor one UTF-8 character left (wrapping to previous line end). */
 void editor_move_left(Editor *ed);
+
+/** @brief Move cursor one UTF-8 character right (wrapping to next line start). */
 void editor_move_right(Editor *ed);
+
+/** @brief Move cursor up one line, preserving preferred visual column. */
 void editor_move_up(Editor *ed);
+
+/** @brief Move cursor down one line, preserving preferred visual column. */
 void editor_move_down(Editor *ed);
+
+/** @brief Jump cursor to the beginning (column 0) of the current line. */
 void editor_move_home(Editor *ed);
+
+/** @brief Jump cursor to the end of the current line. */
 void editor_move_end(Editor *ed);
+
+/** @brief Scroll and move cursor up by one viewport page. */
 void editor_move_page_up(Editor *ed);
+
+/** @brief Scroll and move cursor down by one viewport page. */
 void editor_move_page_down(Editor *ed);
+
+/** @brief Jump cursor to the first line, column 0 of the document. */
 void editor_move_doc_start(Editor *ed);
+
+/** @brief Jump cursor to the end of the last line of the document. */
 void editor_move_doc_end(Editor *ed);
+
+/**
+ * @brief Move cursor to a 1-based line number and optional 1-based visual column.
+ * @param ed Pointer to Editor.
+ * @param line_1based 1-indexed target line (clamped to valid range).
+ * @param col_1based 1-indexed target visual column (0 or 1 means line start).
+ */
 void editor_goto_line(Editor *ed, size_t line_1based, size_t col_1based);
+
+/** @brief Post current line/column/percentage/word/char statistics to the status bar. */
 void editor_report_position(Editor *ed);
 
-// Typing & Editing mutations
+/* =========================================================================
+ * Typing & Editing Mutations
+ * ========================================================================= */
+
+/**
+ * @brief Insert (or overwrite, in Overwrite mode) a UTF-8 character sequence.
+ *
+ * Replaces any active selection and applies automatic line breaking if the
+ * resulting visual line width exceeds ed->wrap_col.
+ *
+ * @param ed Pointer to Editor.
+ * @param utf8_seq UTF-8 byte sequence.
+ * @param len Length in bytes.
+ */
 void editor_insert_char(Editor *ed, const char *utf8_seq, size_t len);
+
+/** @brief Delete the active selection or the UTF-8 character preceding the cursor. */
 void editor_backspace(Editor *ed);
+
+/** @brief Delete the active selection or the UTF-8 character under the cursor. */
 void editor_delete(Editor *ed);
+
+/** @brief Insert a newline with smart Markdown list/task continuation and auto-indent. */
 void editor_smart_enter(Editor *ed);
+
+/** @brief Indent the current line by two leading spaces. */
 void editor_indent(Editor *ed);
+
+/** @brief Remove up to two leading spaces from the current line. */
 void editor_unindent(Editor *ed);
 
-// Selection & Mark operations
+/* =========================================================================
+ * Selection & Mark Operations
+ * ========================================================================= */
+
+/** @brief Anchor the selection mark at the current cursor position. */
 void editor_set_mark(Editor *ed);
+
+/** @brief Clear any active selection mark. */
 void editor_clear_mark(Editor *ed);
+
+/** @brief Toggle the selection mark ON at the cursor, or OFF if already active. */
 void editor_toggle_mark(Editor *ed);
+
+/** @brief Return true if a non-empty text selection is currently active. */
 bool editor_has_selection(const Editor *ed);
+
+/**
+ * @brief Retrieve normalized (start <= end) selection coordinates.
+ * @return true if a non-empty selection is active, false otherwise.
+ */
 bool editor_get_selection(const Editor *ed, size_t *start_row, size_t *start_col,
                           size_t *end_row, size_t *end_col);
+
+/**
+ * @brief Allocate and return a copy of the currently selected text.
+ * @param ed Pointer to Editor.
+ * @param out_len Optional output receiving byte length of returned string.
+ * @return Newly allocated null-terminated string (caller must free), or NULL.
+ */
 char *editor_get_selected_text(const Editor *ed, size_t *out_len);
+
+/**
+ * @brief Delete the active text selection as a single undo group.
+ * @param ed Pointer to Editor.
+ * @param group Undo group ID (0 allocates a new group automatically).
+ * @return true if a selection was deleted.
+ */
 bool editor_delete_selection(Editor *ed, uint64_t group);
 
-// Clipboard & Cut / Copy / Paste
+/* =========================================================================
+ * Clipboard, Cut, Copy, Paste & Killing
+ * ========================================================================= */
+
+/** @brief Copy the active selection to the clipboard (synced via OSC 52). */
 bool editor_copy(Editor *ed);
+
+/** @brief Copy the entire current line (including newline if not last line) to the clipboard. */
 bool editor_copy_line(Editor *ed);
+
+/** @brief Cut the active selection to the clipboard as an atomic undo group. */
 bool editor_cut(Editor *ed);
+
+/** @brief Cut the entire current line to the clipboard as an atomic undo group. */
 bool editor_cut_line(Editor *ed);
+
+/** @brief Paste the internal clipboard contents at the current cursor position. */
 bool editor_paste(Editor *ed);
+
+/** @brief Insert arbitrary (possibly multi-line) UTF-8 text at the cursor as one undo group. */
 bool editor_paste_text(Editor *ed, const char *text, size_t len);
 
-// Line & Word Killing
+/** @brief Kill text from cursor to end of line, or join with next line if at EOL. */
 void editor_kill_to_end_of_line(Editor *ed);
+
+/** @brief Kill the word immediately preceding the cursor into the clipboard. */
 void editor_kill_prev_word(Editor *ed);
 
-// Markdown helpers
+/* =========================================================================
+ * Markdown Helpers, Line Wrapping & History
+ * ========================================================================= */
+
+/** @brief Toggle between Insert mode (block cursor) and Overwrite mode (underscore cursor). */
 void editor_toggle_insert_mode(Editor *ed);
+
+/** @brief Toggle a Markdown task checkbox (`- [ ]` <-> `- [x]`) or create one on the active line. */
 void editor_toggle_checkbox(Editor *ed);
+
+/** @brief Insert paired inline formatting markers (e.g. `**`) or wrap the active selection. */
 void editor_wrap_format(Editor *ed, const char *marker);
 
-// Automatic line break settings
+/**
+ * @brief Set automatic line break column width.
+ * @param ed Pointer to Editor.
+ * @param cols Column limit in [MDE_WRAP_COL_MIN, MDE_WRAP_COL_MAX], or MDE_WRAP_COL_OFF (0).
+ * @return true if valid and applied, false otherwise.
+ */
 bool editor_set_wrap_col(Editor *ed, int cols);
+
+/**
+ * @brief Parse a wrap column specification ("20"-"255", "0", "off", "none").
+ * @param str Input string.
+ * @param out_cols Output parsed column width.
+ * @return true on valid input, false otherwise.
+ */
 bool editor_parse_wrap_col(const char *str, int *out_cols);
 
-// History operations
+/** @brief Undo the most recent atomic editing group and reposition cursor. */
 void editor_undo(Editor *ed);
+
+/** @brief Redo the most recently undone atomic editing group and reposition cursor. */
 void editor_redo(Editor *ed);
 
-// File I/O
+/* =========================================================================
+ * File I/O & Hypertext Linking
+ * ========================================================================= */
+
+/** @brief Save the buffer to opt_path (or existing file_path when opt_path is NULL). */
 bool editor_save(Editor *ed, const char *opt_path);
+
+/** @brief Load a file from disk into the editor buffer and reset cursor/scroll. */
 bool editor_open(Editor *ed, const char *path);
 
-// Hypertext file linking & navigation
+/**
+ * @brief Compute a portable relative path from from_file's directory to to_file.
+ * @param from_file Source file path (or NULL to use current working directory).
+ * @param to_file Destination file path.
+ * @param out_rel Destination buffer for the relative path.
+ * @param out_cap Capacity of out_rel.
+ * @return true on success.
+ */
 bool editor_make_relative_path(const char *from_file, const char *to_file,
                                char *out_rel, size_t out_cap);
+
+/**
+ * @brief Extract the Markdown link target URL and optional `#anchor` under the cursor
+ *        (falling back to the first non-image link on the active line).
+ */
 bool editor_extract_link_at_cursor(const Editor *ed,
                                    char *out_url, size_t url_cap,
                                    char *out_anchor, size_t anchor_cap);
+
+/**
+ * @brief Resolve a local relative/absolute Markdown link target to a normalized absolute path.
+ * @return true for local targets, false for external URLs or invalid inputs.
+ */
 bool editor_resolve_link_path(const Editor *ed, const char *link_target,
                               char *out_path, size_t out_cap);
+
+/**
+ * @brief Insert a relative Markdown hyperlink `[Label](relative/path)` at the cursor.
+ *
+ * Uses the active selection as label if present, otherwise derives the label from
+ * the target file's first H1 heading or filename stem.
+ */
 bool editor_insert_file_link(Editor *ed, const char *target_path);
+
+/**
+ * @brief Follow a local Markdown file link or `#heading` anchor under the cursor.
+ *
+ * Pushes the current location onto the navigation history stack and opens the target
+ * file (or initializes a new buffer at that path if the file does not yet exist).
+ */
 bool editor_follow_link(Editor *ed);
+
+/** @brief Pop the link navigation history stack and restore the previous file and cursor. */
 bool editor_navigate_back(Editor *ed);
 
-// Cursor blink & timing
+/* =========================================================================
+ * Timing, Search & Viewport Synchronization
+ * ========================================================================= */
+
+/** @brief Return current monotonic clock timestamp in milliseconds. */
 uint64_t editor_get_time_ms(void);
+
+/** @brief Record the current timestamp as the most recent user keystroke. */
 void editor_touch_key(Editor *ed);
+
+/** @brief Return true when the cursor should be rendered (always true for steady cursor). */
 bool editor_cursor_is_visible(const Editor *ed);
 
-// Search operations
+/**
+ * @brief Perform case-insensitive search forward or backward with wrap-around.
+ * @param ed Pointer to Editor.
+ * @param query Substring to search for.
+ * @param forward true to search forward, false to search backward.
+ * @return true if a match was found and cursor moved to it.
+ */
 bool editor_search_find_next(Editor *ed, const char *query, bool forward);
 
-// Viewport layout synchronization
+/** @brief Clamp and update vertical, horizontal, and preview scroll offsets for view_rows. */
 void editor_update_scroll(Editor *ed, int view_rows);
+
+/** @brief Re-render the cached Markdown preview document when marked dirty. */
 void editor_refresh_rendered(Editor *ed);
 
 #ifdef __cplusplus

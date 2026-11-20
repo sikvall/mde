@@ -60,8 +60,9 @@ static int get_line_num_width(size_t max_lines) {
  * @brief Draw the horizontal column ruler at the top of the edit window.
  *
  * Aligns precisely with text columns, displaying ticks every column, pluses (+)
- * every 5 columns, tens digits (1, 2, 3...) every 10 columns, a wrap guide at
- * column 80, and a cursor position marker (▼) above the active column.
+ * every 5 columns, tens digits (1, 2, 3...) every 10 columns, a dynamic wrap
+ * guide (┆) at the configured auto line break column, and a cursor marker (▼)
+ * above the active column.
  */
 static void draw_column_ruler(Editor *ed, int start_col, int width, int screen_y, int gutter_w) {
     if (width <= 0) return;
@@ -965,6 +966,48 @@ static void navigate_into_sub(char *dir_buf, size_t buf_size, const char *sub) {
     }
 }
 
+/**
+ * @brief Draw a full-width horizontal box divider with left/right T-junctions.
+ */
+static void draw_box_hrule(WINDOW *win, int y, int width) {
+    mvwaddch(win, y, 0, ACS_LTEE);
+    for (int x = 1; x < width - 1; ++x) {
+        mvwaddch(win, y, x, ACS_HLINE);
+    }
+    mvwaddch(win, y, width - 1, ACS_RTEE);
+}
+
+/**
+ * @brief Compute centered geometry for the interactive file browser modal.
+ */
+static void calc_file_dialog_geom(int rows, int cols,
+                                  int *out_h, int *out_w, int *out_y, int *out_x) {
+    int w = 72;
+    if (w > cols - 4) w = cols - 4;
+    if (w < 44) w = 44;
+    if (w > cols) w = cols;
+    if (w < 10) w = cols > 0 ? cols : 10;
+
+    int h = 22;
+    if (h > rows - 2) h = rows - 2;
+    if (h < 12) h = 12;
+    if (h > rows) h = rows;
+    if (h < 6) h = rows > 0 ? rows : 6;
+
+    int y = (rows - h) / 2;
+    int x = (cols - w) / 2;
+    if (y < 0) y = 0;
+    if (x < 0) x = 0;
+
+    *out_h = h;
+    *out_w = w;
+    *out_y = y;
+    *out_x = x;
+}
+
+/**
+ * @brief Format a file byte size as human-readable B, KB, or MB.
+ */
 static void format_file_size(size_t size, char *buf, size_t buf_len) {
     if (size < 1024) {
         snprintf(buf, buf_len, "%zu B", size);
@@ -1016,25 +1059,9 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
     bool has_input_box = (mode == FILE_DIALOG_SAVE_AS || mode == FILE_DIALOG_LINK);
     enum { FOCUS_LIST, FOCUS_INPUT } focus = (mode == FILE_DIALOG_SAVE_AS) ? FOCUS_INPUT : FOCUS_LIST;
 
-    int rows, cols;
+    int rows, cols, win_h, win_w, win_y, win_x;
     getmaxyx(stdscr, rows, cols);
-
-    int win_w = 72;
-    if (win_w > cols - 4) win_w = cols - 4;
-    if (win_w < 44) win_w = 44;
-    if (win_w > cols) win_w = cols;
-    if (win_w < 10) win_w = cols > 0 ? cols : 10;
-
-    int win_h = 22;
-    if (win_h > rows - 2) win_h = rows - 2;
-    if (win_h < 12) win_h = 12;
-    if (win_h > rows) win_h = rows;
-    if (win_h < 6) win_h = rows > 0 ? rows : 6;
-
-    int win_y = (rows - win_h) / 2;
-    int win_x = (cols - win_w) / 2;
-    if (win_y < 0) win_y = 0;
-    if (win_x < 0) win_x = 0;
+    calc_file_dialog_geom(rows, cols, &win_h, &win_w, &win_y, &win_x);
 
     WINDOW *win = newwin(win_h, win_w, win_y, win_x);
     if (!win) {
@@ -1085,9 +1112,7 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
         }
 
         // Horizontal separator line under directory
-        mvwaddch(win, 2, 0, ACS_LTEE);
-        for (int x = 1; x < win_w - 1; ++x) mvwaddch(win, 2, x, ACS_HLINE);
-        mvwaddch(win, 2, win_w - 1, ACS_RTEE);
+        draw_box_hrule(win, 2, win_w);
 
         // List dimensions
         int list_start_y = 3;
@@ -1163,9 +1188,7 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
             int input_sep_y = win_h - 4;
             int input_y = win_h - 3;
 
-            mvwaddch(win, input_sep_y, 0, ACS_LTEE);
-            for (int x = 1; x < win_w - 1; ++x) mvwaddch(win, input_sep_y, x, ACS_HLINE);
-            mvwaddch(win, input_sep_y, win_w - 1, ACS_RTEE);
+            draw_box_hrule(win, input_sep_y, win_w);
 
             bool is_input_focused = (focus == FOCUS_INPUT);
             wattron(win, is_input_focused ? (COLOR_PAIR(CP_DEFAULT) | A_BOLD) : COLOR_PAIR(CP_MARKER));
@@ -1191,9 +1214,7 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
         }
 
         // Bottom separator & help instructions / overwrite warning
-        mvwaddch(win, win_h - 2, 0, ACS_LTEE);
-        for (int x = 1; x < win_w - 1; ++x) mvwaddch(win, win_h - 2, x, ACS_HLINE);
-        mvwaddch(win, win_h - 2, win_w - 1, ACS_RTEE);
+        draw_box_hrule(win, win_h - 2, win_w);
 
         if (win_w > 4) {
             if (confirm_overwrite) {
@@ -1235,22 +1256,7 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
             ui_draw(ed);
 
             getmaxyx(stdscr, rows, cols);
-            win_w = 72;
-            if (win_w > cols - 4) win_w = cols - 4;
-            if (win_w < 44) win_w = 44;
-            if (win_w > cols) win_w = cols;
-            if (win_w < 10) win_w = cols > 0 ? cols : 10;
-
-            win_h = 22;
-            if (win_h > rows - 2) win_h = rows - 2;
-            if (win_h < 12) win_h = 12;
-            if (win_h > rows) win_h = rows;
-            if (win_h < 6) win_h = rows > 0 ? rows : 6;
-
-            win_y = (rows - win_h) / 2;
-            win_x = (cols - win_w) / 2;
-            if (win_y < 0) win_y = 0;
-            if (win_x < 0) win_x = 0;
+            calc_file_dialog_geom(rows, cols, &win_h, &win_w, &win_y, &win_x);
 
             win = newwin(win_h, win_w, win_y, win_x);
             if (!win) {
@@ -1511,26 +1517,37 @@ static const HelpEntry s_markdown_help[] = {
     { HELP_LINE_NOTE, "Multi-File Export", "Export (F5) bundles linked .md files (1 .tex for LaTeX)" }
 };
 
+/**
+ * @brief Compute centered geometry for the two-tab Help overlay modal.
+ */
+static void calc_help_win_geom(int rows, int cols,
+                               int *out_h, int *out_w, int *out_y, int *out_x) {
+    int h = (rows >= 32) ? 28 : 26;
+    int w = 76;
+    if (h > rows - 2) h = rows - 2;
+    if (w > cols - 2) w = cols - 2;
+    if (h < 12) h = 12;
+    if (w < 50) w = 50;
+    if (h > rows) h = rows;
+    if (w > cols) w = cols;
+    if (h < 6) h = rows > 0 ? rows : 6;
+    if (w < 16) w = cols > 0 ? cols : 16;
+
+    int y = (rows - h) / 2;
+    int x = (cols - w) / 2;
+    if (y < 0) y = 0;
+    if (x < 0) x = 0;
+
+    *out_h = h;
+    *out_w = w;
+    *out_y = y;
+    *out_x = x;
+}
+
 void ui_show_help(Editor *ed) {
-    int rows, cols;
+    int rows, cols, box_h, box_w, start_y, start_x;
     getmaxyx(stdscr, rows, cols);
-
-    int box_h = 26;
-    int box_w = 76;
-    if (rows >= 32) box_h = 28;
-    else if (box_h > rows - 2) box_h = rows - 2;
-    if (box_w > cols - 2) box_w = cols - 2;
-    if (box_h < 12) box_h = 12;
-    if (box_w < 50) box_w = 50;
-    if (box_h > rows) box_h = rows;
-    if (box_w > cols) box_w = cols;
-    if (box_h < 6) box_h = rows > 0 ? rows : 6;
-    if (box_w < 16) box_w = cols > 0 ? cols : 16;
-
-    int start_y = (rows - box_h) / 2;
-    int start_x = (cols - box_w) / 2;
-    if (start_y < 0) start_y = 0;
-    if (start_x < 0) start_x = 0;
+    calc_help_win_geom(rows, cols, &box_h, &box_w, &start_y, &start_x);
 
     WINDOW *win = newwin(box_h, box_w, start_y, start_x);
     if (!win) return;
@@ -1581,12 +1598,7 @@ void ui_show_help(Editor *ed) {
         }
 
         // Horizontal divider under tab bar on row 3
-        wmove(win, 3, 0);
-        waddch(win, ACS_LTEE);
-        for (int x = 1; x < box_w - 1; ++x) {
-            waddch(win, ACS_HLINE);
-        }
-        waddch(win, ACS_RTEE);
+        draw_box_hrule(win, 3, box_w);
 
         // Content area between row 4 and row box_h - 4
         int visible_lines = box_h - 7;
@@ -1649,12 +1661,7 @@ void ui_show_help(Editor *ed) {
         }
 
         // Horizontal divider above footer on row box_h - 3
-        wmove(win, box_h - 3, 0);
-        waddch(win, ACS_LTEE);
-        for (int x = 1; x < box_w - 1; ++x) {
-            waddch(win, ACS_HLINE);
-        }
-        waddch(win, ACS_RTEE);
+        draw_box_hrule(win, box_h - 3, box_w);
 
         // Scroll indicator if content overflows
         if (total_entries > (size_t)visible_lines) {
@@ -1697,22 +1704,7 @@ void ui_show_help(Editor *ed) {
             ui_draw(ed);
 
             getmaxyx(stdscr, rows, cols);
-            box_h = 26;
-            box_w = 76;
-            if (rows >= 32) box_h = 28;
-            else if (box_h > rows - 2) box_h = rows - 2;
-            if (box_w > cols - 2) box_w = cols - 2;
-            if (box_h < 12) box_h = 12;
-            if (box_w < 50) box_w = 50;
-            if (box_h > rows) box_h = rows;
-            if (box_w > cols) box_w = cols;
-            if (box_h < 6) box_h = rows > 0 ? rows : 6;
-            if (box_w < 16) box_w = cols > 0 ? cols : 16;
-
-            start_y = (rows - box_h) / 2;
-            start_x = (cols - box_w) / 2;
-            if (start_y < 0) start_y = 0;
-            if (start_x < 0) start_x = 0;
+            calc_help_win_geom(rows, cols, &box_h, &box_w, &start_y, &start_x);
 
             win = newwin(box_h, box_w, start_y, start_x);
             if (!win) {
@@ -1870,9 +1862,7 @@ bool ui_export_menu(Editor *ed) {
         wattroff(win, COLOR_PAIR(CP_MARKER) | A_DIM);
 
         // Row 3: Divider
-        mvwaddch(win, 3, 0, ACS_LTEE);
-        for (int x = 1; x < win_w - 1; ++x) mvwaddch(win, 3, x, ACS_HLINE);
-        mvwaddch(win, 3, win_w - 1, ACS_RTEE);
+        draw_box_hrule(win, 3, win_w);
 
         // Rows 4..7: Format list
         for (int i = 0; i < EXPORT_FORMAT_COUNT && 4 + i < win_h - 4; ++i) {
@@ -1928,9 +1918,7 @@ bool ui_export_menu(Editor *ed) {
         int foot_sep_y = win_h - 2;
 
         if (path_sep_y > 7) {
-            mvwaddch(win, path_sep_y, 0, ACS_LTEE);
-            for (int x = 1; x < win_w - 1; ++x) mvwaddch(win, path_sep_y, x, ACS_HLINE);
-            mvwaddch(win, path_sep_y, win_w - 1, ACS_RTEE);
+            draw_box_hrule(win, path_sep_y, win_w);
         }
 
         // Output path row
@@ -1970,9 +1958,7 @@ bool ui_export_menu(Editor *ed) {
         }
 
         // Footer divider & hints
-        mvwaddch(win, foot_sep_y, 0, ACS_LTEE);
-        for (int x = 1; x < win_w - 1; ++x) mvwaddch(win, foot_sep_y, x, ACS_HLINE);
-        mvwaddch(win, foot_sep_y, win_w - 1, ACS_RTEE);
+        draw_box_hrule(win, foot_sep_y, win_w);
 
         const char *hints = has_pandoc
             ? " [Enter] Export  [1-4] Format  [Tab] Path  [L] Links  [E] Engine  [Esc] Cancel "

@@ -783,6 +783,58 @@ static bool export_via_pandoc(const ExportDocList *docs, ExportFormat fmt, const
  * Helper Utilities for Built-In Exporters
  * ========================================================================= */
 
+/**
+ * @brief Return true if a token is a raw Markdown delimiter omitted from exported output.
+ */
+static bool is_skipped_export_marker(MdTokenType type) {
+    return md_is_header_marker(type) ||
+           type == MD_BLOCKQUOTE_MARKER ||
+           type == MD_LIST_BULLET ||
+           type == MD_TASK_UNCHECKED ||
+           type == MD_TASK_CHECKED ||
+           type == MD_BOLD_MARKER ||
+           type == MD_ITALIC_MARKER ||
+           type == MD_BOLD_ITALIC_MARKER ||
+           type == MD_STRIKE_MARKER ||
+           type == MD_INLINE_CODE_MARKER ||
+           type == MD_TABLE_BORDER;
+}
+
+/**
+ * @brief Extract label/alt text and destination URL from a link or image span sequence.
+ *
+ * Advances past the closing ')' span and returns the next span index to process.
+ */
+static size_t extract_link_or_image_span(const char *raw, const MdParsedLine *pl,
+                                         size_t start_idx, size_t end_idx,
+                                         const char **out_label, size_t *out_label_len,
+                                         const char **out_url, size_t *out_url_len) {
+    *out_label = "";
+    *out_label_len = 0;
+    *out_url = "";
+    *out_url_len = 0;
+
+    size_t k = start_idx + 1;
+    while (k < end_idx &&
+           (pl->spans[k].type == MD_LINK_BRACKET ||
+            pl->spans[k].type == MD_LINK_TEXT ||
+            pl->spans[k].type == MD_LINK_URL_PAREN ||
+            pl->spans[k].type == MD_LINK_URL)) {
+        if (pl->spans[k].type == MD_LINK_TEXT) {
+            *out_label = raw + pl->spans[k].start;
+            *out_label_len = pl->spans[k].end - pl->spans[k].start;
+        } else if (pl->spans[k].type == MD_LINK_URL) {
+            *out_url = raw + pl->spans[k].start;
+            *out_url_len = pl->spans[k].end - pl->spans[k].start;
+        }
+        bool done = (pl->spans[k].type == MD_LINK_URL_PAREN && raw[pl->spans[k].start] == ')');
+        k++;
+        if (done) break;
+    }
+    return k;
+}
+
+/** @brief Test whether a line is a Markdown table alignment separator row (e.g. `| --- | --- |`). */
 static bool is_table_sep_row(const char *line, size_t len) {
     bool has_dash = false;
     bool has_pipe = false;
@@ -820,6 +872,7 @@ static bool is_ordered_bullet(const char *line, size_t len) {
  * Built-In HTML5 Exporter
  * ========================================================================= */
 
+/** @brief Write HTML5-escaped text to the output stream. */
 static void html_escape(FILE *f, const char *s, size_t len) {
     for (size_t i = 0; i < len; ++i) {
         switch (s[i]) {
@@ -832,6 +885,7 @@ static void html_escape(FILE *f, const char *s, size_t len) {
     }
 }
 
+/** @brief Emit inline Markdown spans as HTML5 elements, rewriting internal linked `.md` URLs. */
 static void html_write_spans(FILE *f, const char *raw, const MdParsedLine *pl,
                              size_t start_idx, size_t end_idx,
                              const ExportDocList *docs, size_t doc_idx) {
@@ -839,81 +893,27 @@ static void html_write_spans(FILE *f, const char *raw, const MdParsedLine *pl,
     while (s < end_idx) {
         MdSpan sp = pl->spans[s];
 
-        // Skip block/inline delimiter markers
-        if (md_is_header_marker(sp.type) ||
-            sp.type == MD_BLOCKQUOTE_MARKER ||
-            sp.type == MD_LIST_BULLET ||
-            sp.type == MD_TASK_UNCHECKED ||
-            sp.type == MD_TASK_CHECKED ||
-            sp.type == MD_BOLD_MARKER ||
-            sp.type == MD_ITALIC_MARKER ||
-            sp.type == MD_BOLD_ITALIC_MARKER ||
-            sp.type == MD_STRIKE_MARKER ||
-            sp.type == MD_INLINE_CODE_MARKER ||
-            sp.type == MD_TABLE_BORDER) {
+        if (is_skipped_export_marker(sp.type)) {
             s++;
             continue;
         }
 
-        // Image sequence: ! [ alt ] ( url )
         if (sp.type == MD_IMAGE_MARKER) {
-            const char *alt = "";
-            size_t alt_len = 0;
-            const char *url = "";
-            size_t url_len = 0;
-            size_t k = s + 1;
-            while (k < end_idx &&
-                   (pl->spans[k].type == MD_LINK_BRACKET ||
-                    pl->spans[k].type == MD_LINK_TEXT ||
-                    pl->spans[k].type == MD_LINK_URL_PAREN ||
-                    pl->spans[k].type == MD_LINK_URL)) {
-                if (pl->spans[k].type == MD_LINK_TEXT) {
-                    alt = raw + pl->spans[k].start;
-                    alt_len = pl->spans[k].end - pl->spans[k].start;
-                } else if (pl->spans[k].type == MD_LINK_URL) {
-                    url = raw + pl->spans[k].start;
-                    url_len = pl->spans[k].end - pl->spans[k].start;
-                }
-                k++;
-                if (k > s + 1 && pl->spans[k - 1].type == MD_LINK_URL_PAREN &&
-                    raw[pl->spans[k - 1].start] == ')') {
-                    break;
-                }
-            }
+            const char *alt, *url;
+            size_t alt_len, url_len;
+            s = extract_link_or_image_span(raw, pl, s, end_idx, &alt, &alt_len, &url, &url_len);
             fputs("<img src=\"", f);
             html_escape(f, url, url_len);
             fputs("\" alt=\"", f);
             html_escape(f, alt, alt_len);
             fputs("\">", f);
-            s = k;
             continue;
         }
 
-        // Link sequence: [ text ] ( url )
         if (sp.type == MD_LINK_BRACKET && raw[sp.start] == '[') {
-            const char *ltext = "";
-            size_t ltext_len = 0;
-            const char *url = "";
-            size_t url_len = 0;
-            size_t k = s + 1;
-            while (k < end_idx &&
-                   (pl->spans[k].type == MD_LINK_BRACKET ||
-                    pl->spans[k].type == MD_LINK_TEXT ||
-                    pl->spans[k].type == MD_LINK_URL_PAREN ||
-                    pl->spans[k].type == MD_LINK_URL)) {
-                if (pl->spans[k].type == MD_LINK_TEXT) {
-                    ltext = raw + pl->spans[k].start;
-                    ltext_len = pl->spans[k].end - pl->spans[k].start;
-                } else if (pl->spans[k].type == MD_LINK_URL) {
-                    url = raw + pl->spans[k].start;
-                    url_len = pl->spans[k].end - pl->spans[k].start;
-                }
-                k++;
-                if (pl->spans[k - 1].type == MD_LINK_URL_PAREN &&
-                    raw[pl->spans[k - 1].start] == ')') {
-                    break;
-                }
-            }
+            const char *ltext, *url;
+            size_t ltext_len, url_len;
+            s = extract_link_or_image_span(raw, pl, s, end_idx, &ltext, &ltext_len, &url, &url_len);
 
             char frag[128] = {0};
             ssize_t target_idx = find_linked_doc_index(docs, doc_idx, url, url_len, frag, sizeof(frag));
@@ -932,7 +932,6 @@ static void html_write_spans(FILE *f, const char *raw, const MdParsedLine *pl,
             fputs("\">", f);
             html_escape(f, ltext, ltext_len);
             fputs("</a>", f);
-            s = k;
             continue;
         }
 
@@ -941,29 +940,19 @@ static void html_write_spans(FILE *f, const char *raw, const MdParsedLine *pl,
 
         switch (sp.type) {
             case MD_BOLD_TEXT:
-                fputs("<strong>", f);
-                html_escape(f, txt, tlen);
-                fputs("</strong>", f);
+                fputs("<strong>", f); html_escape(f, txt, tlen); fputs("</strong>", f);
                 break;
             case MD_ITALIC_TEXT:
-                fputs("<em>", f);
-                html_escape(f, txt, tlen);
-                fputs("</em>", f);
+                fputs("<em>", f); html_escape(f, txt, tlen); fputs("</em>", f);
                 break;
             case MD_BOLD_ITALIC_TEXT:
-                fputs("<strong><em>", f);
-                html_escape(f, txt, tlen);
-                fputs("</em></strong>", f);
+                fputs("<strong><em>", f); html_escape(f, txt, tlen); fputs("</em></strong>", f);
                 break;
             case MD_STRIKE_TEXT:
-                fputs("<del>", f);
-                html_escape(f, txt, tlen);
-                fputs("</del>", f);
+                fputs("<del>", f); html_escape(f, txt, tlen); fputs("</del>", f);
                 break;
             case MD_INLINE_CODE_TEXT:
-                fputs("<code>", f);
-                html_escape(f, txt, tlen);
-                fputs("</code>", f);
+                fputs("<code>", f); html_escape(f, txt, tlen); fputs("</code>", f);
                 break;
             default:
                 html_escape(f, txt, tlen);
@@ -973,13 +962,33 @@ static void html_write_spans(FILE *f, const char *raw, const MdParsedLine *pl,
     }
 }
 
+typedef enum {
+    HTML_BLK_NONE, HTML_BLK_PARA, HTML_BLK_UL, HTML_BLK_OL,
+    HTML_BLK_TASK, HTML_BLK_QUOTE, HTML_BLK_TABLE
+} HtmlBlockState;
+
+/** @brief Close the currently open HTML block element and reset state to HTML_BLK_NONE. */
+static void html_close_block(FILE *f, HtmlBlockState *blk) {
+    switch (*blk) {
+        case HTML_BLK_PARA:  fputs("</p>\n", f);              break;
+        case HTML_BLK_UL:
+        case HTML_BLK_TASK:  fputs("</ul>\n", f);             break;
+        case HTML_BLK_OL:    fputs("</ol>\n", f);             break;
+        case HTML_BLK_QUOTE: fputs("</blockquote>\n", f);     break;
+        case HTML_BLK_TABLE: fputs("</tbody>\n</table>\n", f); break;
+        case HTML_BLK_NONE:
+        default:             break;
+    }
+    *blk = HTML_BLK_NONE;
+}
+
+/** @brief Render a single document node's body lines as HTML5 markup. */
 static void export_builtin_html_body(FILE *f, const ExportDocList *docs, size_t doc_idx) {
     const Buffer *buf = docs->nodes[doc_idx].buf;
 
-    enum { BLK_NONE, BLK_PARA, BLK_UL, BLK_OL, BLK_TASK, BLK_QUOTE, BLK_TABLE } blk = BLK_NONE;
+    HtmlBlockState blk = HTML_BLK_NONE;
     bool in_code = false;
     bool code_tag_open = false;
-    bool table_header_done = false;
     char lang[32] = {0};
 
     size_t nlines = buffer_line_count(buf);
@@ -993,14 +1002,7 @@ static void export_builtin_html_body(FILE *f, const ExportDocList *docs, size_t 
 
         // Code fence transitions
         if (pl.is_code_block && pl.span_count > 0 && pl.spans[0].type == MD_CODE_FENCE) {
-            if (blk != BLK_NONE) {
-                if (blk == BLK_PARA) fputs("</p>\n", f);
-                else if (blk == BLK_UL || blk == BLK_TASK) fputs("</ul>\n", f);
-                else if (blk == BLK_OL) fputs("</ol>\n", f);
-                else if (blk == BLK_QUOTE) fputs("</blockquote>\n", f);
-                else if (blk == BLK_TABLE) fputs("</tbody>\n</table>\n", f);
-                blk = BLK_NONE;
-            }
+            html_close_block(f, &blk);
             if (!was_in_code && in_code) {
                 if (lang[0]) {
                     fputs("<pre><code class=\"language-", f);
@@ -1025,27 +1027,14 @@ static void export_builtin_html_body(FILE *f, const ExportDocList *docs, size_t 
             continue;
         }
 
-        // Empty line closes active block
         if (len == 0) {
-            if (blk == BLK_PARA) fputs("</p>\n", f);
-            else if (blk == BLK_UL || blk == BLK_TASK) fputs("</ul>\n", f);
-            else if (blk == BLK_OL) fputs("</ol>\n", f);
-            else if (blk == BLK_QUOTE) fputs("</blockquote>\n", f);
-            else if (blk == BLK_TABLE) fputs("</tbody>\n</table>\n", f);
-            blk = BLK_NONE;
+            html_close_block(f, &blk);
             md_parsed_line_free(&pl);
             continue;
         }
 
         if (pl.header_level > 0) {
-            if (blk != BLK_NONE) {
-                if (blk == BLK_PARA) fputs("</p>\n", f);
-                else if (blk == BLK_UL || blk == BLK_TASK) fputs("</ul>\n", f);
-                else if (blk == BLK_OL) fputs("</ol>\n", f);
-                else if (blk == BLK_QUOTE) fputs("</blockquote>\n", f);
-                else if (blk == BLK_TABLE) fputs("</tbody>\n</table>\n", f);
-                blk = BLK_NONE;
-            }
+            html_close_block(f, &blk);
             if (docs->count > 1) {
                 char htxt[256];
                 size_t hpos = 0;
@@ -1064,38 +1053,24 @@ static void export_builtin_html_body(FILE *f, const ExportDocList *docs, size_t 
             html_write_spans(f, raw, &pl, 0, pl.span_count, docs, doc_idx);
             fprintf(f, "</h%d>\n", pl.header_level);
         } else if (pl.is_hrule) {
-            if (blk != BLK_NONE) {
-                if (blk == BLK_PARA) fputs("</p>\n", f);
-                else if (blk == BLK_UL || blk == BLK_TASK) fputs("</ul>\n", f);
-                else if (blk == BLK_OL) fputs("</ol>\n", f);
-                else if (blk == BLK_QUOTE) fputs("</blockquote>\n", f);
-                else if (blk == BLK_TABLE) fputs("</tbody>\n</table>\n", f);
-                blk = BLK_NONE;
-            }
+            html_close_block(f, &blk);
             fputs("<hr>\n", f);
         } else if (pl.is_blockquote) {
-            if (blk != BLK_QUOTE) {
-                if (blk == BLK_PARA) fputs("</p>\n", f);
-                else if (blk == BLK_UL || blk == BLK_TASK) fputs("</ul>\n", f);
-                else if (blk == BLK_OL) fputs("</ol>\n", f);
-                else if (blk == BLK_TABLE) fputs("</tbody>\n</table>\n", f);
+            if (blk != HTML_BLK_QUOTE) {
+                html_close_block(f, &blk);
                 fputs("<blockquote>\n", f);
-                blk = BLK_QUOTE;
+                blk = HTML_BLK_QUOTE;
             }
             fputs("  <p>", f);
             html_write_spans(f, raw, &pl, 0, pl.span_count, docs, doc_idx);
             fputs("</p>\n", f);
         } else if (pl.is_list_item) {
-            int want = pl.is_task ? BLK_TASK : (is_ordered_bullet(raw, len) ? BLK_OL : BLK_UL);
-            if ((int)blk != want) {
-                if (blk == BLK_PARA) fputs("</p>\n", f);
-                else if (blk == BLK_UL || blk == BLK_TASK) fputs("</ul>\n", f);
-                else if (blk == BLK_OL) fputs("</ol>\n", f);
-                else if (blk == BLK_QUOTE) fputs("</blockquote>\n", f);
-                else if (blk == BLK_TABLE) fputs("</tbody>\n</table>\n", f);
-
-                if (want == BLK_TASK) fputs("<ul class=\"task-list\">\n", f);
-                else if (want == BLK_OL) fputs("<ol>\n", f);
+            HtmlBlockState want = pl.is_task ? HTML_BLK_TASK
+                                             : (is_ordered_bullet(raw, len) ? HTML_BLK_OL : HTML_BLK_UL);
+            if (blk != want) {
+                html_close_block(f, &blk);
+                if (want == HTML_BLK_TASK) fputs("<ul class=\"task-list\">\n", f);
+                else if (want == HTML_BLK_OL) fputs("<ol>\n", f);
                 else fputs("<ul>\n", f);
                 blk = want;
             }
@@ -1109,54 +1084,39 @@ static void export_builtin_html_body(FILE *f, const ExportDocList *docs, size_t 
             fputs("</li>\n", f);
         } else if (pl.is_table_row) {
             if (is_table_sep_row(raw, len)) {
-                table_header_done = true;
                 md_parsed_line_free(&pl);
                 continue;
             }
             bool is_hdr = false;
-            if (blk != BLK_TABLE) {
-                if (blk == BLK_PARA) fputs("</p>\n", f);
-                else if (blk == BLK_UL || blk == BLK_TASK) fputs("</ul>\n", f);
-                else if (blk == BLK_OL) fputs("</ol>\n", f);
-                else if (blk == BLK_QUOTE) fputs("</blockquote>\n", f);
+            if (blk != HTML_BLK_TABLE) {
+                html_close_block(f, &blk);
                 fputs("<table>\n", f);
-                blk = BLK_TABLE;
-                table_header_done = false;
-                if (r + 1 < nlines && is_table_sep_row(buffer_line(buf, r + 1), buffer_line_len(buf, r + 1))) {
+                blk = HTML_BLK_TABLE;
+                if (r + 1 < nlines &&
+                    is_table_sep_row(buffer_line(buf, r + 1), buffer_line_len(buf, r + 1))) {
                     is_hdr = true;
                 }
-                if (is_hdr) fputs("<thead>\n", f);
-                else fputs("<tbody>\n", f);
+                fputs(is_hdr ? "<thead>\n" : "<tbody>\n", f);
             }
             const char *cell_tag = is_hdr ? "th" : "td";
             fputs("  <tr>", f);
             size_t s = 0;
             while (s < pl.span_count) {
-                if (pl.spans[s].type == MD_TABLE_BORDER) {
-                    s++;
-                    continue;
-                }
+                if (pl.spans[s].type == MD_TABLE_BORDER) { s++; continue; }
                 size_t cell_end = s;
-                while (cell_end < pl.span_count && pl.spans[cell_end].type != MD_TABLE_BORDER) {
-                    cell_end++;
-                }
+                while (cell_end < pl.span_count && pl.spans[cell_end].type != MD_TABLE_BORDER) cell_end++;
                 fprintf(f, "<%s>", cell_tag);
                 html_write_spans(f, raw, &pl, s, cell_end, docs, doc_idx);
                 fprintf(f, "</%s>", cell_tag);
                 s = cell_end;
             }
             fputs("</tr>\n", f);
-            if (is_hdr) {
-                fputs("</thead>\n<tbody>\n", f);
-            }
+            if (is_hdr) fputs("</thead>\n<tbody>\n", f);
         } else {
-            if (blk != BLK_PARA) {
-                if (blk == BLK_UL || blk == BLK_TASK) fputs("</ul>\n", f);
-                else if (blk == BLK_OL) fputs("</ol>\n", f);
-                else if (blk == BLK_QUOTE) fputs("</blockquote>\n", f);
-                else if (blk == BLK_TABLE) fputs("</tbody>\n</table>\n", f);
+            if (blk != HTML_BLK_PARA) {
+                html_close_block(f, &blk);
                 fputs("<p>", f);
-                blk = BLK_PARA;
+                blk = HTML_BLK_PARA;
             } else {
                 fputc(' ', f);
             }
@@ -1167,14 +1127,7 @@ static void export_builtin_html_body(FILE *f, const ExportDocList *docs, size_t 
     }
 
     if (code_tag_open) fputs("</code></pre>\n", f);
-    if (blk == BLK_PARA) fputs("</p>\n", f);
-    else if (blk == BLK_UL || blk == BLK_TASK) fputs("</ul>\n", f);
-    else if (blk == BLK_OL) fputs("</ol>\n", f);
-    else if (blk == BLK_QUOTE) fputs("</blockquote>\n", f);
-    else if (blk == BLK_TABLE) {
-        (void)table_header_done;
-        fputs("</tbody>\n</table>\n", f);
-    }
+    html_close_block(f, &blk);
 }
 
 static bool export_builtin_html(const ExportDocList *docs, const char *out_path,
@@ -1225,6 +1178,7 @@ static bool export_builtin_html(const ExportDocList *docs, const char *out_path,
  * Built-In XML Exporter
  * ========================================================================= */
 
+/** @brief Write XML-escaped text to the output stream. */
 static void xml_escape(FILE *f, const char *s, size_t len) {
     for (size_t i = 0; i < len; ++i) {
         switch (s[i]) {
@@ -1238,6 +1192,7 @@ static void xml_escape(FILE *f, const char *s, size_t len) {
     }
 }
 
+/** @brief Emit inline Markdown spans as structured XML elements, rewriting internal links. */
 static void xml_write_spans(FILE *f, const char *raw, const MdParsedLine *pl,
                             size_t start_idx, size_t end_idx,
                             const ExportDocList *docs, size_t doc_idx) {
@@ -1245,68 +1200,28 @@ static void xml_write_spans(FILE *f, const char *raw, const MdParsedLine *pl,
     while (s < end_idx) {
         MdSpan sp = pl->spans[s];
 
-        if (md_is_header_marker(sp.type) ||
-            sp.type == MD_BLOCKQUOTE_MARKER ||
-            sp.type == MD_LIST_BULLET ||
-            sp.type == MD_TASK_UNCHECKED ||
-            sp.type == MD_TASK_CHECKED ||
-            sp.type == MD_BOLD_MARKER ||
-            sp.type == MD_ITALIC_MARKER ||
-            sp.type == MD_BOLD_ITALIC_MARKER ||
-            sp.type == MD_STRIKE_MARKER ||
-            sp.type == MD_INLINE_CODE_MARKER ||
-            sp.type == MD_TABLE_BORDER) {
+        if (is_skipped_export_marker(sp.type)) {
             s++;
             continue;
         }
 
         if (sp.type == MD_IMAGE_MARKER) {
-            const char *alt = ""; size_t alt_len = 0;
-            const char *url = ""; size_t url_len = 0;
-            size_t k = s + 1;
-            while (k < end_idx &&
-                   (pl->spans[k].type == MD_LINK_BRACKET ||
-                    pl->spans[k].type == MD_LINK_TEXT ||
-                    pl->spans[k].type == MD_LINK_URL_PAREN ||
-                    pl->spans[k].type == MD_LINK_URL)) {
-                if (pl->spans[k].type == MD_LINK_TEXT) {
-                    alt = raw + pl->spans[k].start;
-                    alt_len = pl->spans[k].end - pl->spans[k].start;
-                } else if (pl->spans[k].type == MD_LINK_URL) {
-                    url = raw + pl->spans[k].start;
-                    url_len = pl->spans[k].end - pl->spans[k].start;
-                }
-                k++;
-                if (pl->spans[k - 1].type == MD_LINK_URL_PAREN && raw[pl->spans[k - 1].start] == ')') break;
-            }
+            const char *alt, *url;
+            size_t alt_len, url_len;
+            s = extract_link_or_image_span(raw, pl, s, end_idx, &alt, &alt_len, &url, &url_len);
             fputs("<image src=\"", f);
             xml_escape(f, url, url_len);
             fputs("\" alt=\"", f);
             xml_escape(f, alt, alt_len);
             fputs("\"/>", f);
-            s = k;
             continue;
         }
 
         if (sp.type == MD_LINK_BRACKET && raw[sp.start] == '[') {
-            const char *ltext = ""; size_t ltext_len = 0;
-            const char *url = ""; size_t url_len = 0;
-            size_t k = s + 1;
-            while (k < end_idx &&
-                   (pl->spans[k].type == MD_LINK_BRACKET ||
-                    pl->spans[k].type == MD_LINK_TEXT ||
-                    pl->spans[k].type == MD_LINK_URL_PAREN ||
-                    pl->spans[k].type == MD_LINK_URL)) {
-                if (pl->spans[k].type == MD_LINK_TEXT) {
-                    ltext = raw + pl->spans[k].start;
-                    ltext_len = pl->spans[k].end - pl->spans[k].start;
-                } else if (pl->spans[k].type == MD_LINK_URL) {
-                    url = raw + pl->spans[k].start;
-                    url_len = pl->spans[k].end - pl->spans[k].start;
-                }
-                k++;
-                if (pl->spans[k - 1].type == MD_LINK_URL_PAREN && raw[pl->spans[k - 1].start] == ')') break;
-            }
+            const char *ltext, *url;
+            size_t ltext_len, url_len;
+            s = extract_link_or_image_span(raw, pl, s, end_idx, &ltext, &ltext_len, &url, &url_len);
+
             char frag[128] = {0};
             ssize_t target_idx = find_linked_doc_index(docs, doc_idx, url, url_len, frag, sizeof(frag));
             fputs("<link url=\"", f);
@@ -1318,7 +1233,6 @@ static void xml_write_spans(FILE *f, const char *raw, const MdParsedLine *pl,
             fputs("\">", f);
             xml_escape(f, ltext, ltext_len);
             fputs("</link>", f);
-            s = k;
             continue;
         }
 
@@ -1348,10 +1262,28 @@ static void xml_write_spans(FILE *f, const char *raw, const MdParsedLine *pl,
     }
 }
 
+typedef enum {
+    XML_BLK_NONE, XML_BLK_PARA, XML_BLK_LIST, XML_BLK_QUOTE, XML_BLK_TABLE
+} XmlBlockState;
+
+/** @brief Close the currently open XML block element and reset state to XML_BLK_NONE. */
+static void xml_close_block(FILE *f, XmlBlockState *blk) {
+    switch (*blk) {
+        case XML_BLK_PARA:  fputs("</paragraph>\n", f);    break;
+        case XML_BLK_LIST:  fputs("  </list>\n", f);       break;
+        case XML_BLK_QUOTE: fputs("  </blockquote>\n", f); break;
+        case XML_BLK_TABLE: fputs("  </table>\n", f);      break;
+        case XML_BLK_NONE:
+        default:            break;
+    }
+    *blk = XML_BLK_NONE;
+}
+
+/** @brief Render a single document node's body lines as structured XML elements. */
 static void export_builtin_xml_body(FILE *f, const ExportDocList *docs, size_t doc_idx) {
     const Buffer *buf = docs->nodes[doc_idx].buf;
 
-    enum { BLK_NONE, BLK_PARA, BLK_LIST, BLK_QUOTE, BLK_TABLE } blk = BLK_NONE;
+    XmlBlockState blk = XML_BLK_NONE;
     bool in_code = false;
     bool code_open = false;
     char lang[32] = {0};
@@ -1366,13 +1298,7 @@ static void export_builtin_xml_body(FILE *f, const ExportDocList *docs, size_t d
         md_parse_line(raw, len, &in_code, lang, sizeof(lang), &pl);
 
         if (pl.is_code_block && pl.span_count > 0 && pl.spans[0].type == MD_CODE_FENCE) {
-            if (blk != BLK_NONE) {
-                if (blk == BLK_PARA) fputs("</paragraph>\n", f);
-                else if (blk == BLK_LIST) fputs("  </list>\n", f);
-                else if (blk == BLK_QUOTE) fputs("  </blockquote>\n", f);
-                else if (blk == BLK_TABLE) fputs("  </table>\n", f);
-                blk = BLK_NONE;
-            }
+            xml_close_block(f, &blk);
             if (!was_in_code && in_code) {
                 if (lang[0]) {
                     fputs("  <codeblock language=\"", f);
@@ -1398,54 +1324,35 @@ static void export_builtin_xml_body(FILE *f, const ExportDocList *docs, size_t d
         }
 
         if (len == 0) {
-            if (blk == BLK_PARA) fputs("</paragraph>\n", f);
-            else if (blk == BLK_LIST) fputs("  </list>\n", f);
-            else if (blk == BLK_QUOTE) fputs("  </blockquote>\n", f);
-            else if (blk == BLK_TABLE) fputs("  </table>\n", f);
-            blk = BLK_NONE;
+            xml_close_block(f, &blk);
             md_parsed_line_free(&pl);
             continue;
         }
 
         if (pl.header_level > 0) {
-            if (blk != BLK_NONE) {
-                if (blk == BLK_PARA) fputs("</paragraph>\n", f);
-                else if (blk == BLK_LIST) fputs("  </list>\n", f);
-                else if (blk == BLK_QUOTE) fputs("  </blockquote>\n", f);
-                else if (blk == BLK_TABLE) fputs("  </table>\n", f);
-                blk = BLK_NONE;
-            }
+            xml_close_block(f, &blk);
             fprintf(f, "  <heading level=\"%d\">", pl.header_level);
             xml_write_spans(f, raw, &pl, 0, pl.span_count, docs, doc_idx);
             fputs("</heading>\n", f);
         } else if (pl.is_hrule) {
-            if (blk != BLK_NONE) {
-                if (blk == BLK_PARA) fputs("</paragraph>\n", f);
-                else if (blk == BLK_LIST) fputs("  </list>\n", f);
-                else if (blk == BLK_QUOTE) fputs("  </blockquote>\n", f);
-                else if (blk == BLK_TABLE) fputs("  </table>\n", f);
-                blk = BLK_NONE;
-            }
+            xml_close_block(f, &blk);
             fputs("  <hrule/>\n", f);
         } else if (pl.is_blockquote) {
-            if (blk != BLK_QUOTE) {
-                if (blk == BLK_PARA) fputs("</paragraph>\n", f);
-                else if (blk == BLK_LIST) fputs("  </list>\n", f);
-                else if (blk == BLK_TABLE) fputs("  </table>\n", f);
+            if (blk != XML_BLK_QUOTE) {
+                xml_close_block(f, &blk);
                 fputs("  <blockquote>\n", f);
-                blk = BLK_QUOTE;
+                blk = XML_BLK_QUOTE;
             }
             fputs("    <paragraph>", f);
             xml_write_spans(f, raw, &pl, 0, pl.span_count, docs, doc_idx);
             fputs("</paragraph>\n", f);
         } else if (pl.is_list_item) {
-            if (blk != BLK_LIST) {
-                if (blk == BLK_PARA) fputs("</paragraph>\n", f);
-                else if (blk == BLK_QUOTE) fputs("  </blockquote>\n", f);
-                else if (blk == BLK_TABLE) fputs("  </table>\n", f);
-                const char *ltype = pl.is_task ? "task" : (is_ordered_bullet(raw, len) ? "ordered" : "unordered");
+            if (blk != XML_BLK_LIST) {
+                xml_close_block(f, &blk);
+                const char *ltype = pl.is_task ? "task"
+                                               : (is_ordered_bullet(raw, len) ? "ordered" : "unordered");
                 fprintf(f, "  <list type=\"%s\">\n", ltype);
-                blk = BLK_LIST;
+                blk = XML_BLK_LIST;
             }
             if (pl.is_task) {
                 fprintf(f, "    <task checked=\"%s\">", pl.task_checked ? "true" : "false");
@@ -1462,13 +1369,12 @@ static void export_builtin_xml_body(FILE *f, const ExportDocList *docs, size_t d
                 continue;
             }
             bool is_hdr = false;
-            if (blk != BLK_TABLE) {
-                if (blk == BLK_PARA) fputs("</paragraph>\n", f);
-                else if (blk == BLK_LIST) fputs("  </list>\n", f);
-                else if (blk == BLK_QUOTE) fputs("  </blockquote>\n", f);
+            if (blk != XML_BLK_TABLE) {
+                xml_close_block(f, &blk);
                 fputs("  <table>\n", f);
-                blk = BLK_TABLE;
-                if (r + 1 < nlines && is_table_sep_row(buffer_line(buf, r + 1), buffer_line_len(buf, r + 1))) {
+                blk = XML_BLK_TABLE;
+                if (r + 1 < nlines &&
+                    is_table_sep_row(buffer_line(buf, r + 1), buffer_line_len(buf, r + 1))) {
                     is_hdr = true;
                 }
             }
@@ -1485,12 +1391,10 @@ static void export_builtin_xml_body(FILE *f, const ExportDocList *docs, size_t d
             }
             fputs("</row>\n", f);
         } else {
-            if (blk != BLK_PARA) {
-                if (blk == BLK_LIST) fputs("  </list>\n", f);
-                else if (blk == BLK_QUOTE) fputs("  </blockquote>\n", f);
-                else if (blk == BLK_TABLE) fputs("  </table>\n", f);
+            if (blk != XML_BLK_PARA) {
+                xml_close_block(f, &blk);
                 fputs("  <paragraph>", f);
-                blk = BLK_PARA;
+                blk = XML_BLK_PARA;
             } else {
                 fputc(' ', f);
             }
@@ -1501,10 +1405,7 @@ static void export_builtin_xml_body(FILE *f, const ExportDocList *docs, size_t d
     }
 
     if (code_open) fputs("</codeblock>\n", f);
-    if (blk == BLK_PARA) fputs("</paragraph>\n", f);
-    else if (blk == BLK_LIST) fputs("  </list>\n", f);
-    else if (blk == BLK_QUOTE) fputs("  </blockquote>\n", f);
-    else if (blk == BLK_TABLE) fputs("  </table>\n", f);
+    xml_close_block(f, &blk);
 }
 
 static bool export_builtin_xml(const ExportDocList *docs, const char *out_path,
@@ -1541,6 +1442,7 @@ static bool export_builtin_xml(const ExportDocList *docs, const char *out_path,
  * Built-In LaTeX Exporter (Single Unified Document)
  * ========================================================================= */
 
+/** @brief Write LaTeX-escaped text to the output stream. */
 static void latex_escape(FILE *f, const char *s, size_t len) {
     for (size_t i = 0; i < len; ++i) {
         switch (s[i]) {
@@ -1559,6 +1461,7 @@ static void latex_escape(FILE *f, const char *s, size_t len) {
     }
 }
 
+/** @brief Emit inline Markdown spans as LaTeX commands, converting internal links to `\hyperlink`. */
 static void latex_write_spans(FILE *f, const char *raw, const MdParsedLine *pl,
                               size_t start_idx, size_t end_idx,
                               const ExportDocList *docs, size_t doc_idx) {
@@ -1566,68 +1469,27 @@ static void latex_write_spans(FILE *f, const char *raw, const MdParsedLine *pl,
     while (s < end_idx) {
         MdSpan sp = pl->spans[s];
 
-        if (md_is_header_marker(sp.type) ||
-            sp.type == MD_BLOCKQUOTE_MARKER ||
-            sp.type == MD_LIST_BULLET ||
-            sp.type == MD_TASK_UNCHECKED ||
-            sp.type == MD_TASK_CHECKED ||
-            sp.type == MD_BOLD_MARKER ||
-            sp.type == MD_ITALIC_MARKER ||
-            sp.type == MD_BOLD_ITALIC_MARKER ||
-            sp.type == MD_STRIKE_MARKER ||
-            sp.type == MD_INLINE_CODE_MARKER ||
-            sp.type == MD_TABLE_BORDER) {
+        if (is_skipped_export_marker(sp.type)) {
             s++;
             continue;
         }
 
         if (sp.type == MD_IMAGE_MARKER) {
-            const char *alt = ""; size_t alt_len = 0;
-            const char *url = ""; size_t url_len = 0;
-            size_t k = s + 1;
-            while (k < end_idx &&
-                   (pl->spans[k].type == MD_LINK_BRACKET ||
-                    pl->spans[k].type == MD_LINK_TEXT ||
-                    pl->spans[k].type == MD_LINK_URL_PAREN ||
-                    pl->spans[k].type == MD_LINK_URL)) {
-                if (pl->spans[k].type == MD_LINK_TEXT) {
-                    alt = raw + pl->spans[k].start;
-                    alt_len = pl->spans[k].end - pl->spans[k].start;
-                } else if (pl->spans[k].type == MD_LINK_URL) {
-                    url = raw + pl->spans[k].start;
-                    url_len = pl->spans[k].end - pl->spans[k].start;
-                }
-                k++;
-                if (pl->spans[k - 1].type == MD_LINK_URL_PAREN && raw[pl->spans[k - 1].start] == ')') break;
-            }
+            const char *alt, *url;
+            size_t alt_len, url_len;
+            s = extract_link_or_image_span(raw, pl, s, end_idx, &alt, &alt_len, &url, &url_len);
             fputs("\\texttt{[Image: ", f);
             latex_escape(f, alt, alt_len);
             fputs(" (", f);
             latex_escape(f, url, url_len);
             fputs(")]}", f);
-            s = k;
             continue;
         }
 
         if (sp.type == MD_LINK_BRACKET && raw[sp.start] == '[') {
-            const char *ltext = ""; size_t ltext_len = 0;
-            const char *url = ""; size_t url_len = 0;
-            size_t k = s + 1;
-            while (k < end_idx &&
-                   (pl->spans[k].type == MD_LINK_BRACKET ||
-                    pl->spans[k].type == MD_LINK_TEXT ||
-                    pl->spans[k].type == MD_LINK_URL_PAREN ||
-                    pl->spans[k].type == MD_LINK_URL)) {
-                if (pl->spans[k].type == MD_LINK_TEXT) {
-                    ltext = raw + pl->spans[k].start;
-                    ltext_len = pl->spans[k].end - pl->spans[k].start;
-                } else if (pl->spans[k].type == MD_LINK_URL) {
-                    url = raw + pl->spans[k].start;
-                    url_len = pl->spans[k].end - pl->spans[k].start;
-                }
-                k++;
-                if (pl->spans[k - 1].type == MD_LINK_URL_PAREN && raw[pl->spans[k - 1].start] == ')') break;
-            }
+            const char *ltext, *url;
+            size_t ltext_len, url_len;
+            s = extract_link_or_image_span(raw, pl, s, end_idx, &ltext, &ltext_len, &url, &url_len);
 
             char frag[128] = {0};
             ssize_t target_idx = find_linked_doc_index(docs, doc_idx, url, url_len, frag, sizeof(frag));
@@ -1642,7 +1504,6 @@ static void latex_write_spans(FILE *f, const char *raw, const MdParsedLine *pl,
                 latex_escape(f, ltext, ltext_len);
                 fputs("}", f);
             }
-            s = k;
             continue;
         }
 
@@ -1672,10 +1533,30 @@ static void latex_write_spans(FILE *f, const char *raw, const MdParsedLine *pl,
     }
 }
 
+typedef enum {
+    LATEX_BLK_NONE, LATEX_BLK_PARA, LATEX_BLK_UL,
+    LATEX_BLK_OL, LATEX_BLK_QUOTE, LATEX_BLK_TABLE
+} LatexBlockState;
+
+/** @brief Close the currently open LaTeX environment and reset state to LATEX_BLK_NONE. */
+static void latex_close_block(FILE *f, LatexBlockState *blk) {
+    switch (*blk) {
+        case LATEX_BLK_PARA:  fputs("\n\n", f);                     break;
+        case LATEX_BLK_UL:    fputs("\\end{itemize}\n\n", f);       break;
+        case LATEX_BLK_OL:    fputs("\\end{enumerate}\n\n", f);     break;
+        case LATEX_BLK_QUOTE: fputs("\\end{quote}\n\n", f);         break;
+        case LATEX_BLK_TABLE: fputs("\\hline\n\\end{tabular}\n\n", f); break;
+        case LATEX_BLK_NONE:
+        default:              break;
+    }
+    *blk = LATEX_BLK_NONE;
+}
+
+/** @brief Render a single document node's body lines inside a unified LaTeX document. */
 static void export_builtin_latex_body(FILE *f, const ExportDocList *docs, size_t doc_idx) {
     const Buffer *buf = docs->nodes[doc_idx].buf;
 
-    enum { BLK_NONE, BLK_PARA, BLK_UL, BLK_OL, BLK_QUOTE, BLK_TABLE } blk = BLK_NONE;
+    LatexBlockState blk = LATEX_BLK_NONE;
     bool in_code = false;
     bool code_open = false;
     char lang[32] = {0};
@@ -1690,14 +1571,7 @@ static void export_builtin_latex_body(FILE *f, const ExportDocList *docs, size_t
         md_parse_line(raw, len, &in_code, lang, sizeof(lang), &pl);
 
         if (pl.is_code_block && pl.span_count > 0 && pl.spans[0].type == MD_CODE_FENCE) {
-            if (blk != BLK_NONE) {
-                if (blk == BLK_PARA) fputs("\n\n", f);
-                else if (blk == BLK_UL) fputs("\\end{itemize}\n\n", f);
-                else if (blk == BLK_OL) fputs("\\end{enumerate}\n\n", f);
-                else if (blk == BLK_QUOTE) fputs("\\end{quote}\n\n", f);
-                else if (blk == BLK_TABLE) fputs("\\hline\n\\end{tabular}\n\n", f);
-                blk = BLK_NONE;
-            }
+            latex_close_block(f, &blk);
             if (!was_in_code && in_code) {
                 fputs("\\begin{verbatim}\n", f);
                 code_open = true;
@@ -1717,25 +1591,13 @@ static void export_builtin_latex_body(FILE *f, const ExportDocList *docs, size_t
         }
 
         if (len == 0) {
-            if (blk == BLK_PARA) fputs("\n\n", f);
-            else if (blk == BLK_UL) fputs("\\end{itemize}\n\n", f);
-            else if (blk == BLK_OL) fputs("\\end{enumerate}\n\n", f);
-            else if (blk == BLK_QUOTE) fputs("\\end{quote}\n\n", f);
-            else if (blk == BLK_TABLE) fputs("\\hline\n\\end{tabular}\n\n", f);
-            blk = BLK_NONE;
+            latex_close_block(f, &blk);
             md_parsed_line_free(&pl);
             continue;
         }
 
         if (pl.header_level > 0) {
-            if (blk != BLK_NONE) {
-                if (blk == BLK_PARA) fputs("\n\n", f);
-                else if (blk == BLK_UL) fputs("\\end{itemize}\n\n", f);
-                else if (blk == BLK_OL) fputs("\\end{enumerate}\n\n", f);
-                else if (blk == BLK_QUOTE) fputs("\\end{quote}\n\n", f);
-                else if (blk == BLK_TABLE) fputs("\\hline\n\\end{tabular}\n\n", f);
-                blk = BLK_NONE;
-            }
+            latex_close_block(f, &blk);
             const char *cmd = "\\section";
             if (pl.header_level == 2) cmd = "\\subsection";
             else if (pl.header_level == 3) cmd = "\\subsubsection";
@@ -1746,36 +1608,22 @@ static void export_builtin_latex_body(FILE *f, const ExportDocList *docs, size_t
             latex_write_spans(f, raw, &pl, 0, pl.span_count, docs, doc_idx);
             fputs("}\n\n", f);
         } else if (pl.is_hrule) {
-            if (blk != BLK_NONE) {
-                if (blk == BLK_PARA) fputs("\n\n", f);
-                else if (blk == BLK_UL) fputs("\\end{itemize}\n\n", f);
-                else if (blk == BLK_OL) fputs("\\end{enumerate}\n\n", f);
-                else if (blk == BLK_QUOTE) fputs("\\end{quote}\n\n", f);
-                else if (blk == BLK_TABLE) fputs("\\hline\n\\end{tabular}\n\n", f);
-                blk = BLK_NONE;
-            }
+            latex_close_block(f, &blk);
             fputs("\\noindent\\rule{\\textwidth}{0.4pt}\n\n", f);
         } else if (pl.is_blockquote) {
-            if (blk != BLK_QUOTE) {
-                if (blk == BLK_PARA) fputs("\n\n", f);
-                else if (blk == BLK_UL) fputs("\\end{itemize}\n\n", f);
-                else if (blk == BLK_OL) fputs("\\end{enumerate}\n\n", f);
-                else if (blk == BLK_TABLE) fputs("\\hline\n\\end{tabular}\n\n", f);
+            if (blk != LATEX_BLK_QUOTE) {
+                latex_close_block(f, &blk);
                 fputs("\\begin{quote}\n", f);
-                blk = BLK_QUOTE;
+                blk = LATEX_BLK_QUOTE;
             }
             latex_write_spans(f, raw, &pl, 0, pl.span_count, docs, doc_idx);
             fputs("\n", f);
         } else if (pl.is_list_item) {
-            int want = (!pl.is_task && is_ordered_bullet(raw, len)) ? BLK_OL : BLK_UL;
-            if ((int)blk != want) {
-                if (blk == BLK_PARA) fputs("\n\n", f);
-                else if (blk == BLK_UL) fputs("\\end{itemize}\n\n", f);
-                else if (blk == BLK_OL) fputs("\\end{enumerate}\n\n", f);
-                else if (blk == BLK_QUOTE) fputs("\\end{quote}\n\n", f);
-                else if (blk == BLK_TABLE) fputs("\\hline\n\\end{tabular}\n\n", f);
-
-                fputs(want == BLK_OL ? "\\begin{enumerate}\n" : "\\begin{itemize}\n", f);
+            LatexBlockState want = (!pl.is_task && is_ordered_bullet(raw, len))
+                                       ? LATEX_BLK_OL : LATEX_BLK_UL;
+            if (blk != want) {
+                latex_close_block(f, &blk);
+                fputs(want == LATEX_BLK_OL ? "\\begin{enumerate}\n" : "\\begin{itemize}\n", f);
                 blk = want;
             }
             if (pl.is_task) {
@@ -1791,16 +1639,13 @@ static void export_builtin_latex_body(FILE *f, const ExportDocList *docs, size_t
                 md_parsed_line_free(&pl);
                 continue;
             }
-            if (blk != BLK_TABLE) {
-                if (blk == BLK_PARA) fputs("\n\n", f);
-                else if (blk == BLK_UL) fputs("\\end{itemize}\n\n", f);
-                else if (blk == BLK_OL) fputs("\\end{enumerate}\n\n", f);
-                else if (blk == BLK_QUOTE) fputs("\\end{quote}\n\n", f);
+            if (blk != LATEX_BLK_TABLE) {
+                latex_close_block(f, &blk);
                 size_t ncols = count_table_cols(raw, len);
                 fputs("\\begin{tabular}{|", f);
                 for (size_t c = 0; c < ncols; ++c) fputs("l|", f);
                 fputs("}\n\\hline\n", f);
-                blk = BLK_TABLE;
+                blk = LATEX_BLK_TABLE;
             }
             size_t s = 0;
             bool first_cell = true;
@@ -1815,12 +1660,9 @@ static void export_builtin_latex_body(FILE *f, const ExportDocList *docs, size_t
             }
             fputs(" \\\\\n", f);
         } else {
-            if (blk != BLK_PARA) {
-                if (blk == BLK_UL) fputs("\\end{itemize}\n\n", f);
-                else if (blk == BLK_OL) fputs("\\end{enumerate}\n\n", f);
-                else if (blk == BLK_QUOTE) fputs("\\end{quote}\n\n", f);
-                else if (blk == BLK_TABLE) fputs("\\hline\n\\end{tabular}\n\n", f);
-                blk = BLK_PARA;
+            if (blk != LATEX_BLK_PARA) {
+                latex_close_block(f, &blk);
+                blk = LATEX_BLK_PARA;
             } else {
                 fputc(' ', f);
             }
@@ -1831,11 +1673,7 @@ static void export_builtin_latex_body(FILE *f, const ExportDocList *docs, size_t
     }
 
     if (code_open) fputs("\\end{verbatim}\n\n", f);
-    if (blk == BLK_PARA) fputs("\n\n", f);
-    else if (blk == BLK_UL) fputs("\\end{itemize}\n\n", f);
-    else if (blk == BLK_OL) fputs("\\end{enumerate}\n\n", f);
-    else if (blk == BLK_QUOTE) fputs("\\end{quote}\n\n", f);
-    else if (blk == BLK_TABLE) fputs("\\hline\n\\end{tabular}\n\n", f);
+    latex_close_block(f, &blk);
 }
 
 static bool export_builtin_latex(const ExportDocList *docs, const char *out_path,
