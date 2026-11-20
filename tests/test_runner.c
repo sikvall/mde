@@ -39,8 +39,15 @@ static int g_tests_passed = 0;
 static void test_version(void) {
     printf("--- Testing Version & Build Metadata ---\n");
     TEST_ASSERT(strcmp(MDE_APP_NAME, "mde") == 0, "App name is 'mde'");
+    TEST_ASSERT(strcmp(MDE_APP_TITLE, "Markdown Editor") == 0, "App title is 'Markdown Editor'");
     TEST_ASSERT(strcmp(MDE_VERSION_STRING, "0.1.0") == 0, "Version string is '0.1.0'");
+    TEST_ASSERT(MDE_VERSION_MAJOR == 0 && MDE_VERSION_MINOR == 1 && MDE_VERSION_PATCH == 0,
+                "Numeric version macros match 0.1.0");
     TEST_ASSERT(strlen(MDE_BUILD_DATE) > 0, "Build date is non-empty");
+    TEST_ASSERT(strlen(MDE_BUILD_TIME) > 0, "Build time is non-empty");
+    TEST_ASSERT(strlen(MDE_AUTHOR) > 0, "Author is non-empty");
+    TEST_ASSERT(strlen(MDE_MAINTAINER) > 0, "Maintainer is non-empty");
+    TEST_ASSERT(strlen(MDE_DESCRIPTION) > 0, "Description is non-empty");
 }
 
 static void test_utf8(void) {
@@ -865,6 +872,347 @@ static void test_export_subsystem(void) {
     buffer_free(&buf);
 }
 
+static void test_nano_editing_and_nav(void) {
+    printf("--- Testing Nano-Compatible Line Cut/Copy, Mark Toggle, Goto & Search ---\n");
+    Editor ed;
+    editor_init(&ed, NULL);
+
+    editor_paste_text(&ed, "Alpha line\nBeta line\nGamma line", 31);
+    TEST_ASSERT(buffer_line_count(&ed.buffer) == 3, "Buffer has 3 lines");
+
+    // Mark toggle (M-A / ^^ / Ctrl+Space)
+    ed.cursor_row = 0; ed.cursor_col = 0;
+    editor_toggle_mark(&ed);
+    TEST_ASSERT(ed.mark_active == true, "Toggle mark turns mark ON");
+    editor_toggle_mark(&ed);
+    TEST_ASSERT(ed.mark_active == false, "Toggle mark turns mark OFF");
+
+    // Copy entire line (M-6 without selection)
+    ed.cursor_row = 1; ed.cursor_col = 2;
+    TEST_ASSERT(editor_copy_line(&ed), "editor_copy_line succeeded on middle line");
+    TEST_ASSERT(ed.clipboard != NULL && strcmp(ed.clipboard, "Beta line\n") == 0,
+                "Copied line includes trailing newline");
+    TEST_ASSERT(buffer_line_count(&ed.buffer) == 3, "Buffer unchanged after copy line");
+
+    // Cut entire line (^K without selection) + Undo/Redo + Paste (^U)
+    ed.cursor_row = 0; ed.cursor_col = 3;
+    TEST_ASSERT(editor_cut_line(&ed), "editor_cut_line succeeded on row 0");
+    TEST_ASSERT(ed.clipboard != NULL && strcmp(ed.clipboard, "Alpha line\n") == 0,
+                "Cut line stored 'Alpha line\\n' in clipboard");
+    TEST_ASSERT(buffer_line_count(&ed.buffer) == 2, "Line count reduced to 2 after cutting row 0");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "Beta line") == 0, "Row 0 is now 'Beta line'");
+    TEST_ASSERT(ed.cursor_row == 0 && ed.cursor_col == 0, "Cursor moved to (0, 0)");
+
+    // Paste cut line back at row 0 (^U)
+    TEST_ASSERT(editor_paste(&ed), "Paste cut line succeeded");
+    TEST_ASSERT(buffer_line_count(&ed.buffer) == 3, "Line count restored to 3 after paste");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "Alpha line") == 0, "Row 0 restored to 'Alpha line'");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 1), "Beta line") == 0, "Row 1 is 'Beta line'");
+
+    // Undo paste and undo cut_line
+    editor_undo(&ed);
+    TEST_ASSERT(buffer_line_count(&ed.buffer) == 2, "Undo paste left 2 lines");
+    editor_undo(&ed);
+    TEST_ASSERT(buffer_line_count(&ed.buffer) == 3, "Undo cut_line restored 3 lines");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "Alpha line") == 0, "Undo cut_line restored 'Alpha line'");
+
+    // Cut last line (^K on last row)
+    ed.cursor_row = 2; ed.cursor_col = 4;
+    TEST_ASSERT(editor_cut_line(&ed), "editor_cut_line succeeded on last line");
+    TEST_ASSERT(ed.clipboard != NULL && strcmp(ed.clipboard, "Gamma line") == 0,
+                "Cut last line stored 'Gamma line'");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 2), "") == 0, "Last line cleared");
+    editor_undo(&ed);
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 2), "Gamma line") == 0, "Undo restored last line");
+
+    // Go to line (^/ / M-G)
+    editor_goto_line(&ed, 2, 6);
+    TEST_ASSERT(ed.cursor_row == 1 && ed.cursor_col == 5, "Goto line 2, col 6 -> (1, 5)");
+    editor_goto_line(&ed, 999, 1);
+    TEST_ASSERT(ed.cursor_row == 2 && ed.cursor_col == 0, "Goto clamps past end to last line");
+
+    // Doc start / Doc end (M-\ and M-/)
+    editor_move_doc_start(&ed);
+    TEST_ASSERT(ed.cursor_row == 0 && ed.cursor_col == 0, "Doc start moves to (0, 0)");
+    editor_move_doc_end(&ed);
+    TEST_ASSERT(ed.cursor_row == 2 && ed.cursor_col == 10, "Doc end moves to end of last line");
+
+    // Report cursor position (^C)
+    editor_report_position(&ed);
+    TEST_ASSERT(strstr(ed.status_msg, "Ln 3/3") != NULL, "Report position shows line 3/3");
+    TEST_ASSERT(strstr(ed.status_msg, "100%") != NULL, "Report position shows 100%");
+
+    // Forward & backward search (^W and ^Q)
+    editor_move_doc_start(&ed);
+    TEST_ASSERT(editor_search_find_next(&ed, "line", true), "Forward search found 'line'");
+    TEST_ASSERT(ed.cursor_row == 0 && ed.cursor_col == 6, "First forward match on row 0 col 6");
+    TEST_ASSERT(editor_search_find_next(&ed, "line", true), "Second forward search found 'line'");
+    TEST_ASSERT(ed.cursor_row == 1 && ed.cursor_col == 5, "Second forward match on row 1 col 5");
+    TEST_ASSERT(editor_search_find_next(&ed, "line", false), "Backward search found previous 'line'");
+    TEST_ASSERT(ed.cursor_row == 0 && ed.cursor_col == 6, "Backward match returned to row 0 col 6");
+    TEST_ASSERT(editor_search_find_next(&ed, "Alpha", true), "Wrap-around forward search finds 'Alpha' at (0, 0)");
+    TEST_ASSERT(ed.cursor_row == 0 && ed.cursor_col == 0, "Wrapped match is at (0, 0)");
+
+    editor_free(&ed);
+}
+
+static void write_text_file(const char *path, const char *content) {
+    FILE *f = fopen(path, "wb");
+    if (f) {
+        fputs(content, f);
+        fclose(f);
+    }
+}
+
+static size_t count_occurrences(const char *haystack, const char *needle) {
+    if (!haystack || !needle || !*needle) return 0;
+    size_t count = 0;
+    size_t nlen = strlen(needle);
+    const char *p = haystack;
+    while ((p = strstr(p, needle)) != NULL) {
+        count++;
+        p += nlen;
+    }
+    return count;
+}
+
+static void test_hypertext_linking_and_export(void) {
+    printf("--- Testing Hypertext File Linking & Multi-File Linked Export ---\n");
+
+    const char *root_dir = "/tmp/mde_ht_test";
+    const char *sub_dir  = "/tmp/mde_ht_test/chapters";
+    mkdir(root_dir, 0755);
+    mkdir(sub_dir, 0755);
+
+    const char *index_path = "/tmp/mde_ht_test/index.md";
+    const char *ch1_path   = "/tmp/mde_ht_test/chapters/ch1.md";
+    const char *ch2_path   = "/tmp/mde_ht_test/chapters/ch2.md";
+    const char *new_path   = "/tmp/mde_ht_test/chapters/new_note.md";
+    remove(new_path);
+
+    write_text_file(index_path,
+        "# Book Overview\n"
+        "\n"
+        "Start with [Chapter One](chapters/ch1.md) or jump to [Details](chapters/ch1.md#deep-dive).\n");
+
+    write_text_file(ch1_path,
+        "# Chapter One\n"
+        "\n"
+        "Intro paragraph.\n"
+        "\n"
+        "## Deep Dive\n"
+        "\n"
+        "Continue to [Chapter Two](ch2.md).\n");
+
+    write_text_file(ch2_path,
+        "# Chapter Two\n"
+        "\n"
+        "Final chapter. Return to [Book Overview](../index.md) or visit [Web](https://example.org).\n");
+
+    // 1. Relative path computation
+    char rel[256];
+    TEST_ASSERT(editor_make_relative_path(index_path, ch1_path, rel, sizeof(rel)) &&
+                strcmp(rel, "chapters/ch1.md") == 0,
+                "Relative path to subdirectory is 'chapters/ch1.md'");
+    TEST_ASSERT(editor_make_relative_path(ch1_path, index_path, rel, sizeof(rel)) &&
+                strcmp(rel, "../index.md") == 0,
+                "Relative path to parent directory is '../index.md'");
+    TEST_ASSERT(editor_make_relative_path(ch1_path, ch2_path, rel, sizeof(rel)) &&
+                strcmp(rel, "ch2.md") == 0,
+                "Relative path to sibling file is 'ch2.md'");
+
+    // 2. Editor link insertion, following, #anchor jump & history back
+    Editor ed;
+    editor_init(&ed, index_path);
+    ed.cursor_row = 2;
+    ed.cursor_col = 15; // Inside [Chapter One](chapters/ch1.md)
+
+    char url[256] = {0}, anchor[128] = {0};
+    TEST_ASSERT(editor_extract_link_at_cursor(&ed, url, sizeof(url), anchor, sizeof(anchor)),
+                "Extracted link at cursor");
+    TEST_ASSERT(strcmp(url, "chapters/ch1.md") == 0 && anchor[0] == '\0',
+                "Extracted URL 'chapters/ch1.md' with empty anchor");
+
+    // Follow link to ch1.md
+    TEST_ASSERT(editor_follow_link(&ed), "Followed link from index.md to chapters/ch1.md");
+    TEST_ASSERT(ed.buffer.file_path && strcmp(ed.buffer.file_path, ch1_path) == 0,
+                "Active file is now chapters/ch1.md");
+    TEST_ASSERT(ed.link_history_count == 1, "Link history pushed previous location");
+
+    // Follow link from ch1.md to ch2.md
+    ed.cursor_row = 6; ed.cursor_col = 15;
+    TEST_ASSERT(editor_follow_link(&ed), "Followed link from ch1.md to ch2.md");
+    TEST_ASSERT(ed.buffer.file_path && strcmp(ed.buffer.file_path, ch2_path) == 0,
+                "Active file is now chapters/ch2.md");
+    TEST_ASSERT(ed.link_history_count == 2, "Link history depth is 2");
+
+    // Navigate back twice to index.md and verify cursor restoration
+    TEST_ASSERT(editor_navigate_back(&ed), "Navigated back to ch1.md");
+    TEST_ASSERT(ed.buffer.file_path && strcmp(ed.buffer.file_path, ch1_path) == 0,
+                "Restored chapters/ch1.md");
+    TEST_ASSERT(editor_navigate_back(&ed), "Navigated back to index.md");
+    TEST_ASSERT(ed.buffer.file_path && strcmp(ed.buffer.file_path, index_path) == 0,
+                "Restored index.md");
+    TEST_ASSERT(ed.cursor_row == 2 && ed.cursor_col == 15,
+                "Restored exact cursor position (2, 15) in index.md");
+
+    // Follow link with #anchor fragment to ## Deep Dive in ch1.md
+    ed.cursor_row = 2;
+    ed.cursor_col = 55; // Inside [Details](chapters/ch1.md#deep-dive)
+    TEST_ASSERT(editor_extract_link_at_cursor(&ed, url, sizeof(url), anchor, sizeof(anchor)) &&
+                strcmp(url, "chapters/ch1.md") == 0 && strcmp(anchor, "deep-dive") == 0,
+                "Extracted link with #deep-dive anchor");
+    TEST_ASSERT(editor_follow_link(&ed), "Followed link with #deep-dive anchor");
+    TEST_ASSERT(ed.cursor_row == 4, "Jumped directly to '## Deep Dive' heading on row 4");
+
+    // Insert file link via editor_insert_file_link (derives H1 title & relative path)
+    editor_navigate_back(&ed);
+    editor_move_doc_end(&ed);
+    editor_smart_enter(&ed);
+    TEST_ASSERT(editor_insert_file_link(&ed, ch2_path), "Inserted file link to ch2.md");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, ed.cursor_row), "[Chapter Two](chapters/ch2.md)") == 0,
+                "Inserted link used H1 title and relative path");
+
+    // 3. Recursive linked-file discovery with cycle prevention
+    Buffer root_buf;
+    buffer_init(&root_buf);
+    TEST_ASSERT(buffer_load(&root_buf, index_path), "Loaded index.md into Buffer");
+    TEST_ASSERT(export_count_linked_files(&root_buf) == 2,
+                "Discovered 2 unique linked files (ch1.md + ch2.md, cycle to index.md prevented)");
+
+    char used[32] = {0};
+    char err[256] = {0};
+    size_t linked_cnt = 0;
+
+    // 4. Built-in HTML5 export includes all linked files & rewrites links
+    const char *html_out = "/tmp/mde_ht_test/book.html";
+    bool ok = export_document_ex(&root_buf, EXPORT_HTML, html_out, EXPORT_ENGINE_BUILTIN,
+                                 true, &linked_cnt, used, sizeof(used), err, sizeof(err));
+    TEST_ASSERT(ok && linked_cnt == 2, "HTML multi-file export succeeded with 2 linked files");
+    char *html = read_entire_file(html_out);
+    TEST_ASSERT(html != NULL, "Read multi-file HTML");
+    if (html) {
+        TEST_ASSERT(strstr(html, "Book Overview") != NULL, "HTML contains root file content");
+        TEST_ASSERT(strstr(html, "Chapter One") != NULL, "HTML contains linked ch1.md content");
+        TEST_ASSERT(strstr(html, "Chapter Two") != NULL, "HTML contains transitively linked ch2.md content");
+        TEST_ASSERT(strstr(html, "<section id=\"mde-doc-1\">") != NULL, "HTML wraps linked doc 1 in section");
+        TEST_ASSERT(strstr(html, "<a href=\"#mde-doc-1\">Chapter One</a>") != NULL,
+                    "HTML rewrites chapters/ch1.md link to #mde-doc-1");
+        TEST_ASSERT(strstr(html, "<a href=\"#deep-dive\">Details</a>") != NULL,
+                    "HTML rewrites fragment link to #deep-dive");
+        TEST_ASSERT(strstr(html, "<a href=\"#mde-doc-0\">Book Overview</a>") != NULL,
+                    "HTML rewrites back-link ../index.md to #mde-doc-0");
+        TEST_ASSERT(strstr(html, "<a href=\"https://example.org\">Web</a>") != NULL,
+                    "HTML preserves external URLs unchanged");
+        free(html);
+    }
+    remove(html_out);
+
+    // 5. Built-in XML export includes all linked files
+    const char *xml_out = "/tmp/mde_ht_test/book.xml";
+    ok = export_document_ex(&root_buf, EXPORT_XML, xml_out, EXPORT_ENGINE_BUILTIN,
+                            true, &linked_cnt, used, sizeof(used), err, sizeof(err));
+    TEST_ASSERT(ok && linked_cnt == 2, "XML multi-file export succeeded with 2 linked files");
+    char *xml = read_entire_file(xml_out);
+    if (xml) {
+        TEST_ASSERT(strstr(xml, "<linked-document id=\"mde-doc-1\"") != NULL, "XML includes linked-document 1");
+        TEST_ASSERT(strstr(xml, "<linked-document id=\"mde-doc-2\"") != NULL, "XML includes linked-document 2");
+        TEST_ASSERT(strstr(xml, "Chapter Two") != NULL, "XML includes ch2 content");
+        TEST_ASSERT(strstr(xml, "<link url=\"#mde-doc-1\">Chapter One</link>") != NULL,
+                    "XML rewrites internal file links");
+        free(xml);
+    }
+    remove(xml_out);
+
+    // 6. Built-in LaTeX export combines all linked files into ONE unified LaTeX document
+    const char *tex_out = "/tmp/mde_ht_test/book.tex";
+    ok = export_document_ex(&root_buf, EXPORT_LATEX, tex_out, EXPORT_ENGINE_BUILTIN,
+                            true, &linked_cnt, used, sizeof(used), err, sizeof(err));
+    TEST_ASSERT(ok && linked_cnt == 2, "LaTeX multi-file export succeeded with 2 linked files");
+    char *tex = read_entire_file(tex_out);
+    if (tex) {
+        TEST_ASSERT(count_occurrences(tex, "\\documentclass") == 1, "LaTeX has exactly ONE \\documentclass");
+        TEST_ASSERT(count_occurrences(tex, "\\begin{document}") == 1, "LaTeX has exactly ONE \\begin{document}");
+        TEST_ASSERT(count_occurrences(tex, "\\end{document}") == 1, "LaTeX has exactly ONE \\end{document}");
+        TEST_ASSERT(strstr(tex, "\\section{Book Overview}") != NULL, "LaTeX includes root section");
+        TEST_ASSERT(strstr(tex, "\\section{Chapter One}") != NULL, "LaTeX includes linked ch1 section");
+        TEST_ASSERT(strstr(tex, "\\section{Chapter Two}") != NULL, "LaTeX includes linked ch2 section");
+        TEST_ASSERT(strstr(tex, "\\hypertarget{mde-doc-1}{}") != NULL, "LaTeX emits hypertarget for ch1");
+        TEST_ASSERT(strstr(tex, "\\hyperlink{mde-doc-1}{Chapter One}") != NULL,
+                    "LaTeX converts internal link to \\hyperlink");
+        TEST_ASSERT(strstr(tex, "\\href{https://example.org}{Web}") != NULL,
+                    "LaTeX keeps external link as \\href");
+        free(tex);
+    }
+    remove(tex_out);
+
+    // 7. Excluding linked files (include_linked = false)
+    ok = export_document_ex(&root_buf, EXPORT_LATEX, tex_out, EXPORT_ENGINE_BUILTIN,
+                            false, &linked_cnt, used, sizeof(used), err, sizeof(err));
+    TEST_ASSERT(ok && linked_cnt == 0, "Export with include_linked=false reports 0 linked files");
+    tex = read_entire_file(tex_out);
+    if (tex) {
+        TEST_ASSERT(strstr(tex, "Chapter One") != NULL && strstr(tex, "\\section{Chapter Two}") == NULL,
+                    "Excluded linked files are not bundled when include_linked=false");
+        free(tex);
+    }
+    remove(tex_out);
+
+    // 8. Pandoc multi-file export (EPUB & LaTeX) via mock pandoc verifying all 3 input docs passed
+    const char *mock_dir = "/tmp/mde_ht_mock_bin";
+    mkdir(mock_dir, 0755);
+    const char *mock_pandoc = "/tmp/mde_ht_mock_bin/pandoc";
+    write_text_file(mock_pandoc,
+        "#!/bin/sh\n"
+        "out=\"\"\n"
+        "inputs=\"\"\n"
+        "while [ $# -gt 0 ]; do\n"
+        "  case \"$1\" in\n"
+        "    -o) shift; out=\"$1\" ;;\n"
+        "    -f|-t|--metadata|--resource-path) shift ;;\n"
+        "    -s) ;;\n"
+        "    *) inputs=\"$inputs $1\" ;;\n"
+        "  esac\n"
+        "  shift\n"
+        "done\n"
+        "cat $inputs > \"$out\"\n");
+    chmod(mock_pandoc, 0755);
+
+    const char *old_path = getenv("PATH");
+    char mock_path_env[2048];
+    snprintf(mock_path_env, sizeof(mock_path_env), "%s:%s", mock_dir, old_path ? old_path : "");
+    setenv("PATH", mock_path_env, 1);
+
+    const char *epub_out = "/tmp/mde_ht_test/book.epub";
+    ok = export_document_ex(&root_buf, EXPORT_EPUB, epub_out, EXPORT_ENGINE_AUTO,
+                            true, &linked_cnt, used, sizeof(used), err, sizeof(err));
+    TEST_ASSERT(ok && linked_cnt == 2 && strcmp(used, "pandoc") == 0,
+                "EPUB multi-file export via pandoc included all 2 linked files");
+    char *epub_concat = read_entire_file(epub_out);
+    if (epub_concat) {
+        TEST_ASSERT(strstr(epub_concat, "# Book Overview {#mde-doc-0}") != NULL,
+                    "Pandoc input 0 has anchor {#mde-doc-0}");
+        TEST_ASSERT(strstr(epub_concat, "# Chapter One {#mde-doc-1}") != NULL,
+                    "Pandoc input 1 has anchor {#mde-doc-1}");
+        TEST_ASSERT(strstr(epub_concat, "# Chapter Two {#mde-doc-2}") != NULL,
+                    "Pandoc input 2 has anchor {#mde-doc-2}");
+        TEST_ASSERT(strstr(epub_concat, "[Chapter One](#mde-doc-1)") != NULL,
+                    "Pandoc input rewrote ch1.md link to #mde-doc-1");
+        TEST_ASSERT(strstr(epub_concat, "[Book Overview](#mde-doc-0)") != NULL,
+                    "Pandoc input rewrote ../index.md link to #mde-doc-0");
+        free(epub_concat);
+    }
+    remove(epub_out);
+
+    if (old_path) setenv("PATH", old_path, 1);
+    remove(mock_pandoc);
+    remove(index_path);
+    remove(ch1_path);
+    remove(ch2_path);
+    buffer_free(&root_buf);
+    editor_free(&ed);
+}
+
 static void test_shortcut_hints_and_dialog(void) {
     printf("--- Testing Shortcut Hints & File Dialogue API ---\n");
 
@@ -883,6 +1231,24 @@ static void test_shortcut_hints_and_dialog(void) {
     TEST_ASSERT(!ui_file_dialog(NULL, FILE_DIALOG_OPEN, path_buf, sizeof(path_buf)), "Null editor returns false");
     TEST_ASSERT(!ui_file_dialog(&ed, FILE_DIALOG_OPEN, NULL, 100), "Null out_path returns false");
     TEST_ASSERT(!ui_file_dialog(&ed, FILE_DIALOG_OPEN, path_buf, 0), "Zero max_len returns false");
+
+    // Overwrite-guard path existence checks (used by Write Out confirmation)
+    const char *tmp_exist = "/tmp/mde_overwrite_check.md";
+    const char *tmp_missing = "/tmp/mde_definitely_does_not_exist_12345.md";
+    write_text_file(tmp_exist, "# Existing\n");
+    remove(tmp_missing);
+
+    bool is_dir = true;
+    TEST_ASSERT(ui_path_exists(tmp_exist, &is_dir) && !is_dir,
+                "ui_path_exists detects existing regular file");
+    TEST_ASSERT(!ui_path_exists(tmp_missing, &is_dir),
+                "ui_path_exists returns false for non-existent file");
+    TEST_ASSERT(ui_path_exists("/tmp", &is_dir) && is_dir,
+                "ui_path_exists identifies existing directory");
+    TEST_ASSERT(!ui_path_exists(NULL, NULL), "ui_path_exists handles NULL path");
+    TEST_ASSERT(!ui_confirm_overwrite(NULL, tmp_exist), "ui_confirm_overwrite rejects NULL editor");
+    TEST_ASSERT(!ui_confirm_overwrite(&ed, NULL), "ui_confirm_overwrite rejects NULL path");
+    remove(tmp_exist);
 
     editor_free(&ed);
 }
@@ -909,6 +1275,8 @@ int main(void) {
     test_auto_line_break();
     test_resize_graceful();
     test_export_subsystem();
+    test_nano_editing_and_nav();
+    test_hypertext_linking_and_export();
     test_shortcut_hints_and_dialog();
 
     printf("==========================================\n");

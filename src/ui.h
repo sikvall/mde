@@ -51,6 +51,15 @@ void ui_draw(Editor *ed);
 bool ui_prompt(Editor *ed, const char *prompt, char *out_buf, size_t buf_size);
 
 /**
+ * @brief Prompt to save or discard unsaved changes before an action (quit or switch file).
+ *
+ * @param ed Pointer to the Editor instance.
+ * @param action_desc Short verb phrase (e.g., "exit", "switch file").
+ * @return 1 for Save & Continue, 0 for Discard & Continue, -1 for Cancel.
+ */
+int ui_confirm_unsaved(Editor *ed, const char *action_desc);
+
+/**
  * @brief Confirm quitting when unsaved changes exist in the buffer.
  *
  * @param ed Pointer to the Editor instance.
@@ -59,11 +68,30 @@ bool ui_prompt(Editor *ed, const char *prompt, char *out_buf, size_t buf_size);
 int ui_confirm_quit(Editor *ed);
 
 /**
+ * @brief Check whether a filesystem path already exists and whether it is a directory.
+ *
+ * @param path Path to inspect.
+ * @param out_is_dir Optional output set to true if the existing path is a directory.
+ * @return true if the path exists on disk, false otherwise.
+ */
+bool ui_path_exists(const char *path, bool *out_is_dir);
+
+/**
+ * @brief Prompt the user to confirm overwriting an existing file before saving.
+ *
+ * @param ed Pointer to the Editor instance.
+ * @param path Destination path that already exists.
+ * @return true if the user explicitly confirms overwrite (y/Y), false otherwise.
+ */
+bool ui_confirm_overwrite(Editor *ed, const char *path);
+
+/**
  * @brief File dialog operation mode.
  */
 typedef enum {
     FILE_DIALOG_OPEN,    /**< Select an existing file to open */
-    FILE_DIALOG_SAVE_AS  /**< Choose directory and filename to save buffer */
+    FILE_DIALOG_SAVE_AS, /**< Choose directory and filename to save buffer */
+    FILE_DIALOG_LINK     /**< Choose or type a file path to insert as a Markdown hyperlink */
 } FileDialogMode;
 
 /**

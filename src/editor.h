@@ -27,6 +27,16 @@ extern "C" {
 #define MDE_WRAP_COL_MIN     20
 #define MDE_WRAP_COL_MAX     255
 #define MDE_WRAP_COL_DEFAULT 78
+#define MDE_LINK_HISTORY_MAX 64
+
+/**
+ * @brief Saved location entry for hypertext link navigation history.
+ */
+typedef struct {
+    char *file_path;             /**< Heap-allocated path of previously visited file */
+    size_t cursor_row;           /**< Saved 0-indexed row */
+    size_t cursor_col;           /**< Saved byte column offset */
+} LinkHistoryEntry;
 
 /**
  * @brief Operating view modes.
@@ -88,6 +98,10 @@ typedef struct {
     // Keystroke & cursor blink state
     uint64_t last_key_time;      /**< Monotonic timestamp in ms of the last keypress */
 
+    // Hypertext link navigation history
+    LinkHistoryEntry link_history[MDE_LINK_HISTORY_MAX];
+    size_t link_history_count;
+
     bool quit_requested;         /**< Termination flag */
 } Editor;
 
@@ -126,6 +140,10 @@ void editor_move_home(Editor *ed);
 void editor_move_end(Editor *ed);
 void editor_move_page_up(Editor *ed);
 void editor_move_page_down(Editor *ed);
+void editor_move_doc_start(Editor *ed);
+void editor_move_doc_end(Editor *ed);
+void editor_goto_line(Editor *ed, size_t line_1based, size_t col_1based);
+void editor_report_position(Editor *ed);
 
 // Typing & Editing mutations
 void editor_insert_char(Editor *ed, const char *utf8_seq, size_t len);
@@ -138,6 +156,7 @@ void editor_unindent(Editor *ed);
 // Selection & Mark operations
 void editor_set_mark(Editor *ed);
 void editor_clear_mark(Editor *ed);
+void editor_toggle_mark(Editor *ed);
 bool editor_has_selection(const Editor *ed);
 bool editor_get_selection(const Editor *ed, size_t *start_row, size_t *start_col,
                           size_t *end_row, size_t *end_col);
@@ -146,7 +165,9 @@ bool editor_delete_selection(Editor *ed, uint64_t group);
 
 // Clipboard & Cut / Copy / Paste
 bool editor_copy(Editor *ed);
+bool editor_copy_line(Editor *ed);
 bool editor_cut(Editor *ed);
+bool editor_cut_line(Editor *ed);
 bool editor_paste(Editor *ed);
 bool editor_paste_text(Editor *ed, const char *text, size_t len);
 
@@ -170,6 +191,18 @@ void editor_redo(Editor *ed);
 // File I/O
 bool editor_save(Editor *ed, const char *opt_path);
 bool editor_open(Editor *ed, const char *path);
+
+// Hypertext file linking & navigation
+bool editor_make_relative_path(const char *from_file, const char *to_file,
+                               char *out_rel, size_t out_cap);
+bool editor_extract_link_at_cursor(const Editor *ed,
+                                   char *out_url, size_t url_cap,
+                                   char *out_anchor, size_t anchor_cap);
+bool editor_resolve_link_path(const Editor *ed, const char *link_target,
+                              char *out_path, size_t out_cap);
+bool editor_insert_file_link(Editor *ed, const char *target_path);
+bool editor_follow_link(Editor *ed);
+bool editor_navigate_back(Editor *ed);
 
 // Cursor blink & timing
 uint64_t editor_get_time_ms(void);

@@ -434,30 +434,30 @@ typedef struct {
 } ShortcutHint;
 
 static const ShortcutHint s_hints_r1[] = {
-    { "^S", "Save" },
-    { "^O", "Open" },
-    { "^W", "Save As" },
-    { "^P", "View" },
-    { "^F", "Find" },
-    { "^Q", "Quit" }
+    { "^G", "Help" },
+    { "^O", "Write Out" },
+    { "^W", "Where Is" },
+    { "^K", "Cut" },
+    { "^T", "Task" },
+    { "^C", "Location" }
 };
 
 static const ShortcutHint s_hints_r2[] = {
-    { "^X", "Cut" },
-    { "^C", "Copy" },
-    { "^V", "Paste" },
-    { "^K", "Kill" },
-    { "^Z", "Undo" },
-    { "^H", "Help" }
+    { "^X", "Exit" },
+    { "^R", "Read File" },
+    { "^S", "Save" },
+    { "^U", "Paste" },
+    { "^/", "Go Line" },
+    { "F2", "View" }
 };
 
 static const ShortcutHint s_hints_r3[] = {
-    { "^Space", "Mark" },
-    { "^A", "Home" },
-    { "^E", "End" },
-    { "^T", "Task" },
-    { "^B", "Bold" },
-    { "Ins", "Mode" }
+    { "M-U", "Undo" },
+    { "M-E", "Redo" },
+    { "M-6", "Copy" },
+    { "M-A", "Mark" },
+    { "M-B", "Bold" },
+    { "F5", "Export" }
 };
 
 int ui_get_shortcut_hint_rows(int screen_rows) {
@@ -716,7 +716,7 @@ bool ui_prompt(Editor *ed, const char *prompt, char *out_buf, size_t buf_size) {
             curs_set(1);
             continue;
         }
-        if (ch == 27) { // Escape
+        if (ch == 27 || ch == CTRL_KEY('c')) { // Escape or Nano ^C Cancel
             out_buf[0] = '\0';
             return false;
         } else if (ch == '\n' || ch == '\r') {
@@ -736,10 +736,13 @@ bool ui_prompt(Editor *ed, const char *prompt, char *out_buf, size_t buf_size) {
     }
 }
 
-int ui_confirm_quit(Editor *ed) {
+int ui_confirm_unsaved(Editor *ed, const char *action_desc) {
     if (!ed || !ed->buffer.is_dirty) return 0;
 
-    const char *msg = "Unsaved changes! Save before quit? (y = Save & Quit, n = Discard, Esc = Cancel): ";
+    char msg[160];
+    snprintf(msg, sizeof(msg),
+             "Save modified buffer before %s? (y = Save, n = Discard, ^C/Esc = Cancel): ",
+             action_desc ? action_desc : "continuing");
 
     while (1) {
         int rows, cols;
@@ -770,6 +773,63 @@ int ui_confirm_quit(Editor *ed) {
             return 0;
         } else if (ch == 27 || ch == 3) {
             return -1;
+        }
+    }
+}
+
+int ui_confirm_quit(Editor *ed) {
+    return ui_confirm_unsaved(ed, "exit");
+}
+
+bool ui_path_exists(const char *path, bool *out_is_dir) {
+    if (out_is_dir) *out_is_dir = false;
+    if (!path || !path[0]) return false;
+    struct stat st;
+    if (stat(path, &st) == 0) {
+        if (out_is_dir) *out_is_dir = S_ISDIR(st.st_mode);
+        return true;
+    }
+    return false;
+}
+
+bool ui_confirm_overwrite(Editor *ed, const char *path) {
+    if (!ed || !path || !path[0]) return false;
+
+    const char *slash = strrchr(path, '/');
+    const char *disp = slash ? (slash + 1) : path;
+
+    char msg[256];
+    snprintf(msg, sizeof(msg),
+             "WARNING: File '%s' already exists! Overwrite? (y = Yes, n/^C/Esc = No): ",
+             disp);
+
+    while (1) {
+        int rows, cols;
+        getmaxyx(stdscr, rows, cols);
+        int y = rows > 0 ? rows - 1 : 0;
+
+        move(y, 0);
+        clrtoeol();
+
+        attron(COLOR_PAIR(CP_STATUS_BAR_DIRTY) | A_BOLD);
+        if (cols > 2) {
+            mvaddnstr(y, 1, msg, cols - 2);
+        }
+        attroff(COLOR_PAIR(CP_STATUS_BAR_DIRTY) | A_BOLD);
+        refresh();
+
+        int ch = getch();
+        if (ch == ERR) continue;
+        if (ch == KEY_RESIZE) {
+            ed->rendered_dirty = true;
+            erase();
+            ui_draw(ed);
+            continue;
+        }
+        if (ch == 'y' || ch == 'Y') {
+            return true;
+        } else if (ch == 'n' || ch == 'N' || ch == 27 || ch == CTRL_KEY('c') || ch == CTRL_KEY('g')) {
+            return false;
         }
     }
 }
@@ -953,6 +1013,7 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
     int selected_idx = 0;
     int scroll_offset = 0;
 
+    bool has_input_box = (mode == FILE_DIALOG_SAVE_AS || mode == FILE_DIALOG_LINK);
     enum { FOCUS_LIST, FOCUS_INPUT } focus = (mode == FILE_DIALOG_SAVE_AS) ? FOCUS_INPUT : FOCUS_LIST;
 
     int rows, cols;
@@ -984,6 +1045,9 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
     wbkgd(win, COLOR_PAIR(CP_HELP_BOX));
 
     bool confirmed = false;
+    bool confirm_overwrite = false;
+    char pending_path[PATH_MAX] = {0};
+    char warn_msg[256] = {0};
 
     while (1) {
         werase(win);
@@ -991,7 +1055,9 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
 
         // Title
         wattron(win, COLOR_PAIR(CP_HEADER1) | A_BOLD);
-        const char *title = (mode == FILE_DIALOG_OPEN) ? " Open File " : " Save As ";
+        const char *title = " Open File ";
+        if (mode == FILE_DIALOG_SAVE_AS) title = " Write Out (Save As) ";
+        else if (mode == FILE_DIALOG_LINK) title = " Insert File Link ";
         int tx = (win_w - (int)strlen(title)) / 2;
         if (tx < 1) tx = 1;
         mvwaddnstr(win, 0, tx, title, win_w - 2);
@@ -1025,7 +1091,7 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
 
         // List dimensions
         int list_start_y = 3;
-        int list_h = (mode == FILE_DIALOG_SAVE_AS) ? (win_h - 7) : (win_h - 5);
+        int list_h = has_input_box ? (win_h - 7) : (win_h - 5);
         if (list_h < 3) list_h = 3;
 
         // Ensure selected_idx and scroll_offset are valid
@@ -1092,8 +1158,8 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
             wattroff(win, COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_BOLD);
         }
 
-        // Save As input row
-        if (mode == FILE_DIALOG_SAVE_AS) {
+        // Save As / Link input row
+        if (has_input_box) {
             int input_sep_y = win_h - 4;
             int input_y = win_h - 3;
 
@@ -1103,7 +1169,7 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
 
             bool is_input_focused = (focus == FOCUS_INPUT);
             wattron(win, is_input_focused ? (COLOR_PAIR(CP_DEFAULT) | A_BOLD) : COLOR_PAIR(CP_MARKER));
-            mvwaddstr(win, input_y, 2, "File name: ");
+            mvwaddstr(win, input_y, 2, mode == FILE_DIALOG_LINK ? "Target:    " : "File name: ");
             wattroff(win, is_input_focused ? (COLOR_PAIR(CP_DEFAULT) | A_BOLD) : COLOR_PAIR(CP_MARKER));
 
             // Input field box
@@ -1114,7 +1180,7 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
             mvwaddnstr(win, input_y, box_start_x, input_buf, box_width - 1);
             wattroff(win, COLOR_PAIR(CP_DEFAULT) | (is_input_focused ? A_REVERSE : 0));
 
-            if (is_input_focused) {
+            if (is_input_focused && !confirm_overwrite) {
                 curs_set(1);
                 wmove(win, input_y, box_start_x + (int)strlen(input_buf));
             } else {
@@ -1124,20 +1190,38 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
             curs_set(0);
         }
 
-        // Bottom separator & help instructions
+        // Bottom separator & help instructions / overwrite warning
         mvwaddch(win, win_h - 2, 0, ACS_LTEE);
         for (int x = 1; x < win_w - 1; ++x) mvwaddch(win, win_h - 2, x, ACS_HLINE);
         mvwaddch(win, win_h - 2, win_w - 1, ACS_RTEE);
 
-        wattron(win, COLOR_PAIR(CP_MARKER) | A_DIM);
         if (win_w > 4) {
-            if (mode == FILE_DIALOG_OPEN) {
-                mvwaddnstr(win, win_h - 1, 2, " [Enter] Open  [Backspace] Up  [Esc] Cancel ", win_w - 4);
+            if (confirm_overwrite) {
+                const char *slash = strrchr(pending_path, '/');
+                const char *fname = slash ? (slash + 1) : pending_path;
+                char prompt_buf[300];
+                snprintf(prompt_buf, sizeof(prompt_buf),
+                         " WARNING: '%s' exists! Overwrite? (Y)es / (N)o ", fname);
+                wattron(win, COLOR_PAIR(CP_STATUS_BAR_DIRTY) | A_BOLD | A_REVERSE);
+                for (int x = 1; x < win_w - 1; ++x) mvwaddch(win, win_h - 1, x, ' ');
+                mvwaddnstr(win, win_h - 1, 2, prompt_buf, win_w - 4);
+                wattroff(win, COLOR_PAIR(CP_STATUS_BAR_DIRTY) | A_BOLD | A_REVERSE);
+            } else if (warn_msg[0]) {
+                wattron(win, COLOR_PAIR(CP_STATUS_BAR_DIRTY) | A_BOLD);
+                mvwaddnstr(win, win_h - 1, 2, warn_msg, win_w - 4);
+                wattroff(win, COLOR_PAIR(CP_STATUS_BAR_DIRTY) | A_BOLD);
             } else {
-                mvwaddnstr(win, win_h - 1, 2, " [Enter] Save  [Tab] Switch  [Backspace] Up  [Esc] Cancel ", win_w - 4);
+                wattron(win, COLOR_PAIR(CP_MARKER) | A_DIM);
+                if (mode == FILE_DIALOG_OPEN) {
+                    mvwaddnstr(win, win_h - 1, 2, " [Enter] Open  [Backspace] Up  [Esc/^C] Cancel ", win_w - 4);
+                } else if (mode == FILE_DIALOG_LINK) {
+                    mvwaddnstr(win, win_h - 1, 2, " [Enter] Link  [Tab] Type Target  [Backspace] Up  [Esc/^C] Cancel ", win_w - 4);
+                } else {
+                    mvwaddnstr(win, win_h - 1, 2, " [Enter] Save  [Tab] Switch  [Backspace] Up  [Esc/^C] Cancel ", win_w - 4);
+                }
+                wattroff(win, COLOR_PAIR(CP_MARKER) | A_DIM);
             }
         }
-        wattroff(win, COLOR_PAIR(CP_MARKER) | A_DIM);
 
         wrefresh(win);
 
@@ -1178,13 +1262,30 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
             continue;
         }
 
+        // Overwrite warning requires an explicit Y or N answer before overwriting
+        if (confirm_overwrite) {
+            if (ch == 'y' || ch == 'Y') {
+                snprintf(out_path, max_len, "%s", pending_path);
+                confirmed = true;
+                break;
+            } else if (ch == 'n' || ch == 'N' || ch == 27 ||
+                       ch == CTRL_KEY('c') || ch == CTRL_KEY('g') ||
+                       ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
+                confirm_overwrite = false;
+                pending_path[0] = '\0';
+            }
+            continue;
+        }
+
+        warn_msg[0] = '\0';
+
         if (ch == 27 || ch == CTRL_KEY('q') || ch == CTRL_KEY('c') || ch == CTRL_KEY('g')) {
             confirmed = false;
             break;
         }
 
         if (ch == '\t') {
-            if (mode == FILE_DIALOG_SAVE_AS) {
+            if (has_input_box) {
                 focus = (focus == FOCUS_INPUT) ? FOCUS_LIST : FOCUS_INPUT;
             }
             continue;
@@ -1193,12 +1294,30 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
         if (focus == FOCUS_INPUT) {
             if (ch == '\n' || ch == '\r') {
                 if (input_buf[0] != '\0') {
+                    char candidate[PATH_MAX];
                     if (input_buf[0] == '/') {
-                        strncpy(out_path, input_buf, max_len - 1);
+                        snprintf(candidate, sizeof(candidate), "%s", input_buf);
+                    } else if (strcmp(current_dir, "/") == 0) {
+                        snprintf(candidate, sizeof(candidate), "/%s", input_buf);
                     } else {
-                        snprintf(out_path, max_len, "%s/%s", current_dir, input_buf);
+                        snprintf(candidate, sizeof(candidate), "%s/%s", current_dir, input_buf);
                     }
-                    out_path[max_len - 1] = '\0';
+
+                    if (mode == FILE_DIALOG_SAVE_AS) {
+                        bool is_dir = false;
+                        if (ui_path_exists(candidate, &is_dir)) {
+                            if (is_dir) {
+                                snprintf(warn_msg, sizeof(warn_msg),
+                                         " WARNING: Cannot overwrite directory — enter a file name ");
+                                continue;
+                            }
+                            snprintf(pending_path, sizeof(pending_path), "%s", candidate);
+                            confirm_overwrite = true;
+                            continue;
+                        }
+                    }
+
+                    snprintf(out_path, max_len, "%s", candidate);
                     confirmed = true;
                     break;
                 }
@@ -1252,7 +1371,7 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
                         scroll_offset = 0;
                     } else {
                         // File selected
-                        if (mode == FILE_DIALOG_OPEN) {
+                        if (mode == FILE_DIALOG_OPEN || mode == FILE_DIALOG_LINK) {
                             snprintf(out_path, max_len, "%s/%s", current_dir, items[selected_idx].name);
                             out_path[max_len - 1] = '\0';
                             confirmed = true;
@@ -1301,43 +1420,54 @@ typedef struct {
 } HelpEntry;
 
 static const HelpEntry s_editor_help[] = {
-    { HELP_LINE_SECTION, "FILE & SESSION", NULL },
+    { HELP_LINE_SECTION, "FILE & SESSION (NANO-COMPATIBLE)", NULL },
     { HELP_LINE_ITEM, "Ctrl+S", "Save current document to disk" },
-    { HELP_LINE_ITEM, "Ctrl+O", "Open file dialogue to browse & open file" },
-    { HELP_LINE_ITEM, "Ctrl+W", "Save As file dialogue (browse directory & set name)" },
-    { HELP_LINE_ITEM, "F5 / Ctrl+D", "Open Export Menu (HTML, XML, EPUB, LaTeX)" },
-    { HELP_LINE_ITEM, "Ctrl+Q", "Quit editor (prompts if unsaved changes)" },
-    { HELP_LINE_ITEM, "Ctrl+H / F1", "Open / close this Help & Reference overlay" },
+    { HELP_LINE_ITEM, "Ctrl+O", "Write Out (Save As file dialogue)" },
+    { HELP_LINE_ITEM, "Ctrl+R", "Read / Open file dialogue to browse & open" },
+    { HELP_LINE_ITEM, "F5 / Alt+X", "Open Export Menu (HTML, XML, EPUB, LaTeX)" },
+    { HELP_LINE_ITEM, "Ctrl+X", "Exit editor (prompts if unsaved changes)" },
+    { HELP_LINE_ITEM, "Ctrl+G / F1", "Open / close this Help & Reference overlay" },
     { HELP_LINE_BLANK, NULL, NULL },
-    { HELP_LINE_SECTION, "VIEW MODES & CURSOR", NULL },
-    { HELP_LINE_ITEM, "Ctrl+P / F2", "Cycle view: Split -> In-Place -> Preview" },
-    { HELP_LINE_ITEM, "Ctrl+L / F4", "Set auto line break column (20-255 or off)" },
+    { HELP_LINE_SECTION, "HYPERTEXT FILE LINKING & EXPORT", NULL },
+    { HELP_LINE_ITEM, "F6 / Alt+H", "Insert hyperlink [Label](file.md) via file picker" },
+    { HELP_LINE_ITEM, "F7 / Alt+O / ^]", "Follow Markdown file or #heading link under cursor" },
+    { HELP_LINE_ITEM, "F8 / Alt+-", "Navigate back to previous linked file & position" },
+    { HELP_LINE_ITEM, "F5 / Alt+X", "Export (includes linked .md files in HTML/EPUB/LaTeX/XML)" },
+    { HELP_LINE_BLANK, NULL, NULL },
+    { HELP_LINE_SECTION, "VIEW MODES & DISPLAY", NULL },
+    { HELP_LINE_ITEM, "F2 / Alt+P", "Cycle view: Split -> In-Place -> Preview" },
+    { HELP_LINE_ITEM, "F4 / Alt+L", "Set auto line break column (20-255 or off)" },
+    { HELP_LINE_ITEM, "Ctrl+L", "Refresh / redraw screen" },
     { HELP_LINE_ITEM, "Ins", "Toggle mode: Insert (steady █) / Overwrite (steady _)" },
     { HELP_LINE_BLANK, NULL, NULL },
-    { HELP_LINE_SECTION, "SELECTION & CLIPBOARD", NULL },
-    { HELP_LINE_ITEM, "Ctrl+Space", "Set selection mark start (move cursor to extend)" },
-    { HELP_LINE_ITEM, "Ctrl+X", "Cut selected text to clipboard (OSC 52 synced)" },
-    { HELP_LINE_ITEM, "Ctrl+C", "Copy selected text to clipboard (OSC 52 synced)" },
-    { HELP_LINE_ITEM, "Ctrl+V", "Paste text from clipboard" },
-    { HELP_LINE_ITEM, "Esc / Ctrl+G", "Clear active selection mark" },
+    { HELP_LINE_SECTION, "SELECTION, CUT, COPY & PASTE", NULL },
+    { HELP_LINE_ITEM, "Alt+A / ^6 / ^Space", "Set or unset selection mark anchor" },
+    { HELP_LINE_ITEM, "Ctrl+K", "Cut selection, or cut entire line (OSC 52)" },
+    { HELP_LINE_ITEM, "Alt+6", "Copy selection, or copy entire line (OSC 52)" },
+    { HELP_LINE_ITEM, "Ctrl+U", "Paste (Uncut) text from clipboard" },
+    { HELP_LINE_ITEM, "Esc", "Clear active selection mark (Cancel in prompts)" },
     { HELP_LINE_BLANK, NULL, NULL },
-    { HELP_LINE_SECTION, "LINE & WORD EDITING", NULL },
-    { HELP_LINE_ITEM, "Ctrl+K", "Kill (cut) from cursor to end of line / newline" },
-    { HELP_LINE_ITEM, "Ctrl+Z", "Undo last editing operation" },
-    { HELP_LINE_ITEM, "Ctrl+Y", "Redo undone editing operation" },
+    { HELP_LINE_SECTION, "EDITING & MARKDOWN", NULL },
+    { HELP_LINE_ITEM, "Alt+U / Alt+E", "Undo / Redo last editing operation" },
+    { HELP_LINE_ITEM, "Ctrl+H / Bksp", "Delete character before cursor" },
+    { HELP_LINE_ITEM, "Ctrl+D / Del", "Delete character under cursor" },
     { HELP_LINE_ITEM, "Ctrl+T", "Toggle task checkbox: - [ ] <-> - [x]" },
-    { HELP_LINE_ITEM, "Ctrl+B", "Insert Markdown bold markers / wrap selection" },
+    { HELP_LINE_ITEM, "Alt+B", "Insert Markdown bold markers / wrap selection" },
     { HELP_LINE_ITEM, "Enter", "Smart Enter: auto-continues lists, tasks & indents" },
-    { HELP_LINE_ITEM, "Tab", "Indent current line or block by 2 spaces" },
-    { HELP_LINE_ITEM, "Shift+Tab", "Unindent current line or block by 2 spaces" },
+    { HELP_LINE_ITEM, "Tab / Alt+}", "Indent current line by 2 spaces" },
+    { HELP_LINE_ITEM, "Shift+Tab / Alt+{", "Unindent current line by 2 spaces" },
     { HELP_LINE_BLANK, NULL, NULL },
     { HELP_LINE_SECTION, "SEARCH & NAVIGATION", NULL },
+    { HELP_LINE_ITEM, "Ctrl+W / Ctrl+Q", "Where Is (search forward) / Search backward" },
+    { HELP_LINE_ITEM, "Alt+W / F3", "Repeat search forward (Alt+Q for backward)" },
+    { HELP_LINE_ITEM, "Ctrl+/ / Alt+G", "Go to line number (and optional column)" },
+    { HELP_LINE_ITEM, "Ctrl+C", "Display cursor location (Cancel in prompts)" },
     { HELP_LINE_ITEM, "Ctrl+A / Home", "Jump to beginning of current line" },
     { HELP_LINE_ITEM, "Ctrl+E / End", "Jump to end of current line" },
-    { HELP_LINE_ITEM, "Ctrl+F", "Find / search text pattern in document" },
-    { HELP_LINE_ITEM, "F3", "Repeat search: jump to next occurrence" },
-    { HELP_LINE_ITEM, "Arrow Keys", "Navigate cursor by character / line" },
-    { HELP_LINE_ITEM, "PgUp / PgDn", "Scroll viewport up / down by page" }
+    { HELP_LINE_ITEM, "Ctrl+Y / PgUp", "Previous Page (scroll up)" },
+    { HELP_LINE_ITEM, "Ctrl+V / PgDn", "Next Page (scroll down)" },
+    { HELP_LINE_ITEM, "Alt+\\ / Alt+/", "Jump to first / last line of document" },
+    { HELP_LINE_ITEM, "^B / ^F / ^P / ^N", "Move Left / Right / Up / Down (or Arrows)" }
 };
 
 static const HelpEntry s_markdown_help[] = {
@@ -1375,8 +1505,10 @@ static const HelpEntry s_markdown_help[] = {
     { HELP_LINE_BLANK, NULL, NULL },
     { HELP_LINE_SECTION, "SMART SYNTAX & RENDERING", NULL },
     { HELP_LINE_NOTE, "Active Markers", "Syntax markers (#, **) glow when editing line" },
-    { HELP_LINE_NOTE, "Live Preview", "Press Ctrl+P to toggle live rendered preview" },
-    { HELP_LINE_NOTE, "Smart Lists", "Enter on empty list item automatically exits list" }
+    { HELP_LINE_NOTE, "Live Preview", "Press F2 or Alt+P to toggle live rendered preview" },
+    { HELP_LINE_NOTE, "Smart Lists", "Enter on empty list item automatically exits list" },
+    { HELP_LINE_NOTE, "Hypertext Links", "Link local .md files (F6/Alt+H) & follow (F7/Alt+O)" },
+    { HELP_LINE_NOTE, "Multi-File Export", "Export (F5) bundles linked .md files (1 .tex for LaTeX)" }
 };
 
 void ui_show_help(Editor *ed) {
@@ -1594,7 +1726,7 @@ void ui_show_help(Editor *ed) {
             continue;
         }
 
-        if (ch == 27 || ch == 'q' || ch == 'Q' || ch == KEY_F(1) || ch == 8) {
+        if (ch == 27 || ch == 'q' || ch == 'Q' || ch == KEY_F(1) || ch == CTRL_KEY('g') || ch == CTRL_KEY('x')) {
             break;
         } else if (ch == '\n' || ch == '\r') {
             break;
@@ -1633,15 +1765,15 @@ void ui_show_help(Editor *ed) {
 }
 
 static void calc_export_win_geom(int rows, int cols, int *win_h, int *win_w, int *win_y, int *win_x) {
-    int h = 15;
-    int w = 70;
+    int h = 16;
+    int w = 72;
     if (w > cols - 4) w = cols - 4;
     if (w < 46) w = 46;
     if (w > cols) w = cols;
     if (w < 16) w = cols > 0 ? cols : 16;
 
     if (h > rows - 2) h = rows - 2;
-    if (h < 13) h = 13;
+    if (h < 14) h = 14;
     if (h > rows) h = rows;
     if (h < 8) h = rows > 0 ? rows : 8;
 
@@ -1660,6 +1792,8 @@ bool ui_export_menu(Editor *ed) {
     if (!ed) return false;
 
     bool has_pandoc = export_has_pandoc();
+    size_t linked_files = export_count_linked_files(&ed->buffer);
+    bool include_linked = true;
     ExportFormat selected_fmt = EXPORT_HTML;
     ExportEngine engine = EXPORT_ENGINE_AUTO;
 
@@ -1686,7 +1820,7 @@ bool ui_export_menu(Editor *ed) {
         { EXPORT_HTML,  "1. HTML  (.html)", "Web page (HTML5)" },
         { EXPORT_XML,   "2. XML   (.xml) ", "Structured XML / DocBook 5" },
         { EXPORT_EPUB,  "3. EPUB  (.epub)", "E-book (EPUB 3)" },
-        { EXPORT_LATEX, "4. LaTeX (.tex) ", "Typesetting source (LaTeX)" }
+        { EXPORT_LATEX, "4. LaTeX (.tex) ", "Single-doc LaTeX source" }
     };
 
     bool exported = false;
@@ -1719,14 +1853,30 @@ bool ui_export_menu(Editor *ed) {
         wattroff(win, COLOR_PAIR(CP_TASK_CHECKED) | A_BOLD);
         wattroff(win, COLOR_PAIR(CP_TASK_UNCHECKED));
 
-        // Row 2: Divider
-        mvwaddch(win, 2, 0, ACS_LTEE);
-        for (int x = 1; x < win_w - 1; ++x) mvwaddch(win, 2, x, ACS_HLINE);
-        mvwaddch(win, 2, win_w - 1, ACS_RTEE);
+        // Row 2: Linked files summary
+        char link_line[128];
+        if (linked_files > 0) {
+            snprintf(link_line, sizeof(link_line), "Linked .md files: %zu detected (%s - press L to toggle)",
+                     linked_files, include_linked ? "INCLUDED" : "EXCLUDED");
+            wattron(win, include_linked ? (COLOR_PAIR(CP_HEADER1) | A_BOLD) : COLOR_PAIR(CP_MARKER));
+        } else {
+            snprintf(link_line, sizeof(link_line), "Linked .md files: none (insert file links with F6 / Alt+H)");
+            wattron(win, COLOR_PAIR(CP_MARKER) | A_DIM);
+        }
+        if (win_w > 4) {
+            mvwaddnstr(win, 2, 2, link_line, win_w - 4);
+        }
+        wattroff(win, COLOR_PAIR(CP_HEADER1) | A_BOLD);
+        wattroff(win, COLOR_PAIR(CP_MARKER) | A_DIM);
 
-        // Rows 3..6: Format list
-        for (int i = 0; i < EXPORT_FORMAT_COUNT && 3 + i < win_h - 4; ++i) {
-            int y = 3 + i;
+        // Row 3: Divider
+        mvwaddch(win, 3, 0, ACS_LTEE);
+        for (int x = 1; x < win_w - 1; ++x) mvwaddch(win, 3, x, ACS_HLINE);
+        mvwaddch(win, 3, win_w - 1, ACS_RTEE);
+
+        // Rows 4..7: Format list
+        for (int i = 0; i < EXPORT_FORMAT_COUNT && 4 + i < win_h - 4; ++i) {
+            int y = 4 + i;
             bool is_sel = ((int)selected_fmt == i);
             bool list_active = (focus == EXP_FOCUS_LIST);
 
@@ -1777,7 +1927,7 @@ bool ui_export_menu(Editor *ed) {
         int err_y = win_h - 3;
         int foot_sep_y = win_h - 2;
 
-        if (path_sep_y > 6) {
+        if (path_sep_y > 7) {
             mvwaddch(win, path_sep_y, 0, ACS_LTEE);
             for (int x = 1; x < win_w - 1; ++x) mvwaddch(win, path_sep_y, x, ACS_HLINE);
             mvwaddch(win, path_sep_y, win_w - 1, ACS_RTEE);
@@ -1825,8 +1975,8 @@ bool ui_export_menu(Editor *ed) {
         mvwaddch(win, foot_sep_y, win_w - 1, ACS_RTEE);
 
         const char *hints = has_pandoc
-            ? " [Enter] Export  [1-4] Format  [Tab] Path  [E] Engine  [Esc] Cancel "
-            : " [Enter] Export  [1-4] Format  [Tab] Edit Path  [Esc] Cancel ";
+            ? " [Enter] Export  [1-4] Format  [Tab] Path  [L] Links  [E] Engine  [Esc] Cancel "
+            : " [Enter] Export  [1-4] Format  [Tab] Path  [L] Links  [Esc/^C] Cancel ";
         if (win_w > 4) {
             wattron(win, COLOR_PAIR(CP_MARKER) | A_DIM);
             mvwaddnstr(win, win_h - 1, 2, hints, win_w - 4);
@@ -1864,10 +2014,18 @@ bool ui_export_menu(Editor *ed) {
         if (ch == '\n' || ch == '\r') {
             err_msg[0] = '\0';
             char used_engine[32] = {0};
-            if (export_document(&ed->buffer, selected_fmt, path_buf, engine,
-                                used_engine, sizeof(used_engine), err_msg, sizeof(err_msg))) {
-                editor_set_status(ed, "Exported %s to %s (%s)",
-                                  export_format_name(selected_fmt), path_buf, used_engine);
+            size_t included_linked = 0;
+            if (export_document_ex(&ed->buffer, selected_fmt, path_buf, engine,
+                                   include_linked, &included_linked,
+                                   used_engine, sizeof(used_engine), err_msg, sizeof(err_msg))) {
+                if (included_linked > 0) {
+                    editor_set_status(ed, "Exported %s to %s (+%zu linked, %s)",
+                                      export_format_name(selected_fmt), path_buf,
+                                      included_linked, used_engine);
+                } else {
+                    editor_set_status(ed, "Exported %s to %s (%s)",
+                                      export_format_name(selected_fmt), path_buf, used_engine);
+                }
                 exported = true;
                 break;
             }
@@ -1905,6 +2063,9 @@ bool ui_export_menu(Editor *ed) {
                 selected_fmt = (ExportFormat)(ch - '1');
             } else if ((ch == 'e' || ch == 'E') && has_pandoc) {
                 engine = (engine == EXPORT_ENGINE_AUTO) ? EXPORT_ENGINE_BUILTIN : EXPORT_ENGINE_AUTO;
+                err_msg[0] = '\0';
+            } else if (ch == 'l' || ch == 'L') {
+                include_linked = !include_linked;
                 err_msg[0] = '\0';
             } else if (ch == 'q' || ch == 'Q') {
                 break;

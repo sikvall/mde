@@ -72,10 +72,23 @@ const char *export_format_ext(ExportFormat fmt);
 void export_default_path(const char *src_path, ExportFormat fmt, char *out_path, size_t max_len);
 
 /**
+ * @brief Count local Markdown files recursively linked from the given buffer.
+ *
+ * Follows relative and absolute Markdown links (`[text](file.md)`) outside
+ * fenced code blocks with cycle detection.
+ *
+ * @param buf Source root document buffer.
+ * @return Number of distinct linked Markdown files found on disk (excluding root).
+ */
+size_t export_count_linked_files(const Buffer *buf);
+
+/**
  * @brief Export a Markdown text buffer to the specified format and destination path.
  *
- * Uses pandoc safely via fork/execvp (never a shell) when appropriate, or falls back
- * to built-in C11 converters for HTML5, XML, and LaTeX.
+ * Automatically includes all recursively linked local Markdown files (HTML, XML,
+ * EPUB, and unified single-document LaTeX). Uses pandoc safely via fork/execvp
+ * (never a shell) when appropriate, or falls back to built-in C11 converters
+ * for HTML5, XML, and LaTeX.
  *
  * @param buf Source document buffer.
  * @param fmt Target format (HTML, XML, EPUB, LaTeX).
@@ -90,6 +103,26 @@ void export_default_path(const char *src_path, ExportFormat fmt, char *out_path,
 bool export_document(const Buffer *buf, ExportFormat fmt, const char *out_path,
                      ExportEngine engine, char *out_engine_used, size_t engine_cap,
                      char *err_msg, size_t err_cap);
+
+/**
+ * @brief Extended export function allowing explicit control over linked-file inclusion.
+ *
+ * @param buf Source document buffer.
+ * @param fmt Target format (HTML, XML, EPUB, LaTeX).
+ * @param out_path Destination file path.
+ * @param engine Engine preference (AUTO, BUILTIN, or PANDOC).
+ * @param include_linked If true, recursively include all locally linked Markdown files.
+ * @param out_linked_count Optional pointer receiving number of linked files included.
+ * @param out_engine_used Optional buffer receiving the engine actually used ("pandoc" or "built-in").
+ * @param engine_cap Capacity of out_engine_used.
+ * @param err_msg Optional buffer receiving an error message on failure.
+ * @param err_cap Capacity of err_msg.
+ * @return true on success, false on failure.
+ */
+bool export_document_ex(const Buffer *buf, ExportFormat fmt, const char *out_path,
+                        ExportEngine engine, bool include_linked, size_t *out_linked_count,
+                        char *out_engine_used, size_t engine_cap,
+                        char *err_msg, size_t err_cap);
 
 #ifdef __cplusplus
 }
