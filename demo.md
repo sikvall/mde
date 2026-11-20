@@ -8,14 +8,16 @@
 
 - **Dual-Pane Split View**: Live rendered Markdown preview on the right side while editing on the left!
 - **In-Place Rich Highlighting**: Single-screen mode with inline colors, styled headings, and dimmed markup.
-- **Rendered Reader Mode**: Full-screen formatted viewing.
+- **Rendered Reader Mode**: Full-screen formatted viewing with aligned box-drawn tables and directional link indicators.
 - **Smart Markdown Editing**:
   - Hitting `Enter` on lists auto-continues the bullet or numbering.
   - Hitting `Enter` on an empty bullet removes it.
   - `Ctrl+T` instantly toggles task checkboxes `[ ]` <-> `[x]`.
-  - `Ctrl+B` and `Ctrl+K` insert bold and inline code markers.
-- **Full Undo / Redo**: `Ctrl+Z` and `Ctrl+Y` with group tracking.
-- **Interactive Find**: `Ctrl+F` with live highlighting and navigation.
+  - `Alt+B` inserts bold (`**`) markers or wraps the active selection.
+  - `Alt+J` reflows/justifies paragraphs (including `> ` blockquotes) to your configured wrap width.
+- **Full Undo / Redo**: `Alt+U` and `Alt+E` with group tracking and exact dirty-state awareness.
+- **Search, Replace & Outline**: `Ctrl+W` / `Ctrl+Q` to search, `Ctrl+\` / `Alt+R` for interactive replace, and `F9` / `Alt+T` for the Document Outline jump modal.
+- **Hypertext Links**: Try [External Docs](https://commonmark.org/), [Local README](README.md), or jump to [Keyboard Shortcuts](#keyboard-shortcuts) with `F7` / `Alt+O`!
 
 ---
 
@@ -52,14 +54,21 @@ int main(void) {
 
 | Shortcut | Action |
 | --- | --- |
-| `Ctrl+P` or `F2` | Toggle View Mode (Split / In-place / Preview) |
-| `Ctrl+S` | Save current file |
-| `Ctrl+O` | Open file |
-| `Ctrl+Q` | Quit editor |
+| `F2` / `Alt+P` | Cycle View Mode (Split / In-place / Preview) |
+| `Ctrl+S` | Save current file (atomic & symlink-safe) |
+| `Ctrl+O` | Write Out (Save As with overwrite warning) |
+| `Ctrl+R` | Read / Open File |
+| `Ctrl+X` | Exit editor (prompts if unsaved) |
 | `Ctrl+T` | Toggle checkbox `[ ]` <-> `[x]` |
-| `Ctrl+Z` / `Ctrl+Y` | Undo / Redo |
-| `Ctrl+F` | Find / Search text |
+| `Alt+U` / `Alt+E` | Undo / Redo |
+| `Ctrl+W` / `Ctrl+Q` | Search Forward / Backward |
+| `Ctrl+\` / `Alt+R` | Search & Replace (Y / N / A / Esc) |
+| `Alt+J` | Reflow / Justify Paragraph |
+| `Ctrl+←` / `Ctrl+→` | Move Backward / Forward by Word |
+| `F9` / `Alt+T` | Document Outline (Jump to Heading) |
+| `F6` / `F7` / `F8` | Insert Link / Follow Link / Go Back |
+| `F5` / `Alt+X` | Export Menu (HTML, XML, EPUB, LaTeX) |
 | `Ins` | Toggle Insert / Overwrite mode |
-| `F1` or `Ctrl+H` | Show Help Dialog |
+| `F1` / `Ctrl+G` | Show Help Dialog |
 
 Happy Markdown editing!

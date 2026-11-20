@@ -47,7 +47,7 @@
   - Arrow keys (`↑`/`↓`/`PgUp`/`PgDn`), `Backspace` to navigate up a directory, `Enter` to open or save, and `Esc` or `Ctrl+C` to cancel.
 - **Hypertext File Linking & Navigation (`F6` / `Alt+H`, `F7` / `Alt+O`, `F8` / `Alt+-`)**:
   - **Insert File Link (`F6` / `Alt+H`)**: Opens an interactive file picker to choose an existing file (or type a new target filename), automatically computes a portable relative path, derives a label from the selection or the target's H1 heading, and inserts `[Label](relative/path.md)`.
-  - **Follow Links (`F7` / `Alt+O` / `Ctrl+]`)**: Jump directly into any local Markdown link `[Label](file.md)` or `#heading` anchor under the cursor (or on the active line). If the target file does not yet exist, `mde` opens a new buffer at that path so you can immediately write it.
+  - **Follow Links (`F7` / `Alt+O` / `Ctrl+]`)**: Jump directly into any local Markdown link `[Label](file.md)` or `#heading` anchor under the cursor (or on the active line). If the current buffer has unsaved changes and a different file is about to be loaded, `mde` prompts to save or discard changes first. If the target file does not yet exist, `mde` opens a new buffer at that path so you can immediately write it.
   - **Link History Back (`F8` / `Alt+-`)**: Return to previously visited linked documents with your exact cursor line and column restored. Prompts to save if the current buffer has unsaved edits.
 - **Multi-File Linked Export Menu (`F5` / `Alt+X`) — HTML, XML, EPUB, LaTeX**:
   - Export the current Markdown buffer directly to **HTML5** (`.html`), **XML / DocBook 5** (`.xml`), **EPUB 3** (`.epub`), or **LaTeX** (`.tex`).
@@ -56,7 +56,13 @@
     - **LaTeX**: Combines the root document and all linked Markdown sources into **one unified `.tex` document** (single preamble and `\begin{document}...\end{document}` with internal `\hypertarget`/`\hyperlink` cross-references).
     - **XML**: Includes all linked sources as structured `<linked-document>` / DocBook sections with rewritten internal links.
   - Automatically detects and uses **`pandoc`** (invoked safely via `fork`/`execvp`, never a shell) when installed, with full built-in C11 exporters for HTML5, structured XML, and LaTeX as zero-dependency fallbacks (EPUB requires `pandoc`).
-  - Pre-fills the output filename based on the current file and updates extensions automatically as you choose a format; press `Tab` to customize the destination path, `L` to toggle linked-file inclusion, or `E` to toggle between Pandoc and Built-in engines.
+  - Pre-fills the output filename based on the current file and updates extensions automatically as you choose a format; press `Tab` to customize the destination path, `L` to toggle linked-file inclusion, or `E` to toggle between Pandoc and Built-in engines. If the destination file already exists, an explicit `(Y)es / (N)o` overwrite confirmation is required before writing.
+- **Document Outline (`F9` / `Alt+T`), Search & Replace (`Ctrl+\` / `Alt+R`) & Paragraph Reflow (`Alt+J`)**:
+  - **Document Outline (`F9` / `Alt+T`)**: Opens a scrollable heading navigator listing all H1–H6 headings in the active file; press `Enter` to jump directly to any section.
+  - **Search & Replace (`Ctrl+\` / `Alt+R`)**: Interactive Nano-style replacement (`Y` Replace, `N` Skip, `A` Replace All, `Esc`/`^C` Cancel) with atomic undo.
+  - **Paragraph Reflow (`Alt+J`)**: Re-wraps the current Markdown paragraph (preserving indentation and blockquote `> ` prefixes) to the configured wrap column.
+  - **Rich Table & Link Preview**: Markdown tables render with aligned Unicode box-drawing borders (`┌─┬─┐`), and links display directional cues (`↗` external URL, `→` local file, `↓` `#anchor`).
+  - **Safe Atomic Saves & Exact Undo Tracking**: File saves resolve symlinks, preserve permissions, and atomically rename temporary files into place; undoing back to the last saved state accurately clears the dirty `[*]` indicator.
 - **Nano-Compatible Control Keys & Persistent Bottom Shortcut Hint Rows**:
   - Control and Meta (`Alt`) keybindings are synchronized with GNU `nano` (`^G` Help, `^X` Exit, `^O` Write Out, `^R` Read File, `^S` Save, `^W`/`^Q` Search, `^K` Cut, `^U` Paste, `M-6` Copy, `M-A` Mark, `M-U`/`M-E` Undo/Redo, `^C` Location, `^/` Go to Line, `^Y`/`^V` Page Up/Down, `^B`/`^F`/`^P`/`^N` Navigation).
   - Displays two rows of prominent nano-style shortcut key hints at the bottom of the screen (or three on taller displays $\ge 28$ rows), styled with reverse-video key badges and clear labels.
@@ -121,11 +127,13 @@ Updating this single file automatically updates the CLI output (`mde -v`), the h
 | **`F6` / `Alt+H`** | Insert hypertext file link `[Label](relative/file.md)` via file picker |
 | **`F7` / `Alt+O` / `Ctrl+]`** | Follow Markdown file link or `#heading` anchor under cursor |
 | **`F8` / `Alt+-`** | Navigate back to previous linked file & cursor position |
+| **`F9` / `Alt+T`** | Open Document Outline modal to jump to any H1–H6 heading |
 | **`F2` / `Alt+P`** | Cycle View Modes (**Split** → **In-Place** → **Preview**) |
 | **`F4` / `Alt+L`** | Set automatic line break column (`20`–`255` or `off`; default `78`) |
 | **`Ctrl+L`** | Refresh / redraw screen |
 | **`Ctrl+W`** | Where Is — Search forward for text |
 | **`Ctrl+Q`** | Where Was — Search backward for text |
+| **`Ctrl+\` / `Alt+R`** | Search and Replace (Yes / No / All) |
 | **`Alt+W` / `F3`** | Repeat search forward (`Alt+Q` repeats backward) |
 | **`Ctrl+/` / `Alt+G`** | Go to line number (and optional column) |
 | **`Ctrl+C`** | Display current cursor location (also cancels prompts/dialogs) |
@@ -136,10 +144,12 @@ Updating this single file automatically updates the CLI output (`mde -v`), the h
 | **`Esc`** | Clear active selection mark (Cancel in prompts/dialogs) |
 | **`Alt+U`** | Undo last change |
 | **`Alt+E`** | Redo last undone change |
+| **`Alt+J`** | Reflow (re-wrap) current Markdown paragraph to wrap column |
 | **`Ctrl+T`** | Toggle checkbox `[ ]` <-> `[x]` on current line |
 | **`Alt+B`** | Insert Bold markers (`**...**`) or wrap selection |
 | **`Ctrl+A` / `Home`** | Jump to beginning of line |
 | **`Ctrl+E` / `End`** | Jump to end of line |
+| **`Ctrl+←` / `Ctrl+→`** | Jump backward / forward by one word |
 | **`Ctrl+Y` / `PgUp`** | Previous Page (scroll viewport up) |
 | **`Ctrl+V` / `PgDn`** | Next Page (scroll viewport down) |
 | **`Alt+\` / `Alt+/`** | Jump to first / last line of document |
@@ -241,7 +251,7 @@ mde/
 │   ├── utf8.h / .c     # UTF-8 boundary checks, visual column conversions (wcwidth)
 │   └── main.c          # Event loop, CLI parsing, signals, key & mouse dispatch
 └── tests/
-    └── test_runner.c   # Comprehensive C11 unit test suite (341 tests)
+    └── test_runner.c   # Comprehensive C11 unit test suite (395 tests)
 ```
 
 ---

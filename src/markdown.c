@@ -11,6 +11,7 @@
 #include <string.h>
 #include <ctype.h>
 
+/** @brief Initialize an empty MdParsedLine structure. */
 void md_parsed_line_init(MdParsedLine *pl) {
     if (!pl) return;
     pl->spans = NULL;
@@ -28,6 +29,7 @@ void md_parsed_line_init(MdParsedLine *pl) {
     pl->code_lang[0] = '\0';
 }
 
+/** @brief Release heap memory allocated for spans inside an MdParsedLine. */
 void md_parsed_line_free(MdParsedLine *pl) {
     if (!pl) return;
     free(pl->spans);
@@ -36,6 +38,7 @@ void md_parsed_line_free(MdParsedLine *pl) {
     pl->span_cap = 0;
 }
 
+/** @brief Append a token span covering [start, end) to a parsed line. */
 bool md_parsed_line_add_span(MdParsedLine *pl, size_t start, size_t end, MdTokenType type) {
     if (!pl || start >= end) return false;
 
@@ -54,6 +57,7 @@ bool md_parsed_line_add_span(MdParsedLine *pl, size_t start, size_t end, MdToken
     return true;
 }
 
+/** @brief Return true if a line is a Markdown thematic break (---, ***, ___). */
 bool md_is_hrule(const char *line, size_t len) {
     if (!line || len < 3) return false;
     size_t i = 0;
@@ -75,6 +79,7 @@ bool md_is_hrule(const char *line, size_t len) {
     return count >= 3;
 }
 
+/** @brief Detect an unordered, ordered, or task list prefix at the start of a line. */
 bool md_detect_list(const char *line, size_t len,
                     size_t *out_prefix_len,
                     char *out_bullet, size_t bullet_cap,
@@ -319,6 +324,7 @@ static void parse_inlines(const char *text, size_t text_len, size_t base_offset,
     }
 }
 
+/** @brief Lex a single Markdown line into token spans, updating multi-line code-fence state. */
 void md_parse_line(const char *line, size_t len,
                    bool *in_code_block, char *code_lang, size_t lang_cap,
                    MdParsedLine *out_line) {

@@ -91,12 +91,17 @@ deriving the label from the target file's H1 heading.
 .TP
 .BR F7 " / " Alt+O " / " Ctrl+]
 Follow a local Markdown file link or \fB#heading\fR anchor under the cursor
-(creates a new buffer if the target file does not yet exist) and pushes the
-current location onto the link history stack.
+(prompts to save unsaved changes before loading a different file, creates a new
+buffer if the target file does not yet exist) and pushes the current location
+onto the link history stack.
 .TP
 .BR F8 " or " Alt+\-
 Navigate back to the previously visited linked file and restore the cursor
 position.
+.TP
+.BR F9 " or " Alt+T
+Open the Document Outline modal listing all Markdown headings (H1\-H6) to jump
+directly to any section.
 .TP
 .BR F2 " or " Alt+P
 Cycle view modes: Split View, In-Place Rich View, Fullscreen Rendered View.
@@ -137,6 +142,9 @@ also cancels active prompts and dialogs.
 .BR Ctrl+W " / " Ctrl+Q
 Where Is (search forward) and Where Was (search backward) in the document.
 .TP
+.BR Ctrl+\e " or " Alt+R
+Interactive Search and Replace (\fBY\fRes / \fBN\fRo / \fBA\fRll / Cancel).
+.TP
 .BR Alt+W " / " F3 " / " Alt+Q
 Repeat search forward (\fBAlt+W\fR, \fBF3\fR) or backward (\fBAlt+Q\fR).
 .TP
@@ -144,13 +152,21 @@ Repeat search forward (\fBAlt+W\fR, \fBF3\fR) or backward (\fBAlt+Q\fR).
 Go to a specific line number (and optional column).
 .TP
 .BR Alt+U " / " Alt+E
-Undo and Redo changes (grouped atomically).
+Undo and Redo changes (grouped atomically; undoing back to the saved state
+clears the modified flag).
+.TP
+.B Alt+J
+Reflow (re-wrap) the current Markdown paragraph to the configured line break
+column, preserving indentation and blockquote prefixes.
 .TP
 .B Alt+B
 Insert Markdown bold formatting markers (\fB**\fR) or wrap the active selection.
 .TP
 .BR Ctrl+A " / " Home " and " Ctrl+E " / " End
 Jump to beginning or end of current line.
+.TP
+.BR Ctrl+Left " / " Ctrl+Right
+Jump backward or forward by one word boundary.
 .TP
 .BR Ctrl+Y " / " PgUp " and " Ctrl+V " / " PgDn
 Scroll viewport up (Previous Page) or down (Next Page).

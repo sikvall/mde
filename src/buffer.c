@@ -11,6 +11,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <unistd.h>
+#include <limits.h>
+#include <sys/stat.h>
 
 static const char EMPTY_STR[] = "";
 
@@ -54,6 +57,7 @@ static bool line_reserve(Line *line, size_t needed) {
     return true;
 }
 
+/** @brief Initialize a Buffer with one empty line and empty undo/redo stacks. */
 void buffer_init(Buffer *buf) {
     if (!buf) return;
     buf->lines = (Line*)malloc(sizeof(Line));
@@ -65,8 +69,11 @@ void buffer_init(Buffer *buf) {
     undo_stack_init(&buf->undo_stack);
     undo_stack_init(&buf->redo_stack);
     buf->current_group_id = 1;
+    buf->saved_undo_depth = 0;
+    buf->saved_depth_valid = true;
 }
 
+/** @brief Release all lines, file path, and undo/redo history owned by buf. */
 void buffer_free(Buffer *buf) {
     if (!buf) return;
     for (size_t i = 0; i < buf->count; ++i) {
@@ -84,6 +91,7 @@ void buffer_free(Buffer *buf) {
     undo_stack_free(&buf->redo_stack);
 }
 
+/** @brief Return the null-terminated text of 0-indexed row (or "" if out of range). */
 const char *buffer_line(const Buffer *buf, size_t row) {
     if (!buf || row >= buf->count || !buf->lines[row].chars) {
         return EMPTY_STR;
@@ -91,11 +99,13 @@ const char *buffer_line(const Buffer *buf, size_t row) {
     return buf->lines[row].chars;
 }
 
+/** @brief Return the byte length of 0-indexed row (or 0 if out of range). */
 size_t buffer_line_len(const Buffer *buf, size_t row) {
     if (!buf || row >= buf->count) return 0;
     return buf->lines[row].len;
 }
 
+/** @brief Return the total number of lines currently stored in buf. */
 size_t buffer_line_count(const Buffer *buf) {
     return buf ? buf->count : 0;
 }
@@ -116,6 +126,7 @@ static bool buffer_ensure_cap(Buffer *buf, size_t needed) {
     return true;
 }
 
+/** @brief Load a UTF-8 file from disk into buf, stripping CRLF and resetting history. */
 bool buffer_load(Buffer *buf, const char *file_path) {
     if (!buf || !file_path) return false;
 
@@ -168,43 +179,161 @@ bool buffer_load(Buffer *buf, const char *file_path) {
     buf->is_dirty = false;
     undo_stack_clear(&buf->undo_stack);
     undo_stack_clear(&buf->redo_stack);
+    buf->saved_undo_depth = 0;
+    buf->saved_depth_valid = true;
     return true;
 }
 
+/**
+ * @brief Record a buffer mutation in dirty/saved-depth tracking before clearing redo.
+ *
+ * If the user undid past the last saved depth and then made a new edit, the
+ * saved point is no longer reachable via undo/redo so saved_depth_valid becomes false.
+ */
+static void buffer_record_mutation(Buffer *buf) {
+    if (!buf) return;
+    if (buf->saved_depth_valid && buf->undo_stack.count > 0 &&
+        (buf->undo_stack.count - 1) < buf->saved_undo_depth) {
+        buf->saved_depth_valid = false;
+    }
+    undo_stack_clear(&buf->redo_stack);
+    buf->is_dirty = true;
+}
+
+/**
+ * @brief Resolve the real target path for atomic saving when path is a symlink.
+ */
+static void resolve_save_target(const char *path, char *out_target, size_t cap) {
+    struct stat lst;
+    if (lstat(path, &lst) == 0 && S_ISLNK(lst.st_mode)) {
+        char resolved[PATH_MAX];
+        if (realpath(path, resolved)) {
+            snprintf(out_target, cap, "%s", resolved);
+            return;
+        }
+        // Dangling symlink: resolve relative link target against symlink's parent directory
+        char link_buf[PATH_MAX];
+        ssize_t n = readlink(path, link_buf, sizeof(link_buf) - 1);
+        if (n > 0) {
+            link_buf[n] = '\0';
+            if (link_buf[0] == '/') {
+                snprintf(out_target, cap, "%s", link_buf);
+                return;
+            }
+            const char *slash = strrchr(path, '/');
+            if (slash) {
+                size_t dlen = (size_t)(slash - path);
+                if (dlen + 1 + (size_t)n < cap) {
+                    memcpy(out_target, path, dlen);
+                    out_target[dlen] = '/';
+                    memcpy(out_target + dlen + 1, link_buf, (size_t)n + 1);
+                    return;
+                }
+            }
+            snprintf(out_target, cap, "%s", link_buf);
+            return;
+        }
+    }
+    snprintf(out_target, cap, "%s", path);
+}
+
+/** @brief Atomically write all lines of buf to file_path (resolving symlinks) and clear dirty flag. */
 bool buffer_save(Buffer *buf, const char *file_path) {
     if (!buf) return false;
     const char *path = file_path ? file_path : buf->file_path;
-    if (!path) return false;
+    if (!path || !path[0]) return false;
 
-    FILE *f = fopen(path, "wb");
-    if (!f) return false;
+    // Resolve symlinks so the symlink itself stays intact while its target is replaced atomically
+    char dest_path[PATH_MAX];
+    resolve_save_target(path, dest_path, sizeof(dest_path));
 
-    for (size_t i = 0; i < buf->count; ++i) {
+    // Preserve existing permissions if destination already exists
+    struct stat st;
+    bool had_orig = (stat(dest_path, &st) == 0);
+    if (had_orig && S_ISDIR(st.st_mode)) return false;
+    mode_t target_mode = had_orig ? (st.st_mode & 07777) : 0644;
+    if (!had_orig) {
+        mode_t um = umask(0);
+        umask(um);
+        target_mode = (mode_t)(0666 & ~um);
+    }
+
+    // Create sibling temp file in the same directory so rename() is atomic on the same filesystem
+    char tmp_path[PATH_MAX + 32];
+    const char *slash = strrchr(dest_path, '/');
+    if (slash) {
+        size_t dir_len = (size_t)(slash - dest_path);
+        if (dir_len == 0) {
+            snprintf(tmp_path, sizeof(tmp_path), "/.mde_tmp_XXXXXX");
+        } else {
+            snprintf(tmp_path, sizeof(tmp_path), "%.*s/.mde_tmp_XXXXXX", (int)dir_len, dest_path);
+        }
+    } else {
+        snprintf(tmp_path, sizeof(tmp_path), ".mde_tmp_XXXXXX");
+    }
+
+    int fd = mkstemp(tmp_path);
+    if (fd < 0) return false;
+    (void)fchmod(fd, target_mode);
+
+    FILE *f = fdopen(fd, "wb");
+    if (!f) {
+        close(fd);
+        unlink(tmp_path);
+        return false;
+    }
+
+    bool write_ok = true;
+    for (size_t i = 0; i < buf->count && write_ok; ++i) {
         const char *txt = buffer_line(buf, i);
         size_t len = buffer_line_len(buf, i);
-        if (len > 0) {
-            fwrite(txt, 1, len, f);
+        if (len > 0 && fwrite(txt, 1, len, f) != len) {
+            write_ok = false;
+            break;
         }
-        if (i + 1 < buf->count || len > 0) {
-            fputc('\n', f);
+        if ((i + 1 < buf->count || len > 0) && fputc('\n', f) == EOF) {
+            write_ok = false;
+            break;
         }
     }
 
-    fclose(f);
+    if (write_ok && fflush(f) != 0) {
+        write_ok = false;
+    }
+    if (write_ok) {
+        (void)fsync(fileno(f));
+    }
+    if (fclose(f) != 0) {
+        write_ok = false;
+    }
+
+    if (!write_ok) {
+        unlink(tmp_path);
+        return false;
+    }
+
+    if (rename(tmp_path, dest_path) != 0) {
+        unlink(tmp_path);
+        return false;
+    }
 
     if (file_path && (!buf->file_path || strcmp(buf->file_path, file_path) != 0)) {
         free(buf->file_path);
         buf->file_path = strdup(file_path);
     }
     buf->is_dirty = false;
+    buf->saved_undo_depth = buf->undo_stack.count;
+    buf->saved_depth_valid = true;
     return true;
 }
 
+/** @brief Allocate and return the next monotonically increasing undo group ID. */
 uint64_t buffer_next_group(Buffer *buf) {
     if (!buf) return 1;
     return ++buf->current_group_id;
 }
 
+/** @brief Insert len bytes of str at (row, col) and record an undo entry. */
 bool buffer_insert_string(Buffer *buf, size_t row, size_t col,
                           const char *str, size_t len, uint64_t group) {
     if (!buf || !str || len == 0) return false;
@@ -221,11 +350,11 @@ bool buffer_insert_string(Buffer *buf, size_t row, size_t col,
     l->chars[l->len] = '\0';
 
     undo_stack_push(&buf->undo_stack, ACTION_INSERT_TEXT, row, col, str, len, group);
-    undo_stack_clear(&buf->redo_stack);
-    buf->is_dirty = true;
+    buffer_record_mutation(buf);
     return true;
 }
 
+/** @brief Delete byte_len bytes starting at (row, col) and record an undo entry. */
 bool buffer_delete_range(Buffer *buf, size_t row, size_t col,
                          size_t byte_len, uint64_t group) {
     if (!buf || row >= buf->count || byte_len == 0) return false;
@@ -238,16 +367,16 @@ bool buffer_delete_range(Buffer *buf, size_t row, size_t col,
     }
 
     undo_stack_push(&buf->undo_stack, ACTION_DELETE_TEXT, row, col, l->chars + col, byte_len, group);
-    undo_stack_clear(&buf->redo_stack);
+    buffer_record_mutation(buf);
 
     memmove(l->chars + col, l->chars + col + byte_len, l->len - (col + byte_len));
     l->len -= byte_len;
     l->chars[l->len] = '\0';
 
-    buf->is_dirty = true;
     return true;
 }
 
+/** @brief Split line row into two lines at byte offset col and record an undo entry. */
 bool buffer_split_line(Buffer *buf, size_t row, size_t col, uint64_t group) {
     if (!buf) return false;
     if (row >= buf->count) row = buf->count - 1;
@@ -294,11 +423,11 @@ bool buffer_split_line(Buffer *buf, size_t row, size_t col, uint64_t group) {
     free(remainder);
 
     undo_stack_push(&buf->undo_stack, ACTION_SPLIT_LINE, row, col, NULL, 0, group);
-    undo_stack_clear(&buf->redo_stack);
-    buf->is_dirty = true;
+    buffer_record_mutation(buf);
     return true;
 }
 
+/** @brief Concatenate line row + 1 onto the end of line row and record an undo entry. */
 bool buffer_join_lines(Buffer *buf, size_t row, uint64_t group) {
     if (!buf || row + 1 >= buf->count) return false;
 
@@ -320,11 +449,11 @@ bool buffer_join_lines(Buffer *buf, size_t row, uint64_t group) {
     buf->count--;
 
     undo_stack_push(&buf->undo_stack, ACTION_JOIN_LINE, row, split_col, NULL, 0, group);
-    undo_stack_clear(&buf->redo_stack);
-    buf->is_dirty = true;
+    buffer_record_mutation(buf);
     return true;
 }
 
+/** @brief Replace the entire contents of line row with new_str as part of group. */
 bool buffer_replace_line(Buffer *buf, size_t row, const char *new_str,
                          size_t new_len, uint64_t group) {
     if (!buf || row >= buf->count || !new_str) return false;
@@ -339,6 +468,7 @@ bool buffer_replace_line(Buffer *buf, size_t row, const char *new_str,
     return true;
 }
 
+/** @brief Delete the UTF-8 character before (*row, *col), or join with the previous line. */
 bool buffer_backspace(Buffer *buf, size_t *row, size_t *col, uint64_t group) {
     if (!buf || !row || !col || buf->count == 0) return false;
     if (*row >= buf->count) *row = buf->count - 1;
@@ -360,6 +490,7 @@ bool buffer_backspace(Buffer *buf, size_t *row, size_t *col, uint64_t group) {
     return false;
 }
 
+/** @brief Delete the UTF-8 character at (row, col), or join with the following line. */
 bool buffer_delete(Buffer *buf, size_t row, size_t col, uint64_t group) {
     if (!buf || row >= buf->count) return false;
 
@@ -562,6 +693,7 @@ static void apply_raw_action(Buffer *buf, const UndoAction *act, bool is_undo,
     }
 }
 
+/** @brief Revert all mutations belonging to the top undo group and push them to redo. */
 bool buffer_undo(Buffer *buf, size_t *out_row, size_t *out_col) {
     if (!buf || undo_stack_is_empty(&buf->undo_stack)) return false;
 
@@ -583,10 +715,11 @@ bool buffer_undo(Buffer *buf, size_t *out_row, size_t *out_col) {
         free(act.text);
     }
 
-    buf->is_dirty = true;
+    buf->is_dirty = !(buf->saved_depth_valid && buf->undo_stack.count == buf->saved_undo_depth);
     return true;
 }
 
+/** @brief Re-apply all mutations belonging to the top redo group and push them to undo. */
 bool buffer_redo(Buffer *buf, size_t *out_row, size_t *out_col) {
     if (!buf || undo_stack_is_empty(&buf->redo_stack)) return false;
 
@@ -608,10 +741,11 @@ bool buffer_redo(Buffer *buf, size_t *out_row, size_t *out_col) {
         free(act.text);
     }
 
-    buf->is_dirty = true;
+    buf->is_dirty = !(buf->saved_depth_valid && buf->undo_stack.count == buf->saved_undo_depth);
     return true;
 }
 
+/** @brief Count total Unicode codepoints across all lines in buf. */
 size_t buffer_char_count(const Buffer *buf) {
     if (!buf) return 0;
     size_t total = 0;
@@ -621,6 +755,7 @@ size_t buffer_char_count(const Buffer *buf) {
     return total;
 }
 
+/** @brief Count total whitespace-delimited words across all lines in buf. */
 size_t buffer_word_count(const Buffer *buf) {
     if (!buf) return 0;
     size_t words = 0;

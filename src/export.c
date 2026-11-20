@@ -23,12 +23,14 @@
 
 #define MDE_EXPORT_MAX_DOCS 128
 
+/** @brief Safely copy msg into dst (if non-NULL and cap > 0). */
 static void set_str(char *dst, size_t cap, const char *msg) {
     if (dst && cap > 0) {
         snprintf(dst, cap, "%s", msg ? msg : "");
     }
 }
 
+/** @brief Return the human-readable display name for an ExportFormat. */
 const char *export_format_name(ExportFormat fmt) {
     switch (fmt) {
         case EXPORT_HTML:  return "HTML";
@@ -39,6 +41,7 @@ const char *export_format_name(ExportFormat fmt) {
     }
 }
 
+/** @brief Return the canonical file extension (including dot) for an ExportFormat. */
 const char *export_format_ext(ExportFormat fmt) {
     switch (fmt) {
         case EXPORT_HTML:  return ".html";
@@ -49,6 +52,7 @@ const char *export_format_ext(ExportFormat fmt) {
     }
 }
 
+/** @brief Derive a default output file path from src_path and target ExportFormat. */
 void export_default_path(const char *src_path, ExportFormat fmt, char *out_path, size_t max_len) {
     if (!out_path || max_len == 0) return;
     const char *ext = export_format_ext(fmt);
@@ -74,6 +78,7 @@ void export_default_path(const char *src_path, ExportFormat fmt, char *out_path,
     }
 }
 
+/** @brief Scan PATH for an executable pandoc binary. */
 bool export_has_pandoc(void) {
     const char *path_env = getenv("PATH");
     if (!path_env || !path_env[0]) return false;
@@ -165,12 +170,14 @@ typedef struct {
     size_t cap;
 } ExportDocList;
 
+/** @brief Initialize an empty ExportDocList container. */
 static void export_doc_list_init(ExportDocList *list) {
     list->nodes = NULL;
     list->count = 0;
     list->cap = 0;
 }
 
+/** @brief Free all owned child buffers and node array inside an ExportDocList. */
 static void export_doc_list_free(ExportDocList *list) {
     if (!list) return;
     for (size_t i = 0; i < list->count; ++i) {
@@ -185,6 +192,7 @@ static void export_doc_list_free(ExportDocList *list) {
     list->cap = 0;
 }
 
+/** @brief Canonicalize in_path via realpath with lexical dot/dot-dot fallback. */
 static void canonicalize_path(const char *in_path, char *out_path, size_t out_cap) {
     if (!in_path || !in_path[0] || !out_path || out_cap == 0) {
         if (out_path && out_cap > 0) out_path[0] = '\0';
@@ -242,6 +250,7 @@ static void canonicalize_path(const char *in_path, char *out_path, size_t out_ca
     free(copy);
 }
 
+/** @brief Extract the parent directory of abs_path (or CWD if empty). */
 static void dir_from_path(const char *abs_path, char *out_dir, size_t out_cap) {
     if (!out_dir || out_cap == 0) return;
     if (abs_path && abs_path[0]) {
@@ -263,6 +272,7 @@ static void dir_from_path(const char *abs_path, char *out_dir, size_t out_cap) {
     }
 }
 
+/** @brief Return true if path has a recognized Markdown filename extension. */
 static bool has_markdown_ext(const char *path) {
     if (!path || !path[0]) return false;
     const char *slash = strrchr(path, '/');
@@ -275,6 +285,7 @@ static bool has_markdown_ext(const char *path) {
             strcasecmp(dot, ".mkd") == 0);
 }
 
+/** @brief Parse a link URL and return true if it targets a local Markdown file (splitting #frag). */
 static bool is_local_md_target(const char *url, size_t url_len,
                                char *out_file, size_t file_cap,
                                char *out_frag, size_t frag_cap) {
@@ -320,6 +331,7 @@ static bool is_local_md_target(const char *url, size_t url_len,
     return true;
 }
 
+/** @brief Resolve rel_target relative to base_dir into a canonicalized absolute path. */
 static void resolve_against_dir(const char *base_dir, const char *rel_target,
                                 char *out_abs, size_t out_cap) {
     char combined[PATH_MAX * 2];
@@ -333,6 +345,7 @@ static void resolve_against_dir(const char *base_dir, const char *rel_target,
     canonicalize_path(combined, out_abs, out_cap);
 }
 
+/** @brief Look up abs_path in list and return its node index, or -1 if absent. */
 static ssize_t export_doc_list_find_abs(const ExportDocList *list, const char *abs_path) {
     if (!list || !abs_path || !abs_path[0]) return -1;
     for (size_t i = 0; i < list->count; ++i) {
@@ -343,6 +356,7 @@ static ssize_t export_doc_list_find_abs(const ExportDocList *list, const char *a
     return -1;
 }
 
+/** @brief Append a document node to list with a stable anchor ID and extracted title. */
 static ssize_t export_doc_list_add(ExportDocList *list, const Buffer *buf,
                                    Buffer *owned_buf, const char *abs_path) {
     if (list->count >= MDE_EXPORT_MAX_DOCS) return -1;
@@ -372,6 +386,7 @@ static ssize_t export_doc_list_add(ExportDocList *list, const Buffer *buf,
     return (ssize_t)idx;
 }
 
+/** @brief Recursively discover and load locally linked Markdown files in DFS order without cycles. */
 static void collect_linked_recursive(ExportDocList *list, size_t doc_idx) {
     if (!list || doc_idx >= list->count) return;
 
@@ -447,6 +462,7 @@ static void collect_linked_recursive(ExportDocList *list, size_t doc_idx) {
     }
 }
 
+/** @brief Populate list with root (node 0) and optionally all recursively linked Markdown files. */
 static bool export_doc_list_collect(ExportDocList *list, const Buffer *root, bool include_linked) {
     export_doc_list_init(list);
     if (!root) return false;
@@ -466,6 +482,7 @@ static bool export_doc_list_collect(ExportDocList *list, const Buffer *root, boo
     return true;
 }
 
+/** @brief Resolve a link URL from node from_idx to its target node index in list, or -1. */
 static ssize_t find_linked_doc_index(const ExportDocList *list, size_t from_idx,
                                      const char *url, size_t url_len,
                                      char *out_frag, size_t frag_cap) {
@@ -481,6 +498,7 @@ static ssize_t find_linked_doc_index(const ExportDocList *list, size_t from_idx,
     return export_doc_list_find_abs(list, target_abs);
 }
 
+/** @brief Convert heading text into a lowercase hyphenated URL anchor slug. */
 static void slugify_heading(const char *text, size_t len, char *out_slug, size_t cap) {
     if (!out_slug || cap == 0) return;
     size_t pos = 0;
@@ -499,6 +517,7 @@ static void slugify_heading(const char *text, size_t len, char *out_slug, size_t
     out_slug[pos] = '\0';
 }
 
+/** @brief Count distinct local Markdown files recursively linked from buf. */
 size_t export_count_linked_files(const Buffer *buf) {
     if (!buf) return 0;
     ExportDocList docs;
@@ -512,6 +531,7 @@ size_t export_count_linked_files(const Buffer *buf) {
  * External Pandoc Backend (fork + execvp, no shell, multi-file aware)
  * ========================================================================= */
 
+/** @brief Write a single line to a Pandoc temp file, rewriting local linked `.md` URLs to anchors. */
 static void write_pandoc_rewritten_line(FILE *tf, const char *raw, size_t len,
                                         const ExportDocList *docs, size_t doc_idx,
                                         bool *in_code, char *lang, size_t lang_cap) {
@@ -567,6 +587,7 @@ static void write_pandoc_rewritten_line(FILE *tf, const char *raw, size_t len,
     md_parsed_line_free(&pl);
 }
 
+/** @brief Materialize a document node into a temporary Markdown file with Pandoc anchors. */
 static bool write_pandoc_temp_file(const ExportDocList *docs, size_t doc_idx,
                                    char *out_tmp_path, size_t path_cap) {
     char tmp_template[] = "/tmp/mde_export_XXXXXX";
@@ -624,6 +645,7 @@ static bool write_pandoc_temp_file(const ExportDocList *docs, size_t doc_idx,
     return true;
 }
 
+/** @brief Export all collected document nodes via external pandoc using fork/execvp. */
 static bool export_via_pandoc(const ExportDocList *docs, ExportFormat fmt, const char *out_path,
                               char *err_msg, size_t err_cap) {
     if (!docs || docs->count == 0) {
@@ -847,6 +869,7 @@ static bool is_table_sep_row(const char *line, size_t len) {
     return has_dash && has_pipe;
 }
 
+/** @brief Count pipe-delimited columns in a Markdown table row. */
 static size_t count_table_cols(const char *line, size_t len) {
     size_t i = 0;
     while (i < len && isspace((unsigned char)line[i])) i++;
@@ -862,6 +885,7 @@ static size_t count_table_cols(const char *line, size_t len) {
     return cols;
 }
 
+/** @brief Return true if a list line starts with an ordered numeric bullet (e.g. `1.`). */
 static bool is_ordered_bullet(const char *line, size_t len) {
     size_t i = 0;
     while (i < len && (line[i] == ' ' || line[i] == '\t')) i++;
@@ -1130,6 +1154,7 @@ static void export_builtin_html_body(FILE *f, const ExportDocList *docs, size_t 
     html_close_block(f, &blk);
 }
 
+/** @brief Export all collected document nodes to a standalone HTML5 file. */
 static bool export_builtin_html(const ExportDocList *docs, const char *out_path,
                                 char *err_msg, size_t err_cap) {
     FILE *f = fopen(out_path, "wb");
@@ -1408,6 +1433,7 @@ static void export_builtin_xml_body(FILE *f, const ExportDocList *docs, size_t d
     xml_close_block(f, &blk);
 }
 
+/** @brief Export all collected document nodes to a structured XML file. */
 static bool export_builtin_xml(const ExportDocList *docs, const char *out_path,
                                char *err_msg, size_t err_cap) {
     FILE *f = fopen(out_path, "wb");
@@ -1676,6 +1702,7 @@ static void export_builtin_latex_body(FILE *f, const ExportDocList *docs, size_t
     latex_close_block(f, &blk);
 }
 
+/** @brief Export all collected document nodes into one unified standalone LaTeX document. */
 static bool export_builtin_latex(const ExportDocList *docs, const char *out_path,
                                  char *err_msg, size_t err_cap) {
     FILE *f = fopen(out_path, "wb");
@@ -1714,6 +1741,7 @@ static bool export_builtin_latex(const ExportDocList *docs, const char *out_path
  * Master Export Dispatch
  * ========================================================================= */
 
+/** @brief Master export dispatcher supporting Pandoc/built-in engines and linked-file bundling. */
 bool export_document_ex(const Buffer *buf, ExportFormat fmt, const char *out_path,
                         ExportEngine engine, bool include_linked, size_t *out_linked_count,
                         char *out_engine_used, size_t engine_cap,
@@ -1783,6 +1811,7 @@ bool export_document_ex(const Buffer *buf, ExportFormat fmt, const char *out_pat
     return ok;
 }
 
+/** @brief Export buf (including all locally linked Markdown files) to out_path. */
 bool export_document(const Buffer *buf, ExportFormat fmt, const char *out_path,
                      ExportEngine engine, char *out_engine_used, size_t engine_cap,
                      char *err_msg, size_t err_cap) {

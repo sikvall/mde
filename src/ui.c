@@ -23,6 +23,7 @@
 #include <libgen.h>
 #include <limits.h>
 
+/** @brief Initialize ncurses, raw input, UTF-8 locale, steady cursor, theme, and mouse events. */
 void ui_init(void) {
     setlocale(LC_ALL, "");
     initscr();
@@ -37,6 +38,7 @@ void ui_init(void) {
     mousemask(ALL_MOUSE_EVENTS, NULL);
 }
 
+/** @brief Restore default terminal cursor style and exit ncurses cleanly. */
 void ui_shutdown(void) {
     fputs("\033[0 q", stdout);
     fflush(stdout);
@@ -461,6 +463,7 @@ static const ShortcutHint s_hints_r3[] = {
     { "F5", "Export" }
 };
 
+/** @brief Compute the number of bottom shortcut hint rows appropriate for screen_rows. */
 int ui_get_shortcut_hint_rows(int screen_rows) {
     if (screen_rows >= 28) return 3;
     if (screen_rows >= 16) return 2;
@@ -468,6 +471,7 @@ int ui_get_shortcut_hint_rows(int screen_rows) {
     return 0;
 }
 
+/** @brief Render the bottom Nano-style shortcut hint rows with reverse-video key badges. */
 static void draw_shortcut_hints(int screen_cols, int start_y, int num_rows) {
     if (num_rows <= 0 || screen_cols <= 2) return;
     const ShortcutHint *all_rows[3] = { s_hints_r1, s_hints_r2, s_hints_r3 };
@@ -506,6 +510,7 @@ static void draw_shortcut_hints(int screen_cols, int start_y, int num_rows) {
     }
 }
 
+/** @brief Emit DECSCUSR escape sequence to keep cursor steady block (Insert) or underline (Overwrite). */
 static void update_cursor_shape(bool insert_mode) {
     static int s_last_cursor_mode = -1;
     if (s_last_cursor_mode != (int)insert_mode) {
@@ -519,6 +524,7 @@ static void update_cursor_shape(bool insert_mode) {
     }
 }
 
+/** @brief Render the active view mode, status bar, shortcut hints, and hardware cursor. */
 void ui_draw(Editor *ed) {
     if (!ed) return;
 
@@ -670,7 +676,36 @@ void ui_draw(Editor *ed) {
     refresh();
 }
 
-bool ui_prompt(Editor *ed, const char *prompt, char *out_buf, size_t buf_size) {
+/**
+ * @brief Read a printable ASCII or multi-byte UTF-8 sequence starting with first_ch from win.
+ * @return Number of UTF-8 bytes written into out_seq (0 if first_ch is not printable text).
+ */
+static size_t read_utf8_input(WINDOW *win, int first_ch, char *out_seq, size_t cap) {
+    if (!out_seq || cap < 2) return 0;
+    if (first_ch >= 32 && first_ch <= 126) {
+        out_seq[0] = (char)first_ch;
+        out_seq[1] = '\0';
+        return 1;
+    }
+    if (first_ch >= 0xC0 && first_ch <= 0xFF) {
+        size_t ulen = utf8_char_len((unsigned char)first_ch);
+        if (ulen >= cap) return 0;
+        out_seq[0] = (char)first_ch;
+        size_t got = 1;
+        for (size_t b = 1; b < ulen; ++b) {
+            int nb = win ? wgetch(win) : getch();
+            if (nb == ERR || nb < 0 || nb > 255) break;
+            out_seq[got++] = (char)nb;
+        }
+        out_seq[got] = '\0';
+        return got;
+    }
+    return 0;
+}
+
+/** @brief Shared interactive bottom-row prompt with full UTF-8 input support. */
+static bool ui_prompt_internal(Editor *ed, const char *prompt, char *out_buf,
+                               size_t buf_size, bool allow_empty) {
     if (!ed || !prompt || !out_buf || buf_size == 0) return false;
 
     out_buf[0] = '\0';
@@ -698,12 +733,13 @@ bool ui_prompt(Editor *ed, const char *prompt, char *out_buf, size_t buf_size) {
         int max_vis = cols - input_x - 1;
         if (max_vis > 0) {
             const char *disp = out_buf;
-            if ((int)len > max_vis) {
-                disp = out_buf + (len - (size_t)max_vis);
+            while (utf8_visual_width(disp, strlen(disp)) > max_vis && *disp) {
+                disp += utf8_char_len((unsigned char)*disp);
             }
             attron(COLOR_PAIR(CP_DEFAULT));
-            mvaddnstr(y, input_x, disp, max_vis);
+            mvaddstr(y, input_x, disp);
             attroff(COLOR_PAIR(CP_DEFAULT));
+            wmove(stdscr, y, input_x + utf8_visual_width(disp, strlen(disp)));
         }
 
         refresh();
@@ -721,29 +757,134 @@ bool ui_prompt(Editor *ed, const char *prompt, char *out_buf, size_t buf_size) {
             out_buf[0] = '\0';
             return false;
         } else if (ch == '\n' || ch == '\r') {
-            return len > 0;
+            return allow_empty ? true : (len > 0);
         } else if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
             if (len > 0) {
                 size_t prev = utf8_prev_char(out_buf, len);
                 out_buf[prev] = '\0';
                 len = prev;
             }
-        } else if (ch >= 32 && ch <= 126) {
-            if (len + 1 < buf_size) {
-                out_buf[len++] = (char)ch;
+        } else {
+            char seq[8];
+            size_t slen = read_utf8_input(NULL, ch, seq, sizeof(seq));
+            if (slen > 0 && len + slen < buf_size) {
+                memcpy(out_buf + len, seq, slen);
+                len += slen;
                 out_buf[len] = '\0';
             }
         }
     }
 }
 
+/** @brief Run an interactive single-line text input prompt on the bottom row. */
+bool ui_prompt(Editor *ed, const char *prompt, char *out_buf, size_t buf_size) {
+    return ui_prompt_internal(ed, prompt, out_buf, buf_size, false);
+}
+
+/** @brief Run an interactive single-line text input prompt allowing an empty submission. */
+bool ui_prompt_allow_empty(Editor *ed, const char *prompt, char *out_buf, size_t buf_size) {
+    return ui_prompt_internal(ed, prompt, out_buf, buf_size, true);
+}
+
+/** @brief Run Nano-compatible interactive Search & Replace across the document. */
+void ui_search_and_replace(Editor *ed, char *search_buf, size_t search_cap) {
+    if (!ed || !search_buf || search_cap == 0) return;
+
+    char query[128] = {0};
+    if (!ui_prompt(ed, "Search (to replace)", query, sizeof(query))) {
+        editor_set_status(ed, "Replace cancelled");
+        return;
+    }
+
+    char replacement[128] = {0};
+    if (!ui_prompt_allow_empty(ed, "Replace with", replacement, sizeof(replacement))) {
+        editor_set_status(ed, "Replace cancelled");
+        return;
+    }
+
+    snprintf(search_buf, search_cap, "%s", query);
+    size_t rlen = strlen(replacement);
+    size_t replaced = 0;
+    size_t scan_row = ed->cursor_row;
+    size_t scan_col = ed->cursor_col;
+
+    while (editor_search_find_from(ed, query, scan_row, scan_col, false)) {
+        ui_draw(ed);
+
+        int rows, cols;
+        getmaxyx(stdscr, rows, cols);
+        int y = rows > 0 ? rows - 1 : 0;
+        move(y, 0);
+        clrtoeol();
+        const char *msg = "Replace this instance? (y = Yes, n = No, a = All, Esc/^C = Cancel): ";
+        attron(COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_BOLD);
+        if (cols > 2) mvaddnstr(y, 1, msg, cols - 2);
+        attroff(COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_BOLD);
+        refresh();
+
+        int ch = getch();
+        if (ch == ERR) continue;
+        if (ch == KEY_RESIZE) {
+            ed->rendered_dirty = true;
+            erase();
+            continue;
+        }
+        if (ch == 'y' || ch == 'Y') {
+            size_t mrow = ed->search_match_row;
+            size_t mcol = ed->search_match_col;
+            if (editor_replace_current_match(ed, replacement, 0)) {
+                replaced++;
+            }
+            scan_row = mrow;
+            scan_col = mcol + rlen;
+        } else if (ch == 'n' || ch == 'N') {
+            scan_row = ed->search_match_row;
+            scan_col = ed->search_match_col + 1;
+        } else if (ch == 'a' || ch == 'A') {
+            uint64_t group = buffer_next_group(&ed->buffer);
+            size_t mrow = ed->search_match_row;
+            size_t mcol = ed->search_match_col;
+            if (editor_replace_current_match(ed, replacement, group)) {
+                replaced++;
+            }
+            scan_row = mrow;
+            scan_col = mcol + rlen;
+            while (editor_search_find_from(ed, query, scan_row, scan_col, false)) {
+                mrow = ed->search_match_row;
+                mcol = ed->search_match_col;
+                if (!editor_replace_current_match(ed, replacement, group)) break;
+                replaced++;
+                scan_row = mrow;
+                scan_col = mcol + rlen;
+            }
+            break;
+        } else if (ch == 27 || ch == CTRL_KEY('c') || ch == CTRL_KEY('g')) {
+            break;
+        }
+    }
+
+    ed->search_active = false;
+    if (replaced > 0) {
+        editor_set_status(ed, "Replaced %zu occurrence%s", replaced, replaced == 1 ? "" : "s");
+    } else {
+        editor_set_status(ed, "No occurrences replaced");
+    }
+}
+
+/** @brief Prompt the user to save, discard, or cancel when unsaved edits exist. */
 int ui_confirm_unsaved(Editor *ed, const char *action_desc) {
     if (!ed || !ed->buffer.is_dirty) return 0;
 
-    char msg[160];
+    const char *cur_name = "[No Name]";
+    if (ed->buffer.file_path && ed->buffer.file_path[0]) {
+        const char *slash = strrchr(ed->buffer.file_path, '/');
+        cur_name = slash ? (slash + 1) : ed->buffer.file_path;
+    }
+
+    char msg[256];
     snprintf(msg, sizeof(msg),
-             "Save modified buffer before %s? (y = Save, n = Discard, ^C/Esc = Cancel): ",
-             action_desc ? action_desc : "continuing");
+             "Save changes to '%s' before %s? (y = Save, n = Discard, ^C/Esc = Cancel): ",
+             cur_name, action_desc ? action_desc : "continuing");
 
     while (1) {
         int rows, cols;
@@ -778,10 +919,12 @@ int ui_confirm_unsaved(Editor *ed, const char *action_desc) {
     }
 }
 
+/** @brief Prompt the user to save or discard unsaved changes before exiting. */
 int ui_confirm_quit(Editor *ed) {
     return ui_confirm_unsaved(ed, "exit");
 }
 
+/** @brief Test whether path exists on disk and report whether it is a directory. */
 bool ui_path_exists(const char *path, bool *out_is_dir) {
     if (out_is_dir) *out_is_dir = false;
     if (!path || !path[0]) return false;
@@ -793,6 +936,7 @@ bool ui_path_exists(const char *path, bool *out_is_dir) {
     return false;
 }
 
+/** @brief Display a bottom-bar overwrite confirmation prompt requiring explicit Y/N input. */
 bool ui_confirm_overwrite(Editor *ed, const char *path) {
     if (!ed || !path || !path[0]) return false;
 
@@ -841,6 +985,7 @@ typedef struct {
     size_t size;
 } FileItem;
 
+/** @brief qsort comparator ordering ".." first, then directories, then files alphabetically. */
 static int compare_file_items(const void *a, const void *b) {
     const FileItem *fa = (const FileItem *)a;
     const FileItem *fb = (const FileItem *)b;
@@ -858,6 +1003,7 @@ static int compare_file_items(const void *a, const void *b) {
     return strcasecmp(fa->name, fb->name);
 }
 
+/** @brief Read and sort directory entries from dir_path into a heap-allocated FileItem array. */
 static FileItem *load_directory_items(const char *dir_path, size_t *out_count) {
     *out_count = 0;
     DIR *d = opendir(dir_path);
@@ -928,6 +1074,7 @@ static FileItem *load_directory_items(const char *dir_path, size_t *out_count) {
     return items;
 }
 
+/** @brief Trim the last path component from dir_buf to ascend to its parent directory. */
 static void navigate_to_parent(char *dir_buf, size_t buf_size) {
     (void)buf_size;
     if (strcmp(dir_buf, "/") == 0) return;
@@ -947,6 +1094,7 @@ static void navigate_to_parent(char *dir_buf, size_t buf_size) {
     }
 }
 
+/** @brief Append subdirectory sub to dir_buf and canonicalize via realpath when possible. */
 static void navigate_into_sub(char *dir_buf, size_t buf_size, const char *sub) {
     if (strcmp(sub, "..") == 0) {
         navigate_to_parent(dir_buf, buf_size);
@@ -1018,6 +1166,7 @@ static void format_file_size(size_t size, char *buf, size_t buf_len) {
     }
 }
 
+/** @brief Run the interactive modal file browser for Open, Write Out (with overwrite guard), or Link. */
 bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_len) {
     if (!ed || !out_path || max_len == 0) return false;
 
@@ -1335,11 +1484,13 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
                     size_t prev = utf8_prev_char(input_buf, ilen);
                     input_buf[prev] = '\0';
                 }
-            } else if (ch >= 32 && ch <= 126) {
+            } else {
+                char seq[8];
+                size_t slen = read_utf8_input(win, ch, seq, sizeof(seq));
                 size_t ilen = strlen(input_buf);
-                if (ilen + 1 < sizeof(input_buf)) {
-                    input_buf[ilen] = (char)ch;
-                    input_buf[ilen + 1] = '\0';
+                if (slen > 0 && ilen + slen < sizeof(input_buf)) {
+                    memcpy(input_buf + ilen, seq, slen);
+                    input_buf[ilen + slen] = '\0';
                 }
             }
         } else {
@@ -1455,6 +1606,7 @@ static const HelpEntry s_editor_help[] = {
     { HELP_LINE_BLANK, NULL, NULL },
     { HELP_LINE_SECTION, "EDITING & MARKDOWN", NULL },
     { HELP_LINE_ITEM, "Alt+U / Alt+E", "Undo / Redo last editing operation" },
+    { HELP_LINE_ITEM, "Alt+J", "Reflow (re-wrap) current paragraph to wrap_col" },
     { HELP_LINE_ITEM, "Ctrl+H / Bksp", "Delete character before cursor" },
     { HELP_LINE_ITEM, "Ctrl+D / Del", "Delete character under cursor" },
     { HELP_LINE_ITEM, "Ctrl+T", "Toggle task checkbox: - [ ] <-> - [x]" },
@@ -1465,11 +1617,14 @@ static const HelpEntry s_editor_help[] = {
     { HELP_LINE_BLANK, NULL, NULL },
     { HELP_LINE_SECTION, "SEARCH & NAVIGATION", NULL },
     { HELP_LINE_ITEM, "Ctrl+W / Ctrl+Q", "Where Is (search forward) / Search backward" },
+    { HELP_LINE_ITEM, "Ctrl+\\ / Alt+R", "Search and Replace (Yes / No / All)" },
     { HELP_LINE_ITEM, "Alt+W / F3", "Repeat search forward (Alt+Q for backward)" },
+    { HELP_LINE_ITEM, "F9 / Alt+T", "Open Document Outline (jump to H1-H6 heading)" },
     { HELP_LINE_ITEM, "Ctrl+/ / Alt+G", "Go to line number (and optional column)" },
     { HELP_LINE_ITEM, "Ctrl+C", "Display cursor location (Cancel in prompts)" },
     { HELP_LINE_ITEM, "Ctrl+A / Home", "Jump to beginning of current line" },
     { HELP_LINE_ITEM, "Ctrl+E / End", "Jump to end of current line" },
+    { HELP_LINE_ITEM, "Ctrl+← / Ctrl+→", "Jump backward / forward by one word" },
     { HELP_LINE_ITEM, "Ctrl+Y / PgUp", "Previous Page (scroll up)" },
     { HELP_LINE_ITEM, "Ctrl+V / PgDn", "Next Page (scroll down)" },
     { HELP_LINE_ITEM, "Alt+\\ / Alt+/", "Jump to first / last line of document" },
@@ -1544,6 +1699,7 @@ static void calc_help_win_geom(int rows, int cols,
     *out_x = x;
 }
 
+/** @brief Display the scrollable two-tab Help overlay (Editor Cheat Sheet & Markdown Guide). */
 void ui_show_help(Editor *ed) {
     int rows, cols, box_h, box_w, start_y, start_x;
     getmaxyx(stdscr, rows, cols);
@@ -1756,6 +1912,7 @@ void ui_show_help(Editor *ed) {
     ui_draw(ed);
 }
 
+/** @brief Compute centered geometry for the Export Menu modal dialog. */
 static void calc_export_win_geom(int rows, int cols, int *win_h, int *win_w, int *win_y, int *win_x) {
     int h = 16;
     int w = 72;
@@ -1780,6 +1937,7 @@ static void calc_export_win_geom(int rows, int cols, int *win_h, int *win_w, int
     *win_x = x;
 }
 
+/** @brief Display the interactive Export Menu modal for HTML, XML, EPUB, and LaTeX export. */
 bool ui_export_menu(Editor *ed) {
     if (!ed) return false;
 
@@ -1816,6 +1974,7 @@ bool ui_export_menu(Editor *ed) {
     };
 
     bool exported = false;
+    bool confirm_overwrite = false;
 
     while (1) {
         werase(win);
@@ -1940,9 +2099,9 @@ bool ui_export_menu(Editor *ed) {
             mvwaddnstr(win, path_y, box_x, disp, box_w - 1);
             wattroff(win, COLOR_PAIR(CP_DEFAULT) | (path_focused ? A_REVERSE : 0));
 
-            if (path_focused) {
+            if (path_focused && !confirm_overwrite) {
                 curs_set(1);
-                int cx = box_x + (int)strlen(disp);
+                int cx = box_x + utf8_visual_width(disp, strlen(disp));
                 if (cx >= box_x + box_w) cx = box_x + box_w - 1;
                 wmove(win, path_y, cx);
             } else {
@@ -1957,16 +2116,28 @@ bool ui_export_menu(Editor *ed) {
             wattroff(win, COLOR_PAIR(CP_STATUS_BAR_DIRTY) | A_BOLD);
         }
 
-        // Footer divider & hints
+        // Footer divider & hints / overwrite confirmation
         draw_box_hrule(win, foot_sep_y, win_w);
 
-        const char *hints = has_pandoc
-            ? " [Enter] Export  [1-4] Format  [Tab] Path  [L] Links  [E] Engine  [Esc] Cancel "
-            : " [Enter] Export  [1-4] Format  [Tab] Path  [L] Links  [Esc/^C] Cancel ";
         if (win_w > 4) {
-            wattron(win, COLOR_PAIR(CP_MARKER) | A_DIM);
-            mvwaddnstr(win, win_h - 1, 2, hints, win_w - 4);
-            wattroff(win, COLOR_PAIR(CP_MARKER) | A_DIM);
+            if (confirm_overwrite) {
+                const char *slash = strrchr(path_buf, '/');
+                const char *fname = slash ? (slash + 1) : path_buf;
+                char warn[300];
+                snprintf(warn, sizeof(warn),
+                         " WARNING: '%s' exists! Overwrite? (Y)es / (N)o ", fname);
+                wattron(win, COLOR_PAIR(CP_STATUS_BAR_DIRTY) | A_BOLD | A_REVERSE);
+                for (int x = 1; x < win_w - 1; ++x) mvwaddch(win, win_h - 1, x, ' ');
+                mvwaddnstr(win, win_h - 1, 2, warn, win_w - 4);
+                wattroff(win, COLOR_PAIR(CP_STATUS_BAR_DIRTY) | A_BOLD | A_REVERSE);
+            } else {
+                const char *hints = has_pandoc
+                    ? " [Enter] Export  [1-4] Format  [Tab] Path  [L] Links  [E] Engine  [Esc] Cancel "
+                    : " [Enter] Export  [1-4] Format  [Tab] Path  [L] Links  [Esc/^C] Cancel ";
+                wattron(win, COLOR_PAIR(CP_MARKER) | A_DIM);
+                mvwaddnstr(win, win_h - 1, 2, hints, win_w - 4);
+                wattroff(win, COLOR_PAIR(CP_MARKER) | A_DIM);
+            }
         }
 
         wrefresh(win);
@@ -1988,6 +2159,34 @@ bool ui_export_menu(Editor *ed) {
             continue;
         }
 
+        if (confirm_overwrite) {
+            if (ch == 'y' || ch == 'Y') {
+                confirm_overwrite = false;
+                err_msg[0] = '\0';
+                char used_engine[32] = {0};
+                size_t included_linked = 0;
+                if (export_document_ex(&ed->buffer, selected_fmt, path_buf, engine,
+                                       include_linked, &included_linked,
+                                       used_engine, sizeof(used_engine), err_msg, sizeof(err_msg))) {
+                    if (included_linked > 0) {
+                        editor_set_status(ed, "Exported %s to %s (+%zu linked, %s)",
+                                          export_format_name(selected_fmt), path_buf,
+                                          included_linked, used_engine);
+                    } else {
+                        editor_set_status(ed, "Exported %s to %s (%s)",
+                                          export_format_name(selected_fmt), path_buf, used_engine);
+                    }
+                    exported = true;
+                    break;
+                }
+            } else if (ch == 'n' || ch == 'N' || ch == 27 ||
+                       ch == CTRL_KEY('c') || ch == CTRL_KEY('g') ||
+                       ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
+                confirm_overwrite = false;
+            }
+            continue;
+        }
+
         if (ch == 27 || ch == CTRL_KEY('q') || ch == CTRL_KEY('c') || ch == CTRL_KEY('g')) {
             break;
         }
@@ -1999,6 +2198,15 @@ bool ui_export_menu(Editor *ed) {
 
         if (ch == '\n' || ch == '\r') {
             err_msg[0] = '\0';
+            bool is_dir = false;
+            if (ui_path_exists(path_buf, &is_dir)) {
+                if (is_dir) {
+                    snprintf(err_msg, sizeof(err_msg), "Cannot overwrite directory — specify a file path");
+                    continue;
+                }
+                confirm_overwrite = true;
+                continue;
+            }
             char used_engine[32] = {0};
             size_t included_linked = 0;
             if (export_document_ex(&ed->buffer, selected_fmt, path_buf, engine,
@@ -2028,11 +2236,13 @@ bool ui_export_menu(Editor *ed) {
                     path_buf[prev] = '\0';
                 }
                 err_msg[0] = '\0';
-            } else if (ch >= 32 && ch <= 126) {
+            } else {
+                char seq[8];
+                size_t slen = read_utf8_input(win, ch, seq, sizeof(seq));
                 size_t plen = strlen(path_buf);
-                if (plen + 1 < sizeof(path_buf)) {
-                    path_buf[plen] = (char)ch;
-                    path_buf[plen + 1] = '\0';
+                if (slen > 0 && plen + slen < sizeof(path_buf)) {
+                    memcpy(path_buf + plen, seq, slen);
+                    path_buf[plen + slen] = '\0';
                 }
                 err_msg[0] = '\0';
             }
@@ -2071,4 +2281,194 @@ bool ui_export_menu(Editor *ed) {
     touchwin(stdscr);
     ui_draw(ed);
     return exported;
+}
+
+typedef struct {
+    size_t row;
+    int level;
+    char title[128];
+} OutlineHeading;
+
+/** @brief Display a scrollable Document Outline modal listing all Markdown headings (H1-H6). */
+bool ui_show_outline(Editor *ed) {
+    if (!ed) return false;
+
+    size_t cap = 32, count = 0;
+    OutlineHeading *items = (OutlineHeading *)malloc(cap * sizeof(OutlineHeading));
+    if (!items) return false;
+
+    bool in_code = false;
+    char lang[32] = {0};
+    size_t nlines = buffer_line_count(&ed->buffer);
+    int initial_sel = 0;
+
+    for (size_t r = 0; r < nlines; ++r) {
+        const char *l = buffer_line(&ed->buffer, r);
+        size_t len = buffer_line_len(&ed->buffer, r);
+        MdParsedLine pl;
+        md_parse_line(l, len, &in_code, lang, sizeof(lang), &pl);
+        if (pl.header_level > 0) {
+            if (count >= cap) {
+                cap *= 2;
+                OutlineHeading *ni = (OutlineHeading *)realloc(items, cap * sizeof(OutlineHeading));
+                if (!ni) { md_parsed_line_free(&pl); break; }
+                items = ni;
+            }
+            OutlineHeading *h = &items[count];
+            h->row = r;
+            h->level = pl.header_level;
+            size_t pos = 0;
+            for (size_t s = 0; s < pl.span_count; ++s) {
+                if (md_is_header_marker(pl.spans[s].type) ||
+                    pl.spans[s].type == MD_BOLD_MARKER ||
+                    pl.spans[s].type == MD_ITALIC_MARKER ||
+                    pl.spans[s].type == MD_INLINE_CODE_MARKER) {
+                    continue;
+                }
+                size_t sl = pl.spans[s].end - pl.spans[s].start;
+                if (pos + sl >= sizeof(h->title) - 1) sl = sizeof(h->title) - 1 - pos;
+                if (sl > 0) { memcpy(h->title + pos, l + pl.spans[s].start, sl); pos += sl; }
+            }
+            h->title[pos] = '\0';
+            if (r <= ed->cursor_row) initial_sel = (int)count;
+            count++;
+        }
+        md_parsed_line_free(&pl);
+    }
+
+    if (count == 0) {
+        free(items);
+        editor_set_status(ed, "Document Outline: no headings found");
+        return false;
+    }
+
+    int rows, cols, win_h, win_w, win_y, win_x;
+    getmaxyx(stdscr, rows, cols);
+    calc_file_dialog_geom(rows, cols, &win_h, &win_w, &win_y, &win_x);
+
+    WINDOW *win = newwin(win_h, win_w, win_y, win_x);
+    if (!win) {
+        free(items);
+        return false;
+    }
+    keypad(win, TRUE);
+    wbkgd(win, COLOR_PAIR(CP_HELP_BOX));
+    curs_set(0);
+
+    int sel = initial_sel;
+    int scroll = 0;
+    bool jumped = false;
+
+    while (1) {
+        werase(win);
+        box(win, 0, 0);
+
+        char title_buf[64];
+        snprintf(title_buf, sizeof(title_buf), " Document Outline (%zu headings) ", count);
+        int tx = (win_w - (int)strlen(title_buf)) / 2;
+        if (tx < 1) tx = 1;
+        wattron(win, COLOR_PAIR(CP_HEADER1) | A_BOLD);
+        mvwaddnstr(win, 0, tx, title_buf, win_w - 2);
+        wattroff(win, COLOR_PAIR(CP_HEADER1) | A_BOLD);
+
+        int list_h = win_h - 4;
+        if (list_h < 1) list_h = 1;
+        if (sel < 0) sel = 0;
+        if (sel >= (int)count) sel = (int)count - 1;
+        if (sel < scroll) scroll = sel;
+        if (sel >= scroll + list_h) scroll = sel - list_h + 1;
+
+        for (int i = 0; i < list_h; ++i) {
+            int idx = scroll + i;
+            int y = 1 + i;
+            if (idx >= (int)count) break;
+
+            const OutlineHeading *h = &items[idx];
+            bool is_sel = (idx == sel);
+            int indent = (h->level - 1) * 2;
+            attr_t h_attr = theme_token_attr((MdTokenType)(MD_HEADER_TEXT_1 + (h->level - 1) * 2), false);
+
+            if (is_sel) {
+                wattron(win, COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_REVERSE | A_BOLD);
+                for (int x = 1; x < win_w - 1; ++x) mvwaddch(win, y, x, ' ');
+                mvwaddstr(win, y, 2, "▶ ");
+            } else {
+                wattron(win, h_attr);
+                mvwaddstr(win, y, 2, "  ");
+            }
+
+            char line_tag[24];
+            snprintf(line_tag, sizeof(line_tag), "L%-4zu", h->row + 1);
+            int text_x = 4 + indent;
+            if (win_w > 14 && text_x < win_w - 9) {
+                char entry[160];
+                snprintf(entry, sizeof(entry), "H%d %s", h->level, h->title);
+                mvwaddnstr(win, y, text_x, entry, (win_w - 9) - text_x);
+            }
+            if (win_w > 10) {
+                mvwaddnstr(win, y, win_w - 7, line_tag, 5);
+            }
+
+            if (is_sel) {
+                wattroff(win, COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_REVERSE | A_BOLD);
+            } else {
+                wattroff(win, h_attr);
+            }
+        }
+
+        draw_box_hrule(win, win_h - 2, win_w);
+        if (win_w > 4) {
+            wattron(win, COLOR_PAIR(CP_MARKER) | A_DIM);
+            mvwaddnstr(win, win_h - 1, 2, " [Enter] Jump  [↑/↓/PgUp/PgDn] Browse  [Esc/^C/q] Close ", win_w - 4);
+            wattroff(win, COLOR_PAIR(CP_MARKER) | A_DIM);
+        }
+
+        wrefresh(win);
+
+        int ch = wgetch(win);
+        if (ch == ERR) continue;
+        if (ch == KEY_RESIZE) {
+            delwin(win);
+            ed->rendered_dirty = true;
+            erase();
+            ui_draw(ed);
+            getmaxyx(stdscr, rows, cols);
+            calc_file_dialog_geom(rows, cols, &win_h, &win_w, &win_y, &win_x);
+            win = newwin(win_h, win_w, win_y, win_x);
+            if (!win) { free(items); return false; }
+            keypad(win, TRUE);
+            wbkgd(win, COLOR_PAIR(CP_HELP_BOX));
+            curs_set(0);
+            continue;
+        }
+        if (ch == 27 || ch == 'q' || ch == 'Q' || ch == CTRL_KEY('c') || ch == CTRL_KEY('g')) {
+            break;
+        } else if (ch == '\n' || ch == '\r') {
+            editor_goto_line(ed, items[sel].row + 1, 1);
+            editor_set_status(ed, "Jumped to H%d: %s", items[sel].level, items[sel].title);
+            jumped = true;
+            break;
+        } else if (ch == KEY_UP || ch == 'k' || ch == 'K') {
+            if (sel > 0) sel--;
+        } else if (ch == KEY_DOWN || ch == 'j' || ch == 'J') {
+            if (sel + 1 < (int)count) sel++;
+        } else if (ch == KEY_PPAGE) {
+            sel -= list_h;
+            if (sel < 0) sel = 0;
+        } else if (ch == KEY_NPAGE) {
+            sel += list_h;
+            if (sel >= (int)count) sel = (int)count - 1;
+        } else if (ch == KEY_HOME) {
+            sel = 0;
+        } else if (ch == KEY_END) {
+            sel = (int)count - 1;
+        }
+    }
+
+    free(items);
+    delwin(win);
+    curs_set(1);
+    touchwin(stdscr);
+    ui_draw(ed);
+    return jumped;
 }

@@ -40,15 +40,48 @@ void ui_shutdown(void);
 void ui_draw(Editor *ed);
 
 /**
- * @brief Display an interactive text input prompt in the message bar.
+ * @brief Display an interactive text input prompt in the message bar (requires non-empty input).
  *
  * @param ed Pointer to the Editor instance.
  * @param prompt Prompt label (e.g., "Find", "Save file as").
  * @param out_buf Buffer to store user input.
  * @param buf_size Maximum capacity of out_buf.
- * @return true if confirmed with Enter, false if cancelled with Escape.
+ * @return true if confirmed with Enter (non-empty), false if cancelled with Escape/Ctrl+C.
  */
 bool ui_prompt(Editor *ed, const char *prompt, char *out_buf, size_t buf_size);
+
+/**
+ * @brief Display an interactive text input prompt allowing an empty response on Enter.
+ *
+ * @param ed Pointer to the Editor instance.
+ * @param prompt Prompt label (e.g., "Replace with").
+ * @param out_buf Buffer to store user input.
+ * @param buf_size Maximum capacity of out_buf.
+ * @return true if confirmed with Enter, false if cancelled with Escape/Ctrl+C.
+ */
+bool ui_prompt_allow_empty(Editor *ed, const char *prompt, char *out_buf, size_t buf_size);
+
+/**
+ * @brief Run Nano-compatible interactive Search & Replace (`Ctrl+\` / `Alt+R`).
+ *
+ * Prompts for search and replacement strings, highlights matches sequentially,
+ * and lets the user press Y (replace), N (skip), A (replace all), or Esc/^C (cancel).
+ *
+ * @param ed Pointer to the Editor instance.
+ * @param search_buf Shared search query buffer updated on confirmation.
+ * @param search_cap Capacity of search_buf.
+ */
+void ui_search_and_replace(Editor *ed, char *search_buf, size_t search_cap);
+
+/**
+ * @brief Display a scrollable Document Outline modal listing all Markdown headings (H1-H6).
+ *
+ * Pressing Enter jumps the cursor directly to the selected heading.
+ *
+ * @param ed Pointer to the Editor instance.
+ * @return true if the user jumped to a heading, false if cancelled or no headings exist.
+ */
+bool ui_show_outline(Editor *ed);
 
 /**
  * @brief Prompt to save or discard unsaved changes before an action (quit or switch file).

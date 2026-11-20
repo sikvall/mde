@@ -50,15 +50,18 @@ static void print_usage(const char *prog) {
     printf("  Ctrl+O           Write Out (Save As file dialogue)\n");
     printf("  Ctrl+R           Read / Open file dialogue\n");
     printf("  Ctrl+W / Ctrl+Q  Where Is (Search forward / backward)\n");
+    printf("  Ctrl+\\ / Alt+R   Search and Replace (Yes / No / All)\n");
     printf("  Alt+W / F3       Find next match (Alt+Q for previous)\n");
     printf("  Ctrl+K / Ctrl+U  Cut (selection or line) / Paste (Uncut)\n");
     printf("  Alt+6            Copy (selection or line)\n");
     printf("  Alt+A / Ctrl+6   Set or unset selection mark (also Ctrl+Space)\n");
     printf("  Alt+U / Alt+E    Undo / Redo\n");
+    printf("  Alt+J            Reflow (re-wrap) current paragraph\n");
     printf("  Ctrl+C           Display cursor location (Cancel in prompts)\n");
     printf("  Ctrl+/ / Alt+G   Go to line (and optional column)\n");
     printf("  Ctrl+Y / Ctrl+V  Previous Page / Next Page\n");
     printf("  Ctrl+A / Ctrl+E  Beginning / End of line\n");
+    printf("  Ctrl+Left/Right  Jump backward / forward by word\n");
     printf("  Ctrl+B/F/P/N     Move Left / Right / Up / Down\n");
     printf("  Ctrl+H / Ctrl+D  Backspace / Delete character\n");
     printf("  Ctrl+L           Refresh screen\n");
@@ -68,6 +71,7 @@ static void print_usage(const char *prog) {
     printf("  F6 / Alt+H       Insert hypertext file link [Label](file.md)\n");
     printf("  F7 / Alt+O / ^]  Follow file or #heading link under cursor\n");
     printf("  F8 / Alt+-       Navigate back to previous linked file\n");
+    printf("  F9 / Alt+T       Open Document Outline (jump to heading)\n");
     printf("  Ctrl+T           Toggle checkbox [- [ ] <-> - [x]]\n");
     printf("  Alt+B            Insert bold markers (**) or wrap selection\n");
     printf("  Enter            Smart list / task continuation\n");
@@ -93,23 +97,53 @@ static void print_version(void) {
  * ========================================================================= */
 
 /**
- * @brief Confirm saving or discarding unsaved edits before switching files.
- * @return true if safe to proceed, false if the user cancelled.
+ * @brief Guard any operation that destroys, replaces, or exits the current buffer.
+ *
+ * Whenever the current buffer has unsaved changes, prompts the user to save
+ * (opening Write Out if untitled), discard, or cancel. If saving fails or the
+ * user cancels, returns false so the caller preserves the current buffer.
+ *
+ * @param action_desc Short verb phrase shown in the prompt (e.g. "exit", "loading 'ch1.md'").
+ * @return true if safe to proceed with replacing/exiting the buffer, false to abort.
  */
-static bool confirm_switch_file(void) {
-    if (!g_editor.buffer.is_dirty) return true;
-    int action = ui_confirm_unsaved(&g_editor, "switching file");
+static bool confirm_buffer_destroy(const char *action_desc) {
+    if (!editor_has_unsaved_changes(&g_editor)) return true;
+
+    int action = ui_confirm_unsaved(&g_editor, action_desc);
     if (action == 1) {
         if (!g_editor.buffer.file_path) {
             char save_path[PATH_MAX];
             if (ui_file_dialog(&g_editor, FILE_DIALOG_SAVE_AS, save_path, sizeof(save_path))) {
                 return editor_save(&g_editor, save_path);
             }
+            editor_set_status(&g_editor, "Cancelled");
             return false;
         }
         return editor_save(&g_editor, NULL);
     }
+    if (action == -1) {
+        editor_set_status(&g_editor, "Cancelled");
+    }
     return (action == 0);
+}
+
+/**
+ * @brief Confirm saving or discarding unsaved edits before loading another file.
+ * @param target_path Optional destination file path shown in the prompt.
+ * @return true if safe to proceed, false if the user cancelled or save failed.
+ */
+static bool confirm_switch_file(const char *target_path) {
+    if (!editor_has_unsaved_changes(&g_editor)) return true;
+
+    char action_desc[128];
+    if (target_path && target_path[0]) {
+        const char *slash = strrchr(target_path, '/');
+        const char *base = slash ? (slash + 1) : target_path;
+        snprintf(action_desc, sizeof(action_desc), "loading '%s'", base);
+    } else {
+        snprintf(action_desc, sizeof(action_desc), "switching file");
+    }
+    return confirm_buffer_destroy(action_desc);
 }
 
 /**
@@ -124,18 +158,16 @@ static void handle_insert_file_link(void) {
 
 /**
  * @brief Follow a local Markdown file link or `#heading` anchor under the cursor.
+ *
+ * When following the link loads a different file and the current buffer has
+ * unsaved modifications, prompts the user to save or discard changes first.
  */
 static void handle_follow_link(void) {
-    char url[PATH_MAX] = {0};
-    char anchor[128] = {0};
-    if (!editor_extract_link_at_cursor(&g_editor, url, sizeof(url), anchor, sizeof(anchor))) {
-        editor_set_status(&g_editor, "No link found on current line");
-        return;
-    }
-    // Only prompt about unsaved changes when navigating to a different local file
-    if (url[0] && strncmp(url, "http://", 7) != 0 && strncmp(url, "https://", 8) != 0 &&
-        strncmp(url, "mailto:", 7) != 0 && strncmp(url, "ftp://", 6) != 0) {
-        if (!confirm_switch_file()) return;
+    char target_path[PATH_MAX] = {0};
+    if (editor_link_will_switch_file(&g_editor, target_path, sizeof(target_path))) {
+        if (!confirm_switch_file(target_path)) {
+            return;
+        }
     }
     editor_follow_link(&g_editor);
 }
@@ -148,7 +180,8 @@ static void handle_navigate_back(void) {
         editor_set_status(&g_editor, "No previous file in link history");
         return;
     }
-    if (!confirm_switch_file()) return;
+    const char *prev_path = g_editor.link_history[g_editor.link_history_count - 1].file_path;
+    if (!confirm_switch_file(prev_path)) return;
     editor_navigate_back(&g_editor);
 }
 
@@ -239,10 +272,15 @@ static void handle_mouse_event(void) {
                 }
             } else {
                 size_t target_row = g_editor.scroll_row + (size_t)(click_y - 1);
-                if (target_row < buffer_line_count(&g_editor.buffer)) {
+                size_t total_lines = buffer_line_count(&g_editor.buffer);
+                if (target_row < total_lines) {
                     g_editor.cursor_row = target_row;
                     const char *l = buffer_line(&g_editor.buffer, target_row);
-                    int gutter = 7;
+                    int digits = 1;
+                    size_t tmp = total_lines;
+                    while (tmp >= 10) { digits++; tmp /= 10; }
+                    if (digits < 3) digits = 3;
+                    int gutter = digits + 4;
                     int target_vcol = (click_x >= gutter) ? (click_x - gutter + (int)g_editor.scroll_col) : 0;
                     g_editor.cursor_col = utf8_col_to_byte(l, target_vcol);
                     g_editor.target_visual_col = utf8_byte_to_col(l, g_editor.cursor_col);
@@ -255,7 +293,7 @@ static void handle_mouse_event(void) {
 /**
  * @brief Dispatch an Escape / Meta (`Alt+key`) sequence using Nano conventions.
  */
-static void handle_meta_key(const char *search_buf, bool *last_search_forward) {
+static void handle_meta_key(char *search_buf, size_t search_cap, bool *last_search_forward) {
     nodelay(stdscr, TRUE);
     int next = getch();
     nodelay(stdscr, FALSE);
@@ -305,6 +343,18 @@ static void handle_meta_key(const char *search_buf, bool *last_search_forward) {
             } else {
                 editor_set_status(&g_editor, "No previous search string");
             }
+            break;
+        case 'r':
+        case 'R':
+            ui_search_and_replace(&g_editor, search_buf, search_cap);
+            break;
+        case 'j':
+        case 'J':
+            editor_reflow_paragraph(&g_editor);
+            break;
+        case 't':
+        case 'T':
+            ui_show_outline(&g_editor);
             break;
         case 'g':
         case 'G':
@@ -360,20 +410,8 @@ static void handle_meta_key(const char *search_buf, bool *last_search_forward) {
 static void handle_key_event(int ch, char *search_buf, size_t search_cap,
                              bool *last_search_forward) {
     if (ch == CTRL_KEY('x')) {
-        // Exit requested (Nano ^X)
-        int action = ui_confirm_quit(&g_editor);
-        if (action == 1) {
-            if (!g_editor.buffer.file_path) {
-                char save_path[PATH_MAX];
-                if (ui_file_dialog(&g_editor, FILE_DIALOG_SAVE_AS, save_path, sizeof(save_path))) {
-                    editor_save(&g_editor, save_path);
-                    g_editor.quit_requested = true;
-                }
-            } else {
-                editor_save(&g_editor, NULL);
-                g_editor.quit_requested = true;
-            }
-        } else if (action == 0) {
+        // Exit requested (Nano ^X): prompt to save if buffer has unsaved changes
+        if (confirm_buffer_destroy("exit")) {
             g_editor.quit_requested = true;
         }
     } else if (ch == CTRL_KEY('s')) {
@@ -396,7 +434,9 @@ static void handle_key_event(int ch, char *search_buf, size_t search_cap,
         // Read / Open file dialog (Nano ^R)
         char open_path[PATH_MAX];
         if (ui_file_dialog(&g_editor, FILE_DIALOG_OPEN, open_path, sizeof(open_path))) {
-            editor_open(&g_editor, open_path);
+            if (confirm_switch_file(open_path)) {
+                editor_open(&g_editor, open_path);
+            }
         }
     } else if (ch == CTRL_KEY('g') || ch == KEY_F(1)) {
         // Get Help overlay (Nano ^G / F1)
@@ -417,6 +457,9 @@ static void handle_key_event(int ch, char *search_buf, size_t search_cap,
         } else {
             g_editor.search_active = false;
         }
+    } else if (ch == CTRL_KEY('\\')) {
+        // Search and Replace (Nano ^\)
+        ui_search_and_replace(&g_editor, search_buf, search_cap);
     } else if (ch == KEY_F(3)) {
         if (search_buf[0]) {
             editor_search_find_next(&g_editor, search_buf, *last_search_forward);
@@ -460,6 +503,8 @@ static void handle_key_event(int ch, char *search_buf, size_t search_cap,
         handle_follow_link();
     } else if (ch == KEY_F(8)) {
         handle_navigate_back();
+    } else if (ch == KEY_F(9)) {
+        ui_show_outline(&g_editor);
     } else if (ch == KEY_LEFT || ch == CTRL_KEY('b')) {
         editor_move_left(&g_editor);
     } else if (ch == KEY_RIGHT || ch == CTRL_KEY('f')) {
@@ -507,6 +552,16 @@ static void handle_key_event(int ch, char *search_buf, size_t search_cap,
         // Printable ASCII character
         char c = (char)ch;
         editor_insert_char(&g_editor, &c, 1);
+    } else if (ch >= KEY_MIN) {
+        // Extended ncurses keys (Ctrl+Left / Ctrl+Right / Alt+Left / Alt+Right)
+        const char *kname = keyname(ch);
+        if (kname) {
+            if (strcmp(kname, "kLFT5") == 0 || strcmp(kname, "kLFT3") == 0) {
+                editor_move_word_left(&g_editor);
+            } else if (strcmp(kname, "kRIT5") == 0 || strcmp(kname, "kRIT3") == 0) {
+                editor_move_word_right(&g_editor);
+            }
+        }
     }
 }
 
@@ -514,6 +569,9 @@ static void handle_key_event(int ch, char *search_buf, size_t search_cap,
  * Application Entry Point
  * ========================================================================= */
 
+/**
+ * @brief Program entry point: parse CLI flags, initialize TUI/editor, and run event loop.
+ */
 int main(int argc, char *argv[]) {
     const char *file_to_open = NULL;
     bool has_cli_wrap = false;
@@ -574,7 +632,7 @@ int main(int argc, char *argv[]) {
         } else if (ch == KEY_MOUSE) {
             handle_mouse_event();
         } else if (ch == 27) {
-            handle_meta_key(search_buf, &last_search_forward);
+            handle_meta_key(search_buf, sizeof(search_buf), &last_search_forward);
         } else {
             handle_key_event(ch, search_buf, sizeof(search_buf), &last_search_forward);
         }

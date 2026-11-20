@@ -40,6 +40,8 @@ typedef struct {
     UndoStack undo_stack;        /**< Undo history */
     UndoStack redo_stack;        /**< Redo history */
     uint64_t current_group_id;   /**< Current batch keystroke group ID */
+    size_t saved_undo_depth;     /**< Undo stack depth at last load/save */
+    bool saved_depth_valid;      /**< False if undo history branched past saved state */
 } Buffer;
 
 /**

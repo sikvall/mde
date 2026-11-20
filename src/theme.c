@@ -6,6 +6,9 @@
 #define _XOPEN_SOURCE_EXTENDED 1
 #include "theme.h"
 
+/**
+ * @brief Initialize 256-color (or 8/16-color fallback) ncurses color pairs.
+ */
 void theme_init(void) {
     if (!has_colors()) return;
 
@@ -91,6 +94,9 @@ void theme_init(void) {
     }
 }
 
+/**
+ * @brief Return the ncurses video attributes and color pair for a Markdown token.
+ */
 attr_t theme_token_attr(MdTokenType type, bool is_active_line) {
     // When on the active line, show markers prominently rather than dimmed
     attr_t marker_attr = is_active_line

@@ -141,6 +141,12 @@ void editor_move_left(Editor *ed);
 /** @brief Move cursor one UTF-8 character right (wrapping to next line start). */
 void editor_move_right(Editor *ed);
 
+/** @brief Move cursor backward by one word boundary (crossing lines when at col 0). */
+void editor_move_word_left(Editor *ed);
+
+/** @brief Move cursor forward by one word boundary (crossing lines when at EOL). */
+void editor_move_word_right(Editor *ed);
+
 /** @brief Move cursor up one line, preserving preferred visual column. */
 void editor_move_up(Editor *ed);
 
@@ -288,6 +294,17 @@ void editor_toggle_checkbox(Editor *ed);
 void editor_wrap_format(Editor *ed, const char *marker);
 
 /**
+ * @brief Reflow (re-wrap) the contiguous Markdown paragraph around the cursor to wrap_col.
+ *
+ * Preserves leading indentation and Markdown blockquote (`> `) prefixes, stopping
+ * at blank lines, headings, lists, horizontal rules, tables, and fenced code blocks.
+ *
+ * @param ed Pointer to Editor.
+ * @return true if the paragraph was reflowed, false if cursor is not on a reflowable paragraph.
+ */
+bool editor_reflow_paragraph(Editor *ed);
+
+/**
  * @brief Set automatic line break column width.
  * @param ed Pointer to Editor.
  * @param cols Column limit in [MDE_WRAP_COL_MIN, MDE_WRAP_COL_MAX], or MDE_WRAP_COL_OFF (0).
@@ -312,6 +329,9 @@ void editor_redo(Editor *ed);
 /* =========================================================================
  * File I/O & Hypertext Linking
  * ========================================================================= */
+
+/** @brief Return true if the current buffer has unsaved modifications. */
+bool editor_has_unsaved_changes(const Editor *ed);
 
 /** @brief Save the buffer to opt_path (or existing file_path when opt_path is NULL). */
 bool editor_save(Editor *ed, const char *opt_path);
@@ -354,6 +374,19 @@ bool editor_resolve_link_path(const Editor *ed, const char *link_target,
 bool editor_insert_file_link(Editor *ed, const char *target_path);
 
 /**
+ * @brief Check whether following the link at the cursor will load a different local file.
+ *
+ * Returns false for missing links, external URLs, pure `#anchor` jumps, or links
+ * resolving to the currently open file.
+ *
+ * @param ed Pointer to Editor.
+ * @param out_resolved Optional buffer receiving the resolved target file path.
+ * @param cap Capacity of out_resolved.
+ * @return true if following the link will load a different file into the editor.
+ */
+bool editor_link_will_switch_file(const Editor *ed, char *out_resolved, size_t cap);
+
+/**
  * @brief Follow a local Markdown file link or `#heading` anchor under the cursor.
  *
  * Pushes the current location onto the navigation history stack and opens the target
@@ -385,6 +418,36 @@ bool editor_cursor_is_visible(const Editor *ed);
  * @return true if a match was found and cursor moved to it.
  */
 bool editor_search_find_next(Editor *ed, const char *query, bool forward);
+
+/**
+ * @brief Search forward (case-insensitive) starting strictly at (from_row, from_col).
+ * @param ed Pointer to Editor.
+ * @param query Substring to search for.
+ * @param from_row Starting 0-indexed row.
+ * @param from_col Starting byte offset within from_row.
+ * @param wrap If true, wrap around to the start of the buffer when reaching EOF.
+ * @return true if a match was found.
+ */
+bool editor_search_find_from(Editor *ed, const char *query,
+                             size_t from_row, size_t from_col, bool wrap);
+
+/**
+ * @brief Replace the currently highlighted search match with replacement text.
+ * @param ed Pointer to Editor.
+ * @param replacement Replacement UTF-8 string (may be empty to delete match).
+ * @param group Undo group ID (0 allocates a new group automatically).
+ * @return true if a match was replaced.
+ */
+bool editor_replace_current_match(Editor *ed, const char *replacement, uint64_t group);
+
+/**
+ * @brief Replace all occurrences of query with replacement across the document as one undo group.
+ * @param ed Pointer to Editor.
+ * @param query Substring to match (case-insensitive).
+ * @param replacement Replacement UTF-8 string.
+ * @return Total number of occurrences replaced.
+ */
+size_t editor_replace_all(Editor *ed, const char *query, const char *replacement);
 
 /** @brief Clamp and update vertical, horizontal, and preview scroll offsets for view_rows. */
 void editor_update_scroll(Editor *ed, int view_rows);

@@ -11,6 +11,7 @@
 #include <string.h>
 #include <assert.h>
 #include <locale.h>
+#include <unistd.h>
 #include <sys/stat.h>
 
 #include "../src/version.h"
@@ -36,6 +37,7 @@ static int g_tests_passed = 0;
     } \
 } while(0)
 
+/** @brief Verify centralized application metadata and version macros from version.h. */
 static void test_version(void) {
     printf("--- Testing Version & Build Metadata ---\n");
     TEST_ASSERT(strcmp(MDE_APP_NAME, "mde") == 0, "App name is 'mde'");
@@ -50,6 +52,7 @@ static void test_version(void) {
     TEST_ASSERT(strlen(MDE_DESCRIPTION) > 0, "Description is non-empty");
 }
 
+/** @brief Verify UTF-8 width, codepoint counting, navigation, and column conversions. */
 static void test_utf8(void) {
     printf("--- Testing UTF-8 Subsystem ---\n");
 
@@ -73,6 +76,7 @@ static void test_utf8(void) {
     TEST_ASSERT(utf8_col_to_byte(accent, 2) == 3, "Col to byte conversion");
 }
 
+/** @brief Verify line buffer mutations, undo/redo stacks, and disk save/load round-trips. */
 static void test_buffer_and_undo(void) {
     printf("--- Testing Text Buffer & Undo/Redo ---\n");
 
@@ -132,6 +136,7 @@ static void test_buffer_and_undo(void) {
     remove(test_path);
 }
 
+/** @brief Verify Markdown block and inline token span lexing across syntax constructs. */
 static void test_markdown_parser(void) {
     printf("--- Testing Markdown Parser & Lexer ---\n");
 
@@ -206,6 +211,7 @@ static void test_markdown_parser(void) {
     TEST_ASSERT(md_is_hrule(hr, strlen(hr)), "Detected horizontal rule ---");
 }
 
+/** @brief Verify active-line syntax markers render distinctly from dimmed inactive markers. */
 static void test_active_markers(void) {
     printf("--- Testing Active vs Inactive Marker Highlighting ---\n");
     attr_t inactive_attr = theme_token_attr(MD_BOLD_MARKER, false);
@@ -215,6 +221,7 @@ static void test_active_markers(void) {
     TEST_ASSERT(active_attr & A_BOLD, "Active marker is bold");
 }
 
+/** @brief Verify basic editor cursor movement and line-end positioning. */
 static void test_cursor_math(void) {
     printf("--- Testing Editor Cursor Coordinate Calculations ---\n");
     Editor ed;
@@ -245,6 +252,7 @@ static void test_cursor_math(void) {
     editor_free(&ed);
 }
 
+/** @brief Verify steady non-flashing cursor visibility in both Insert and Overwrite modes. */
 static void test_cursor_visibility(void) {
     printf("--- Testing Steady Non-Flashing Cursor ---\n");
     Editor ed;
@@ -279,6 +287,7 @@ static void test_cursor_visibility(void) {
     editor_free(&ed);
 }
 
+/** @brief Verify Insert vs. Overwrite typing behavior and mode toggling. */
 static void test_insert_mode(void) {
     printf("--- Testing Insert Mode & Cursor Toggle ---\n");
     Editor ed;
@@ -319,6 +328,7 @@ static void test_insert_mode(void) {
     editor_free(&ed);
 }
 
+/** @brief Verify rendered preview generation, line mapping, and preview cursor tracking. */
 static void test_renderer(void) {
     printf("--- Testing Markdown Renderer ---\n");
 
@@ -367,6 +377,7 @@ static void test_renderer(void) {
     buffer_free(&buf);
 }
 
+/** @brief Verify selection mark anchor, forward/reversed normalization, and text extraction. */
 static void test_selection_and_mark(void) {
     printf("--- Testing Selection & Mark (Ctrl-Space) ---\n");
     Editor ed;
@@ -414,6 +425,7 @@ static void test_selection_and_mark(void) {
     editor_free(&ed);
 }
 
+/** @brief Verify single-line and multi-line cut, copy, paste, and atomic undo/redo. */
 static void test_cut_copy_paste(void) {
     printf("--- Testing Cut, Copy, Paste ---\n");
     Editor ed;
@@ -473,6 +485,7 @@ static void test_cut_copy_paste(void) {
     editor_free(&ed);
 }
 
+/** @brief Verify kill-to-end-of-line and kill-previous-word clipboard mutations. */
 static void test_kill_line_and_word(void) {
     printf("--- Testing C-k (Kill Line) & C-w (Kill Word) ---\n");
     Editor ed;
@@ -512,6 +525,7 @@ static void test_kill_line_and_word(void) {
     editor_free(&ed);
 }
 
+/** @brief Verify Home (^A) and End (^E) line navigation. */
 static void test_home_and_end(void) {
     printf("--- Testing C-a (Home) & C-e (End) ---\n");
     Editor ed;
@@ -532,6 +546,7 @@ static void test_home_and_end(void) {
     editor_free(&ed);
 }
 
+/** @brief Verify automatic line breaking (default 78, configurable 20-255, or off). */
 static void test_auto_line_break(void) {
     printf("--- Testing Automatic Line Break (Default 78, 20-255 or Off) ---\n");
     Editor ed;
@@ -633,6 +648,7 @@ static void test_auto_line_break(void) {
     editor_free(&ed);
 }
 
+/** @brief Verify graceful terminal resizing, viewport scroll clamping, and preview scaling. */
 static void test_resize_graceful(void) {
     printf("--- Testing Graceful Resize & Scroll Clamping ---\n");
     Editor ed;
@@ -689,6 +705,7 @@ static void test_resize_graceful(void) {
     editor_free(&ed);
 }
 
+/** @brief Read an entire file from disk into a newly allocated null-terminated string. */
 static char *read_entire_file(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
@@ -704,6 +721,7 @@ static char *read_entire_file(const char *path) {
     return buf;
 }
 
+/** @brief Verify built-in HTML5, XML, LaTeX, and Pandoc EPUB export pipelines. */
 static void test_export_subsystem(void) {
     printf("--- Testing Export Subsystem (HTML, XML, EPUB, LaTeX & Pandoc) ---\n");
 
@@ -872,6 +890,7 @@ static void test_export_subsystem(void) {
     buffer_free(&buf);
 }
 
+/** @brief Verify Nano-compatible whole-line cut/copy, mark toggle, go-to-line, and search. */
 static void test_nano_editing_and_nav(void) {
     printf("--- Testing Nano-Compatible Line Cut/Copy, Mark Toggle, Goto & Search ---\n");
     Editor ed;
@@ -956,6 +975,7 @@ static void test_nano_editing_and_nav(void) {
     editor_free(&ed);
 }
 
+/** @brief Write a string to a file on disk for test fixture setup. */
 static void write_text_file(const char *path, const char *content) {
     FILE *f = fopen(path, "wb");
     if (f) {
@@ -964,6 +984,7 @@ static void write_text_file(const char *path, const char *content) {
     }
 }
 
+/** @brief Count non-overlapping occurrences of needle in haystack. */
 static size_t count_occurrences(const char *haystack, const char *needle) {
     if (!haystack || !needle || !*needle) return 0;
     size_t count = 0;
@@ -976,6 +997,7 @@ static size_t count_occurrences(const char *haystack, const char *needle) {
     return count;
 }
 
+/** @brief Verify hypertext file linking, navigation history, unsaved-change guards, and multi-file export. */
 static void test_hypertext_linking_and_export(void) {
     printf("--- Testing Hypertext File Linking & Multi-File Linked Export ---\n");
 
@@ -1033,6 +1055,12 @@ static void test_hypertext_linking_and_export(void) {
     TEST_ASSERT(strcmp(url, "chapters/ch1.md") == 0 && anchor[0] == '\0',
                 "Extracted URL 'chapters/ch1.md' with empty anchor");
 
+    // Verify editor_link_will_switch_file distinguishes cross-file vs same-file/external links
+    char resolved_target[256] = {0};
+    TEST_ASSERT(editor_link_will_switch_file(&ed, resolved_target, sizeof(resolved_target)) &&
+                strcmp(resolved_target, ch1_path) == 0,
+                "Cross-file link reports will_switch_file = true with resolved path");
+
     // Follow link to ch1.md
     TEST_ASSERT(editor_follow_link(&ed), "Followed link from index.md to chapters/ch1.md");
     TEST_ASSERT(ed.buffer.file_path && strcmp(ed.buffer.file_path, ch1_path) == 0,
@@ -1045,6 +1073,23 @@ static void test_hypertext_linking_and_export(void) {
     TEST_ASSERT(ed.buffer.file_path && strcmp(ed.buffer.file_path, ch2_path) == 0,
                 "Active file is now chapters/ch2.md");
     TEST_ASSERT(ed.link_history_count == 2, "Link history depth is 2");
+
+    // External URL on ch2.md row 2 should NOT trigger file switch / save prompt
+    ed.cursor_row = 2; ed.cursor_col = 70; // Inside [Web](https://example.org)
+    TEST_ASSERT(!editor_link_will_switch_file(&ed, resolved_target, sizeof(resolved_target)),
+                "External URL reports will_switch_file = false");
+
+    // Same-file link (#heading or self path) should NOT trigger file switch / save prompt
+    editor_move_doc_end(&ed);
+    editor_smart_enter(&ed);
+    editor_paste_text(&ed, "[Self](ch2.md#chapter-two) and [Local](#chapter-two)", 52);
+    ed.cursor_col = 5;
+    TEST_ASSERT(!editor_link_will_switch_file(&ed, resolved_target, sizeof(resolved_target)),
+                "Same-file link reports will_switch_file = false");
+    ed.cursor_col = 35;
+    TEST_ASSERT(!editor_link_will_switch_file(&ed, resolved_target, sizeof(resolved_target)),
+                "Pure #anchor link reports will_switch_file = false");
+    ed.buffer.is_dirty = false;
 
     // Navigate back twice to index.md and verify cursor restoration
     TEST_ASSERT(editor_navigate_back(&ed), "Navigated back to ch1.md");
@@ -1213,6 +1258,203 @@ static void test_hypertext_linking_and_export(void) {
     editor_free(&ed);
 }
 
+/** @brief Verify atomic saves (symlink & permission preservation) and exact undo dirty tracking. */
+static void test_atomic_save_and_exact_dirty(void) {
+    printf("--- Testing Atomic Saves (Symlinks/Permissions) & Exact Undo Dirty State ---\n");
+
+    const char *dir = "/tmp/mde_atomic_test";
+    mkdir(dir, 0755);
+    const char *real_file = "/tmp/mde_atomic_test/real.md";
+    const char *sym_file  = "/tmp/mde_atomic_test/link.md";
+    remove(sym_file);
+    remove(real_file);
+
+    write_text_file(real_file, "Initial line\n");
+    chmod(real_file, 0640);
+    int sl_ok = symlink(real_file, sym_file);
+    TEST_ASSERT(sl_ok == 0, "Created test symlink");
+
+    Buffer buf;
+    buffer_init(&buf);
+    TEST_ASSERT(buffer_load(&buf, sym_file), "Loaded buffer via symlink");
+    TEST_ASSERT(!buf.is_dirty, "Freshly loaded buffer is clean");
+
+    // Edit -> dirty -> undo back to saved state -> clean again!
+    uint64_t g1 = buffer_next_group(&buf);
+    buffer_insert_string(&buf, 0, 12, " edited", 7, g1);
+    TEST_ASSERT(buf.is_dirty, "Buffer is dirty after edit");
+
+    size_t urow = 0, ucol = 0;
+    TEST_ASSERT(buffer_undo(&buf, &urow, &ucol), "Undo edit succeeded");
+    TEST_ASSERT(!buf.is_dirty, "Undoing back to saved state clears is_dirty");
+
+    TEST_ASSERT(buffer_redo(&buf, &urow, &ucol), "Redo edit succeeded");
+    TEST_ASSERT(buf.is_dirty, "Redoing edit marks buffer dirty again");
+
+    // Save via symlink: symlink stays intact, target updated, permissions 0640 preserved
+    TEST_ASSERT(buffer_save(&buf, NULL), "Atomic save through symlink succeeded");
+    TEST_ASSERT(!buf.is_dirty, "Buffer is clean after save");
+
+    struct stat lst, tst;
+    TEST_ASSERT(lstat(sym_file, &lst) == 0 && S_ISLNK(lst.st_mode),
+                "Symlink itself was preserved (not replaced by regular file)");
+    TEST_ASSERT(stat(real_file, &tst) == 0 && (tst.st_mode & 0777) == 0640,
+                "Target file permissions (0640) were preserved across atomic rename");
+    char *saved_txt = read_entire_file(real_file);
+    TEST_ASSERT(saved_txt != NULL && strcmp(saved_txt, "Initial line edited\n") == 0,
+                "Symlink target file contains updated content");
+    free(saved_txt);
+
+    // Undo past saved state, then branch with new edit: is_dirty must stay true even at same depth
+    TEST_ASSERT(buffer_undo(&buf, &urow, &ucol), "Undo past saved state");
+    TEST_ASSERT(buf.is_dirty, "Undoing past saved state marks buffer dirty");
+    uint64_t g2 = buffer_next_group(&buf);
+    buffer_insert_string(&buf, 0, 0, "X", 1, g2);
+    TEST_ASSERT(buf.is_dirty, "Branched history at saved depth remains dirty");
+
+    buffer_free(&buf);
+    remove(sym_file);
+    remove(real_file);
+}
+
+/** @brief Verify Search & Replace, Paragraph Reflow, and Word-by-Word Navigation. */
+static void test_replace_reflow_and_word_nav(void) {
+    printf("--- Testing Search & Replace, Paragraph Reflow & Word Navigation ---\n");
+    Editor ed;
+    editor_init(&ed, NULL);
+
+    // 1. Word-by-word navigation
+    editor_paste_text(&ed, "alpha beta_two, gamma\ndelta", 27);
+    ed.cursor_row = 0; ed.cursor_col = 0;
+
+    editor_move_word_right(&ed);
+    TEST_ASSERT(ed.cursor_row == 0 && ed.cursor_col == 6, "Word right moved to 'beta_two'");
+    editor_move_word_right(&ed);
+    TEST_ASSERT(ed.cursor_row == 0 && ed.cursor_col == 14, "Word right moved to ','");
+    editor_move_word_right(&ed);
+    TEST_ASSERT(ed.cursor_row == 0 && ed.cursor_col == 16, "Word right moved to 'gamma'");
+    editor_move_word_right(&ed);
+    TEST_ASSERT(ed.cursor_row == 0 && ed.cursor_col == 21, "Word right moved to EOL");
+    editor_move_word_right(&ed);
+    TEST_ASSERT(ed.cursor_row == 1 && ed.cursor_col == 0, "Word right crossed to line 1");
+
+    editor_move_word_left(&ed);
+    TEST_ASSERT(ed.cursor_row == 0 && ed.cursor_col == 21, "Word left crossed back to line 0 EOL");
+    editor_move_word_left(&ed);
+    TEST_ASSERT(ed.cursor_row == 0 && ed.cursor_col == 16, "Word left moved to 'gamma'");
+    editor_move_word_left(&ed);
+    TEST_ASSERT(ed.cursor_row == 0 && ed.cursor_col == 14, "Word left moved to ','");
+    editor_move_word_left(&ed);
+    TEST_ASSERT(ed.cursor_row == 0 && ed.cursor_col == 6, "Word left moved to 'beta_two'");
+    editor_free(&ed);
+
+    // 2. Search & Replace (including replacement containing query and single-step undo)
+    editor_init(&ed, NULL);
+    editor_paste_text(&ed, "foo bar FOO baz foo", 19);
+    size_t nrep = editor_replace_all(&ed, "foo", "foobar");
+    TEST_ASSERT(nrep == 3, "editor_replace_all replaced all 3 case-insensitive matches");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "foobar bar foobar baz foobar") == 0,
+                "All occurrences replaced cleanly without infinite loop");
+    editor_undo(&ed);
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "foo bar FOO baz foo") == 0,
+                "Single undo reverted entire Replace All atomically");
+
+    // Stepwise replace current match
+    TEST_ASSERT(editor_search_find_from(&ed, "baz", 0, 0, false), "Found 'baz' via find_from");
+    TEST_ASSERT(editor_replace_current_match(&ed, "qux", 0), "Replaced single match 'baz' -> 'qux'");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "foo bar FOO qux foo") == 0,
+                "Single match replacement updated buffer");
+    editor_free(&ed);
+
+    // 3. Paragraph Reflow (plain + blockquote + stops at headings)
+    editor_init(&ed, NULL);
+    editor_set_wrap_col(&ed, 25);
+    editor_paste_text(&ed,
+        "# Title\n"
+        "Short\n"
+        "lines that should\n"
+        "reflow neatly together.\n"
+        "\n"
+        "> Quoted\n"
+        "> paragraph lines here.", 89);
+
+    ed.cursor_row = 1; ed.cursor_col = 0;
+    TEST_ASSERT(editor_reflow_paragraph(&ed), "Reflowed plain paragraph");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "# Title") == 0, "Heading untouched by reflow");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 1), "Short lines that should") == 0,
+                "Reflow line 1 wrapped cleanly <= 25 cols");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 2), "reflow neatly together.") == 0,
+                "Reflow line 2 wrapped cleanly <= 25 cols");
+
+    // Single undo restores jagged original paragraph
+    editor_undo(&ed);
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 1), "Short") == 0, "Undo restored original paragraph");
+
+    // Blockquote reflow preserves "> " prefix
+    ed.cursor_row = 5; ed.cursor_col = 2;
+    TEST_ASSERT(editor_reflow_paragraph(&ed), "Reflowed blockquote paragraph");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 5), "> Quoted paragraph lines") == 0,
+                "Blockquote reflow preserved '> ' prefix on line 1");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 6), "> here.") == 0,
+                "Blockquote reflow preserved '> ' prefix on continuation line");
+
+    editor_free(&ed);
+}
+
+/** @brief Verify aligned box-drawn tables and directional link indicators in preview renderer. */
+static void test_renderer_tables_and_links(void) {
+    printf("--- Testing Preview Box Tables & Directional Link Indicators ---\n");
+    Buffer buf;
+    buffer_init(&buf);
+
+    const char *lines[] = {
+        "| Key | Action |",
+        "| --- | --- |",
+        "| ^G | Help |",
+        "| ^X | Exit |",
+        "",
+        "See [Docs](https://example.com), [Ch1](ch1.md), and [Top](#top)."
+    };
+    for (size_t i = 0; i < sizeof(lines) / sizeof(lines[0]); ++i) {
+        if (i > 0) buffer_split_line(&buf, i - 1, buffer_line_len(&buf, i - 1), 0);
+        buffer_replace_line(&buf, i, lines[i], strlen(lines[i]), 0);
+    }
+
+    RenderedDoc doc;
+    rendered_doc_init(&doc);
+    render_document(&buf, 60, &doc);
+
+    bool has_top = false, has_mid = false, has_bot = false;
+    bool has_ext = false, has_loc = false, has_anc = false;
+    for (size_t i = 0; i < doc.count; ++i) {
+        for (size_t c = 0; c < doc.lines[i].chunk_count; ++c) {
+            const char *t = doc.lines[i].chunks[c].text;
+            if (strstr(t, "┌") && strstr(t, "┬") && strstr(t, "┐")) has_top = true;
+            if (strstr(t, "├") && strstr(t, "┼") && strstr(t, "┤")) has_mid = true;
+            if (strstr(t, "└") && strstr(t, "┴") && strstr(t, "┘")) has_bot = true;
+            if (strstr(t, "↗")) has_ext = true;
+            if (strstr(t, "→")) has_loc = true;
+            if (strstr(t, "↓")) has_anc = true;
+        }
+    }
+
+    TEST_ASSERT(has_top, "Table preview has top box border ┌─┬─┐");
+    TEST_ASSERT(has_mid, "Table preview has header separator ├─┼─┤");
+    TEST_ASSERT(has_bot, "Table preview has bottom box border └─┴─┘");
+    TEST_ASSERT(has_ext, "External link displays ↗ indicator");
+    TEST_ASSERT(has_loc, "Local file link displays → indicator");
+    TEST_ASSERT(has_anc, "Same-document #anchor link displays ↓ indicator");
+
+    // Verify cursor mapping across rendered link
+    int vcol_end = renderer_get_cursor_vcol(&buf, &doc, 5, buffer_line_len(&buf, 5));
+    TEST_ASSERT(vcol_end > 10 && vcol_end < (int)buffer_line_len(&buf, 5),
+                "Preview cursor vcol strips raw URL length and accounts for indicators");
+
+    rendered_doc_free(&doc);
+    buffer_free(&buf);
+}
+
+/** @brief Verify shortcut hint row sizing, file dialog safety checks, and unsaved/overwrite guards. */
 static void test_shortcut_hints_and_dialog(void) {
     printf("--- Testing Shortcut Hints & File Dialogue API ---\n");
 
@@ -1248,11 +1490,17 @@ static void test_shortcut_hints_and_dialog(void) {
     TEST_ASSERT(!ui_path_exists(NULL, NULL), "ui_path_exists handles NULL path");
     TEST_ASSERT(!ui_confirm_overwrite(NULL, tmp_exist), "ui_confirm_overwrite rejects NULL editor");
     TEST_ASSERT(!ui_confirm_overwrite(&ed, NULL), "ui_confirm_overwrite rejects NULL path");
+    TEST_ASSERT(!editor_has_unsaved_changes(&ed), "Fresh editor buffer has no unsaved changes");
+    editor_insert_char(&ed, "x", 1);
+    TEST_ASSERT(editor_has_unsaved_changes(&ed), "Modified editor buffer reports unsaved changes");
+    TEST_ASSERT(editor_save(&ed, tmp_exist), "Saving modified buffer succeeds");
+    TEST_ASSERT(!editor_has_unsaved_changes(&ed), "Saved buffer clears unsaved changes flag");
     remove(tmp_exist);
 
     editor_free(&ed);
 }
 
+/** @brief Run all unit test suites and return 0 on 100% pass, 1 on any failure. */
 int main(void) {
     setlocale(LC_ALL, "");
     printf("==========================================\n");
@@ -1277,6 +1525,9 @@ int main(void) {
     test_export_subsystem();
     test_nano_editing_and_nav();
     test_hypertext_linking_and_export();
+    test_atomic_save_and_exact_dirty();
+    test_replace_reflow_and_word_nav();
+    test_renderer_tables_and_links();
     test_shortcut_hints_and_dialog();
 
     printf("==========================================\n");

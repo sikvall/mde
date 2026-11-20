@@ -7,6 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+/**
+ * @brief Initialize an empty UndoStack.
+ */
 void undo_stack_init(UndoStack *stack) {
     if (!stack) return;
     stack->actions = NULL;
@@ -14,6 +17,9 @@ void undo_stack_init(UndoStack *stack) {
     stack->cap = 0;
 }
 
+/**
+ * @brief Free all stored action payloads and reset stack count to zero.
+ */
 void undo_stack_clear(UndoStack *stack) {
     if (!stack) return;
     for (size_t i = 0; i < stack->count; ++i) {
@@ -23,6 +29,9 @@ void undo_stack_clear(UndoStack *stack) {
     stack->count = 0;
 }
 
+/**
+ * @brief Free all payloads and release the backing action array.
+ */
 void undo_stack_free(UndoStack *stack) {
     if (!stack) return;
     undo_stack_clear(stack);
@@ -31,6 +40,9 @@ void undo_stack_free(UndoStack *stack) {
     stack->cap = 0;
 }
 
+/**
+ * @brief Push a recorded buffer mutation onto the undo/redo stack.
+ */
 bool undo_stack_push(UndoStack *stack, ActionType type, size_t row, size_t col,
                      const char *text, size_t text_len, uint64_t group_id) {
     if (!stack) return false;
@@ -64,6 +76,9 @@ bool undo_stack_push(UndoStack *stack, ActionType type, size_t row, size_t col,
     return true;
 }
 
+/**
+ * @brief Pop the most recent action from the stack (transferring text ownership if out_action is non-NULL).
+ */
 bool undo_stack_pop(UndoStack *stack, UndoAction *out_action) {
     if (!stack || stack->count == 0) return false;
     stack->count--;
@@ -75,12 +90,18 @@ bool undo_stack_pop(UndoStack *stack, UndoAction *out_action) {
     return true;
 }
 
+/**
+ * @brief Copy the top action into out_action without removing it from the stack.
+ */
 bool undo_stack_peek(const UndoStack *stack, UndoAction *out_action) {
     if (!stack || stack->count == 0 || !out_action) return false;
     *out_action = stack->actions[stack->count - 1];
     return true;
 }
 
+/**
+ * @brief Return true if the stack has no recorded actions.
+ */
 bool undo_stack_is_empty(const UndoStack *stack) {
     return (!stack || stack->count == 0);
 }

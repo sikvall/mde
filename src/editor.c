@@ -17,6 +17,7 @@
 #include <limits.h>
 #include <sys/stat.h>
 
+/** @brief Initialize editor state, defaults, buffer, and optionally load filename. */
 void editor_init(Editor *ed, const char *filename) {
     if (!ed) return;
     memset(ed, 0, sizeof(Editor));
@@ -55,6 +56,7 @@ void editor_init(Editor *ed, const char *filename) {
     }
 }
 
+/** @brief Free all dynamic memory owned by ed (buffer, preview, clipboard, link history). */
 void editor_free(Editor *ed) {
     if (!ed) return;
     buffer_free(&ed->buffer);
@@ -69,6 +71,7 @@ void editor_free(Editor *ed) {
     ed->link_history_count = 0;
 }
 
+/** @brief Format and post a temporary notification message to the status bar. */
 void editor_set_status(Editor *ed, const char *fmt, ...) {
     if (!ed || !fmt) return;
     va_list args;
@@ -78,6 +81,7 @@ void editor_set_status(Editor *ed, const char *fmt, ...) {
     ed->status_time = time(NULL);
 }
 
+/** @brief Cycle active view mode: VIEW_SPLIT -> VIEW_INPLACE -> VIEW_PREVIEW. */
 void editor_cycle_view_mode(Editor *ed) {
     if (!ed) return;
     ed->view_mode = (ViewMode)((ed->view_mode + 1) % 3);
@@ -95,6 +99,7 @@ void editor_cycle_view_mode(Editor *ed) {
     }
 }
 
+/** @brief Rebuild the cached RenderedDoc preview whenever marked dirty. */
 void editor_refresh_rendered(Editor *ed) {
     if (!ed || !ed->rendered_dirty) return;
     int p_width = ed->preview_width > 0 ? ed->preview_width : 80;
@@ -102,6 +107,7 @@ void editor_refresh_rendered(Editor *ed) {
     ed->rendered_dirty = false;
 }
 
+/** @brief Move cursor one UTF-8 character left, wrapping to the previous line end. */
 void editor_move_left(Editor *ed) {
     if (!ed) return;
     if (ed->cursor_col > 0) {
@@ -115,6 +121,7 @@ void editor_move_left(Editor *ed) {
     ed->target_visual_col = utf8_byte_to_col(line, ed->cursor_col);
 }
 
+/** @brief Move cursor one UTF-8 character right, wrapping to the next line start. */
 void editor_move_right(Editor *ed) {
     if (!ed) return;
     size_t line_len = buffer_line_len(&ed->buffer, ed->cursor_row);
@@ -129,6 +136,73 @@ void editor_move_right(Editor *ed) {
     ed->target_visual_col = utf8_byte_to_col(line, ed->cursor_col);
 }
 
+/** @brief Classify a byte as word-constituent (alphanumeric, '_', or UTF-8 multibyte). */
+static bool is_word_byte(unsigned char c) {
+    return isalnum(c) || c == '_' || c >= 0x80;
+}
+
+/** @brief Move cursor backward by one word boundary, crossing to previous line end if at col 0. */
+void editor_move_word_left(Editor *ed) {
+    if (!ed) return;
+    if (ed->cursor_col == 0) {
+        if (ed->cursor_row > 0) {
+            ed->cursor_row--;
+            ed->cursor_col = buffer_line_len(&ed->buffer, ed->cursor_row);
+        }
+    } else {
+        const char *l = buffer_line(&ed->buffer, ed->cursor_row);
+        size_t pos = ed->cursor_col;
+        while (pos > 0) {
+            size_t prev = utf8_prev_char(l, pos);
+            if (!isspace((unsigned char)l[prev])) break;
+            pos = prev;
+        }
+        if (pos > 0) {
+            size_t prev = utf8_prev_char(l, pos);
+            bool word_run = is_word_byte((unsigned char)l[prev]);
+            while (pos > 0) {
+                size_t p = utf8_prev_char(l, pos);
+                unsigned char c = (unsigned char)l[p];
+                if (isspace(c) || is_word_byte(c) != word_run) break;
+                pos = p;
+            }
+        }
+        ed->cursor_col = pos;
+    }
+    const char *line = buffer_line(&ed->buffer, ed->cursor_row);
+    ed->target_visual_col = utf8_byte_to_col(line, ed->cursor_col);
+}
+
+/** @brief Move cursor forward by one word boundary, crossing to next line start if at EOL. */
+void editor_move_word_right(Editor *ed) {
+    if (!ed) return;
+    size_t line_len = buffer_line_len(&ed->buffer, ed->cursor_row);
+    if (ed->cursor_col >= line_len) {
+        if (ed->cursor_row + 1 < buffer_line_count(&ed->buffer)) {
+            ed->cursor_row++;
+            ed->cursor_col = 0;
+        }
+    } else {
+        const char *l = buffer_line(&ed->buffer, ed->cursor_row);
+        size_t pos = ed->cursor_col;
+        if (!isspace((unsigned char)l[pos])) {
+            bool word_run = is_word_byte((unsigned char)l[pos]);
+            while (pos < line_len) {
+                unsigned char c = (unsigned char)l[pos];
+                if (isspace(c) || is_word_byte(c) != word_run) break;
+                pos = utf8_next_char(l, pos, line_len);
+            }
+        }
+        while (pos < line_len && isspace((unsigned char)l[pos])) {
+            pos = utf8_next_char(l, pos, line_len);
+        }
+        ed->cursor_col = pos;
+    }
+    const char *line = buffer_line(&ed->buffer, ed->cursor_row);
+    ed->target_visual_col = utf8_byte_to_col(line, ed->cursor_col);
+}
+
+/** @brief Move cursor up one row while preserving preferred visual column. */
 void editor_move_up(Editor *ed) {
     if (!ed) return;
     if (ed->cursor_row > 0) {
@@ -138,6 +212,7 @@ void editor_move_up(Editor *ed) {
     }
 }
 
+/** @brief Move cursor down one row while preserving preferred visual column. */
 void editor_move_down(Editor *ed) {
     if (!ed) return;
     if (ed->cursor_row + 1 < buffer_line_count(&ed->buffer)) {
@@ -147,6 +222,7 @@ void editor_move_down(Editor *ed) {
     }
 }
 
+/** @brief Move cursor to column 0 of the active line. */
 void editor_move_home(Editor *ed) {
     if (!ed) return;
     editor_touch_key(ed);
@@ -154,6 +230,7 @@ void editor_move_home(Editor *ed) {
     ed->target_visual_col = 0;
 }
 
+/** @brief Move cursor to the end of the active line. */
 void editor_move_end(Editor *ed) {
     if (!ed) return;
     editor_touch_key(ed);
@@ -162,6 +239,7 @@ void editor_move_end(Editor *ed) {
     ed->target_visual_col = utf8_byte_to_col(line, ed->cursor_col);
 }
 
+/** @brief Move cursor up by one viewport page. */
 void editor_move_page_up(Editor *ed) {
     if (!ed) return;
     size_t step = ed->screen_rows > 3 ? (size_t)(ed->screen_rows - 3) : 10;
@@ -171,6 +249,7 @@ void editor_move_page_up(Editor *ed) {
     ed->cursor_col = utf8_col_to_byte(line, ed->target_visual_col);
 }
 
+/** @brief Move cursor down by one viewport page. */
 void editor_move_page_down(Editor *ed) {
     if (!ed) return;
     size_t step = ed->screen_rows > 3 ? (size_t)(ed->screen_rows - 3) : 10;
@@ -181,6 +260,7 @@ void editor_move_page_down(Editor *ed) {
     ed->cursor_col = utf8_col_to_byte(line, ed->target_visual_col);
 }
 
+/** @brief Jump cursor to the beginning of the document (row 0, col 0). */
 void editor_move_doc_start(Editor *ed) {
     if (!ed) return;
     editor_touch_key(ed);
@@ -189,6 +269,7 @@ void editor_move_doc_start(Editor *ed) {
     ed->target_visual_col = 0;
 }
 
+/** @brief Jump cursor to the end of the final line in the document. */
 void editor_move_doc_end(Editor *ed) {
     if (!ed) return;
     editor_touch_key(ed);
@@ -199,6 +280,7 @@ void editor_move_doc_end(Editor *ed) {
     ed->target_visual_col = utf8_byte_to_col(line, ed->cursor_col);
 }
 
+/** @brief Jump cursor to a 1-indexed line and optional 1-indexed visual column. */
 void editor_goto_line(Editor *ed, size_t line_1based, size_t col_1based) {
     if (!ed) return;
     editor_touch_key(ed);
@@ -218,6 +300,7 @@ void editor_goto_line(Editor *ed, size_t line_1based, size_t col_1based) {
     editor_set_status(ed, "Line %zu, Col %d", ed->cursor_row + 1, ed->target_visual_col + 1);
 }
 
+/** @brief Display current line, percentage, column, word, and char counts in status bar. */
 void editor_report_position(Editor *ed) {
     if (!ed) return;
     editor_touch_key(ed);
@@ -236,6 +319,7 @@ void editor_report_position(Editor *ed) {
                       buffer_char_count(&ed->buffer));
 }
 
+/** @brief Set the selection mark anchor at the current cursor position. */
 void editor_set_mark(Editor *ed) {
     if (!ed) return;
     editor_touch_key(ed);
@@ -245,6 +329,7 @@ void editor_set_mark(Editor *ed) {
     editor_set_status(ed, "Mark Set");
 }
 
+/** @brief Clear the active selection mark. */
 void editor_clear_mark(Editor *ed) {
     if (!ed) return;
     editor_touch_key(ed);
@@ -252,6 +337,7 @@ void editor_clear_mark(Editor *ed) {
     editor_set_status(ed, "Mark Unset");
 }
 
+/** @brief Toggle the selection mark ON at the cursor, or OFF if already active. */
 void editor_toggle_mark(Editor *ed) {
     if (!ed) return;
     if (ed->mark_active) {
@@ -261,11 +347,13 @@ void editor_toggle_mark(Editor *ed) {
     }
 }
 
+/** @brief Return true when a non-empty text selection spans mark..cursor. */
 bool editor_has_selection(const Editor *ed) {
     if (!ed || !ed->mark_active) return false;
     return (ed->mark_row != ed->cursor_row || ed->mark_col != ed->cursor_col);
 }
 
+/** @brief Return ordered (start <= end) selection coordinates if a selection is active. */
 bool editor_get_selection(const Editor *ed, size_t *start_row, size_t *start_col,
                           size_t *end_row, size_t *end_col) {
     if (!ed || !ed->mark_active) return false;
@@ -286,6 +374,7 @@ bool editor_get_selection(const Editor *ed, size_t *start_row, size_t *start_col
     return true;
 }
 
+/** @brief Extract the active selection into a newly allocated null-terminated string. */
 char *editor_get_selected_text(const Editor *ed, size_t *out_len) {
     size_t s_row, s_col, e_row, e_col;
     if (!editor_get_selection(ed, &s_row, &s_col, &e_row, &e_col)) {
@@ -352,6 +441,7 @@ char *editor_get_selected_text(const Editor *ed, size_t *out_len) {
     return buf;
 }
 
+/** @brief Delete the active selection from the buffer under a single undo group. */
 bool editor_delete_selection(Editor *ed, uint64_t group) {
     size_t s_row, s_col, e_row, e_col;
     if (!editor_get_selection(ed, &s_row, &s_col, &e_row, &e_col)) {
@@ -403,6 +493,7 @@ bool editor_delete_selection(Editor *ed, uint64_t group) {
     return true;
 }
 
+/** @brief Store text in internal clipboard and sync to host terminal via ANSI OSC 52. */
 static void set_clipboard(Editor *ed, const char *text, size_t len) {
     if (!ed) return;
     free(ed->clipboard);
@@ -442,6 +533,7 @@ static void set_clipboard(Editor *ed, const char *text, size_t len) {
     }
 }
 
+/** @brief Copy the active selection to the clipboard and clear the mark. */
 bool editor_copy(Editor *ed) {
     if (!ed) return false;
     editor_touch_key(ed);
@@ -461,6 +553,7 @@ bool editor_copy(Editor *ed) {
     return true;
 }
 
+/** @brief Copy the entire current line (with newline if not last line) to the clipboard. */
 bool editor_copy_line(Editor *ed) {
     if (!ed) return false;
     editor_touch_key(ed);
@@ -492,6 +585,7 @@ bool editor_copy_line(Editor *ed) {
     return true;
 }
 
+/** @brief Cut the active selection to the clipboard as an atomic undo group. */
 bool editor_cut(Editor *ed) {
     if (!ed) return false;
     editor_touch_key(ed);
@@ -513,6 +607,7 @@ bool editor_cut(Editor *ed) {
     return true;
 }
 
+/** @brief Cut the entire current line (with newline if not last line) to the clipboard. */
 bool editor_cut_line(Editor *ed) {
     if (!ed) return false;
     editor_touch_key(ed);
@@ -556,6 +651,7 @@ bool editor_cut_line(Editor *ed) {
     return true;
 }
 
+/** @brief Insert arbitrary (possibly multi-line) UTF-8 text at the cursor as one undo group. */
 bool editor_paste_text(Editor *ed, const char *text, size_t len) {
     if (!ed || !text || len == 0) return false;
     editor_touch_key(ed);
@@ -597,6 +693,7 @@ bool editor_paste_text(Editor *ed, const char *text, size_t len) {
     return true;
 }
 
+/** @brief Paste the internal clipboard contents at the current cursor position. */
 bool editor_paste(Editor *ed) {
     if (!ed) return false;
     editor_touch_key(ed);
@@ -612,6 +709,7 @@ bool editor_paste(Editor *ed) {
     return true;
 }
 
+/** @brief Kill text from cursor to end of line, or join with next line if already at EOL. */
 void editor_kill_to_end_of_line(Editor *ed) {
     if (!ed) return;
     editor_touch_key(ed);
@@ -638,6 +736,7 @@ void editor_kill_to_end_of_line(Editor *ed) {
     }
 }
 
+/** @brief Kill the word immediately preceding the cursor into the clipboard. */
 void editor_kill_prev_word(Editor *ed) {
     if (!ed) return;
     editor_touch_key(ed);
@@ -832,6 +931,7 @@ static void editor_auto_wrap_line(Editor *ed, uint64_t group) {
     }
 }
 
+/** @brief Insert or overwrite a UTF-8 character sequence, applying auto line wrap. */
 void editor_insert_char(Editor *ed, const char *utf8_seq, size_t len) {
     if (!ed || !utf8_seq || len == 0) return;
     editor_touch_key(ed);
@@ -872,6 +972,7 @@ void editor_insert_char(Editor *ed, const char *utf8_seq, size_t len) {
     ed->rendered_dirty = true;
 }
 
+/** @brief Delete the active selection or the UTF-8 character preceding the cursor. */
 void editor_backspace(Editor *ed) {
     if (!ed) return;
     editor_touch_key(ed);
@@ -886,6 +987,7 @@ void editor_backspace(Editor *ed) {
     }
 }
 
+/** @brief Delete the active selection or the UTF-8 character at the cursor. */
 void editor_delete(Editor *ed) {
     if (!ed) return;
     editor_touch_key(ed);
@@ -900,6 +1002,7 @@ void editor_delete(Editor *ed) {
     }
 }
 
+/** @brief Insert a newline with smart list/task continuation and indentation matching. */
 void editor_smart_enter(Editor *ed) {
     if (!ed) return;
     editor_touch_key(ed);
@@ -982,6 +1085,7 @@ void editor_smart_enter(Editor *ed) {
     ed->rendered_dirty = true;
 }
 
+/** @brief Indent the current line by two leading spaces. */
 void editor_indent(Editor *ed) {
     if (!ed) return;
     editor_touch_key(ed);
@@ -993,6 +1097,7 @@ void editor_indent(Editor *ed) {
     ed->rendered_dirty = true;
 }
 
+/** @brief Remove up to two leading spaces from the current line. */
 void editor_unindent(Editor *ed) {
     if (!ed) return;
     editor_touch_key(ed);
@@ -1010,6 +1115,7 @@ void editor_unindent(Editor *ed) {
     }
 }
 
+/** @brief Toggle between Insert mode (steady block) and Overwrite mode (steady underline). */
 void editor_toggle_insert_mode(Editor *ed) {
     if (!ed) return;
     ed->insert_mode = !ed->insert_mode;
@@ -1021,6 +1127,7 @@ void editor_toggle_insert_mode(Editor *ed) {
     }
 }
 
+/** @brief Validate and update the automatic line break column width (20-255 or 0=off). */
 bool editor_set_wrap_col(Editor *ed, int cols) {
     if (!ed) return false;
     if (cols != MDE_WRAP_COL_OFF && (cols < MDE_WRAP_COL_MIN || cols > MDE_WRAP_COL_MAX)) {
@@ -1036,6 +1143,7 @@ bool editor_set_wrap_col(Editor *ed, int cols) {
     return true;
 }
 
+/** @brief Parse a wrap width string ("20"-"255", "0", "off", "none") into out_cols. */
 bool editor_parse_wrap_col(const char *str, int *out_cols) {
     if (!str || !out_cols) return false;
 
@@ -1079,6 +1187,7 @@ bool editor_parse_wrap_col(const char *str, int *out_cols) {
     return false;
 }
 
+/** @brief Toggle a Markdown task checkbox (`- [ ]` <-> `- [x]`) or turn line into a task. */
 void editor_toggle_checkbox(Editor *ed) {
     if (!ed) return;
     editor_touch_key(ed);
@@ -1128,6 +1237,7 @@ void editor_toggle_checkbox(Editor *ed) {
     ed->rendered_dirty = true;
 }
 
+/** @brief Wrap the active single-line selection with marker, or insert paired markers. */
 void editor_wrap_format(Editor *ed, const char *marker) {
     if (!ed || !marker) return;
     editor_touch_key(ed);
@@ -1154,6 +1264,228 @@ void editor_wrap_format(Editor *ed, const char *marker) {
     ed->rendered_dirty = true;
 }
 
+/**
+ * @brief Inspect a line to determine if it can participate in paragraph reflow and extract its prefix.
+ */
+static bool is_reflowable_line(const char *line, size_t len, bool in_code_block,
+                               char *out_prefix, size_t prefix_cap, size_t *out_content_start) {
+    if (in_code_block || !line || len == 0) return false;
+
+    size_t indent = 0;
+    while (indent < len && (line[indent] == ' ' || line[indent] == '\t')) indent++;
+    if (indent >= len) return false; // Whitespace-only line
+
+    // Do not reflow headings, fences, hrules, tables, or list items
+    if (line[indent] == '#' || line[indent] == '|') return false;
+    if (indent + 3 <= len &&
+        ((line[indent] == '`' && line[indent + 1] == '`' && line[indent + 2] == '`') ||
+         (line[indent] == '~' && line[indent + 1] == '~' && line[indent + 2] == '~'))) {
+        return false;
+    }
+    if (md_is_hrule(line, len)) return false;
+    if (md_detect_list(line, len, NULL, NULL, 0, NULL, NULL)) return false;
+
+    size_t prefix_end = indent;
+    if (line[indent] == '>') {
+        size_t bq = indent;
+        while (bq < len && (line[bq] == '>' || line[bq] == ' ')) bq++;
+        if (bq >= len) return false; // Empty blockquote line separates paragraphs
+        prefix_end = bq;
+    }
+
+    if (out_prefix && prefix_cap > 0) {
+        size_t copy_len = prefix_end < prefix_cap - 1 ? prefix_end : prefix_cap - 1;
+        memcpy(out_prefix, line, copy_len);
+        out_prefix[copy_len] = '\0';
+    }
+    if (out_content_start) *out_content_start = prefix_end;
+    return true;
+}
+
+/** @brief Reflow the contiguous Markdown paragraph around cursor_row to ed->wrap_col. */
+bool editor_reflow_paragraph(Editor *ed) {
+    if (!ed) return false;
+    editor_touch_key(ed);
+
+    size_t total = buffer_line_count(&ed->buffer);
+    if (ed->cursor_row >= total) return false;
+
+    // Determine fenced code-block state up to cursor_row
+    bool in_code = false;
+    char lang[32] = {0};
+    for (size_t r = 0; r < ed->cursor_row; ++r) {
+        MdParsedLine tmp;
+        md_parse_line(buffer_line(&ed->buffer, r), buffer_line_len(&ed->buffer, r),
+                      &in_code, lang, sizeof(lang), &tmp);
+        md_parsed_line_free(&tmp);
+    }
+
+    char prefix[128] = {0};
+    size_t cur_content = 0;
+    if (!is_reflowable_line(buffer_line(&ed->buffer, ed->cursor_row),
+                            buffer_line_len(&ed->buffer, ed->cursor_row),
+                            in_code, prefix, sizeof(prefix), &cur_content)) {
+        editor_set_status(ed, "Cannot reflow this block");
+        return false;
+    }
+
+    // Expand upward while lines share the same prefix and are reflowable
+    size_t start_row = ed->cursor_row;
+    while (start_row > 0) {
+        char pbuf[128] = {0};
+        if (!is_reflowable_line(buffer_line(&ed->buffer, start_row - 1),
+                                buffer_line_len(&ed->buffer, start_row - 1),
+                                false, pbuf, sizeof(pbuf), NULL) ||
+            strcmp(pbuf, prefix) != 0) {
+            break;
+        }
+        start_row--;
+    }
+
+    // Expand downward while lines share the same prefix and are reflowable
+    size_t end_row = ed->cursor_row;
+    while (end_row + 1 < total) {
+        char pbuf[128] = {0};
+        if (!is_reflowable_line(buffer_line(&ed->buffer, end_row + 1),
+                                buffer_line_len(&ed->buffer, end_row + 1),
+                                false, pbuf, sizeof(pbuf), NULL) ||
+            strcmp(pbuf, prefix) != 0) {
+            break;
+        }
+        end_row++;
+    }
+
+    // Collect normalized space-separated words from [start_row..end_row]
+    size_t raw_cap = 256;
+    size_t raw_len = 0;
+    char *joined = (char *)malloc(raw_cap);
+    if (!joined) return false;
+    joined[0] = '\0';
+
+    size_t prefix_len = strlen(prefix);
+    for (size_t r = start_row; r <= end_row; ++r) {
+        const char *l = buffer_line(&ed->buffer, r);
+        size_t llen = buffer_line_len(&ed->buffer, r);
+        size_t pos = prefix_len;
+        while (pos < llen) {
+            while (pos < llen && (l[pos] == ' ' || l[pos] == '\t')) pos++;
+            if (pos >= llen) break;
+            size_t wstart = pos;
+            while (pos < llen && l[pos] != ' ' && l[pos] != '\t') pos++;
+            size_t wlen = pos - wstart;
+            size_t need = raw_len + (raw_len > 0 ? 1 : 0) + wlen + 1;
+            if (need > raw_cap) {
+                while (raw_cap < need) raw_cap *= 2;
+                char *nj = (char *)realloc(joined, raw_cap);
+                if (!nj) { free(joined); return false; }
+                joined = nj;
+            }
+            if (raw_len > 0) joined[raw_len++] = ' ';
+            memcpy(joined + raw_len, l + wstart, wlen);
+            raw_len += wlen;
+            joined[raw_len] = '\0';
+        }
+    }
+
+    if (raw_len == 0) {
+        free(joined);
+        return false;
+    }
+
+    int limit = ed->wrap_col > 0 ? ed->wrap_col : MDE_WRAP_COL_DEFAULT;
+    int prefix_vcol = utf8_visual_width(prefix, prefix_len);
+
+    // Build wrapped output lines array
+    size_t out_cap = 16, out_count = 0;
+    char **out_lines = (char **)malloc(out_cap * sizeof(char *));
+    if (!out_lines) { free(joined); return false; }
+
+    size_t idx = 0;
+    while (idx < raw_len) {
+        size_t line_cap = (size_t)limit * 4 + prefix_len + 64;
+        char *buf_line = (char *)malloc(line_cap);
+        if (!buf_line) break;
+
+        memcpy(buf_line, prefix, prefix_len);
+        size_t blen = prefix_len;
+        buf_line[blen] = '\0';
+        int cur_w = prefix_vcol;
+        bool first_word = true;
+
+        while (idx < raw_len) {
+            while (idx < raw_len && joined[idx] == ' ') idx++;
+            if (idx >= raw_len) break;
+            size_t wstart = idx;
+            while (idx < raw_len && joined[idx] != ' ') idx++;
+            size_t wlen = idx - wstart;
+            int ww = utf8_visual_width(joined + wstart, wlen);
+            int add_w = (first_word ? 0 : 1) + ww;
+
+            if (!first_word && cur_w + add_w > limit) {
+                idx = wstart; // Put word on next line
+                break;
+            }
+            size_t need = blen + (first_word ? 0 : 1) + wlen + 1;
+            if (need > line_cap) {
+                line_cap = need * 2;
+                char *nb = (char *)realloc(buf_line, line_cap);
+                if (!nb) break;
+                buf_line = nb;
+            }
+            if (!first_word) buf_line[blen++] = ' ';
+            memcpy(buf_line + blen, joined + wstart, wlen);
+            blen += wlen;
+            buf_line[blen] = '\0';
+            cur_w += add_w;
+            first_word = false;
+        }
+
+        if (out_count >= out_cap) {
+            out_cap *= 2;
+            char **nl = (char **)realloc(out_lines, out_cap * sizeof(char *));
+            if (!nl) { free(buf_line); break; }
+            out_lines = nl;
+        }
+        out_lines[out_count++] = buf_line;
+    }
+
+    free(joined);
+    if (out_count == 0) {
+        free(out_lines);
+        return false;
+    }
+
+    // Replace [start_row..end_row] atomically inside one undo group
+    size_t old_count = end_row - start_row + 1;
+    uint64_t group = buffer_next_group(&ed->buffer);
+
+    for (size_t r = end_row; r > start_row; --r) {
+        size_t rlen = buffer_line_len(&ed->buffer, r);
+        if (rlen > 0) buffer_delete_range(&ed->buffer, r, 0, rlen, group);
+        buffer_join_lines(&ed->buffer, r - 1, group);
+    }
+
+    buffer_replace_line(&ed->buffer, start_row, out_lines[0], strlen(out_lines[0]), group);
+    for (size_t i = 1; i < out_count; ++i) {
+        size_t prev_row = start_row + i - 1;
+        buffer_split_line(&ed->buffer, prev_row, buffer_line_len(&ed->buffer, prev_row), group);
+        buffer_insert_string(&ed->buffer, start_row + i, 0, out_lines[i], strlen(out_lines[i]), group);
+    }
+
+    for (size_t i = 0; i < out_count; ++i) free(out_lines[i]);
+    free(out_lines);
+
+    ed->cursor_row = start_row + out_count - 1;
+    ed->cursor_col = buffer_line_len(&ed->buffer, ed->cursor_row);
+    ed->target_visual_col = utf8_byte_to_col(buffer_line(&ed->buffer, ed->cursor_row), ed->cursor_col);
+    ed->mark_active = false;
+    ed->rendered_dirty = true;
+    editor_set_status(ed, "Reflowed paragraph (%zu -> %zu line%s)",
+                      old_count, out_count, out_count == 1 ? "" : "s");
+    return true;
+}
+
+/** @brief Undo the most recent atomic editing group and update cursor/scroll state. */
 void editor_undo(Editor *ed) {
     if (!ed) return;
     if (buffer_undo(&ed->buffer, &ed->cursor_row, &ed->cursor_col)) {
@@ -1166,6 +1498,7 @@ void editor_undo(Editor *ed) {
     }
 }
 
+/** @brief Redo the most recently undone atomic editing group and update cursor/scroll state. */
 void editor_redo(Editor *ed) {
     if (!ed) return;
     if (buffer_redo(&ed->buffer, &ed->cursor_row, &ed->cursor_col)) {
@@ -1178,6 +1511,12 @@ void editor_redo(Editor *ed) {
     }
 }
 
+/** @brief Return true if the current editor buffer has unsaved changes. */
+bool editor_has_unsaved_changes(const Editor *ed) {
+    return (ed && ed->buffer.is_dirty);
+}
+
+/** @brief Save the current buffer to opt_path (or existing file_path when NULL). */
 bool editor_save(Editor *ed, const char *opt_path) {
     if (!ed) return false;
     if (buffer_save(&ed->buffer, opt_path)) {
@@ -1189,6 +1528,7 @@ bool editor_save(Editor *ed, const char *opt_path) {
     }
 }
 
+/** @brief Load path from disk into the editor buffer and reset cursor, mark, and scroll state. */
 bool editor_open(Editor *ed, const char *path) {
     if (!ed || !path) return false;
     if (buffer_load(&ed->buffer, path)) {
@@ -1196,6 +1536,9 @@ bool editor_open(Editor *ed, const char *path) {
         ed->cursor_col = 0;
         ed->target_visual_col = 0;
         ed->scroll_row = 0;
+        ed->scroll_col = 0;
+        ed->mark_active = false;
+        ed->search_active = false;
         ed->rendered_dirty = true;
         editor_touch_key(ed);
         editor_set_status(ed, "Opened %s", path);
@@ -1210,6 +1553,7 @@ bool editor_open(Editor *ed, const char *path) {
  * Hypertext File Linking & Navigation
  * ========================================================================= */
 
+/** @brief Return true if url begins with an external URI scheme (http, https, mailto, etc.). */
 static bool is_external_url(const char *url) {
     if (!url || !url[0]) return false;
     if (strncmp(url, "http://", 7) == 0 ||
@@ -1277,6 +1621,7 @@ static void normalize_abs_path(const char *in_path, char *out_path, size_t out_c
     free(copy);
 }
 
+/** @brief Extract the parent directory of file_path (or CWD when untitled). */
 static void get_base_dir(const char *file_path, char *out_dir, size_t out_cap) {
     if (!out_dir || out_cap == 0) return;
     if (file_path && file_path[0]) {
@@ -1298,6 +1643,7 @@ static void get_base_dir(const char *file_path, char *out_dir, size_t out_cap) {
     }
 }
 
+/** @brief Compute a portable relative path from from_file's directory to to_file. */
 bool editor_make_relative_path(const char *from_file, const char *to_file,
                                char *out_rel, size_t out_cap) {
     if (!to_file || !to_file[0] || !out_rel || out_cap == 0) return false;
@@ -1355,6 +1701,7 @@ bool editor_make_relative_path(const char *from_file, const char *to_file,
     return true;
 }
 
+/** @brief Convert heading text into a lowercase hyphenated anchor slug. */
 static void make_heading_slug(const char *text, size_t len, char *out_slug, size_t cap) {
     if (!out_slug || cap == 0) return;
     size_t pos = 0;
@@ -1373,6 +1720,7 @@ static void make_heading_slug(const char *text, size_t len, char *out_slug, size
     out_slug[pos] = '\0';
 }
 
+/** @brief Scan the active buffer for a heading matching anchor slug and jump to it. */
 static bool jump_to_heading_anchor(Editor *ed, const char *anchor) {
     if (!ed || !anchor || !anchor[0]) return false;
 
@@ -1422,6 +1770,7 @@ static bool jump_to_heading_anchor(Editor *ed, const char *anchor) {
     return false;
 }
 
+/** @brief Extract the Markdown link URL and optional `#anchor` at the cursor or on the active line. */
 bool editor_extract_link_at_cursor(const Editor *ed,
                                    char *out_url, size_t url_cap,
                                    char *out_anchor, size_t anchor_cap) {
@@ -1545,6 +1894,7 @@ bool editor_extract_link_at_cursor(const Editor *ed,
     return true;
 }
 
+/** @brief Resolve a local relative or absolute link target against the active file's directory. */
 bool editor_resolve_link_path(const Editor *ed, const char *link_target,
                               char *out_path, size_t out_cap) {
     if (!ed || !link_target || !out_path || out_cap == 0) return false;
@@ -1576,6 +1926,7 @@ bool editor_resolve_link_path(const Editor *ed, const char *link_target,
     return true;
 }
 
+/** @brief Derive a default link label from target_path's first H1 heading or filename stem. */
 static void derive_link_label(const char *target_path, char *out_label, size_t cap) {
     if (!out_label || cap == 0) return;
     out_label[0] = '\0';
@@ -1623,6 +1974,7 @@ static void derive_link_label(const char *target_path, char *out_label, size_t c
     if (!out_label[0]) snprintf(out_label, cap, "link");
 }
 
+/** @brief Insert a relative Markdown hyperlink `[Label](relative/path)` at the cursor. */
 bool editor_insert_file_link(Editor *ed, const char *target_path) {
     if (!ed || !target_path || !target_path[0]) return false;
     editor_touch_key(ed);
@@ -1666,6 +2018,7 @@ bool editor_insert_file_link(Editor *ed, const char *target_path) {
     return true;
 }
 
+/** @brief Push the current file path and cursor position onto the link navigation history stack. */
 static void push_link_history(Editor *ed) {
     if (!ed || !ed->buffer.file_path || !ed->buffer.file_path[0]) return;
 
@@ -1684,6 +2037,43 @@ static void push_link_history(Editor *ed) {
     ed->link_history_count++;
 }
 
+/** @brief Return true if following the link at cursor will load a different local file. */
+bool editor_link_will_switch_file(const Editor *ed, char *out_resolved, size_t cap) {
+    if (out_resolved && cap > 0) out_resolved[0] = '\0';
+    if (!ed) return false;
+
+    char url[PATH_MAX] = {0};
+    char anchor[128] = {0};
+    if (!editor_extract_link_at_cursor(ed, url, sizeof(url), anchor, sizeof(anchor))) {
+        return false;
+    }
+
+    // Pure #anchor or external URL will not load another file
+    if (!url[0] || is_external_url(url)) {
+        return false;
+    }
+
+    char resolved[PATH_MAX];
+    if (!editor_resolve_link_path(ed, url, resolved, sizeof(resolved))) {
+        return false;
+    }
+
+    // Same-file link (with or without #anchor) does not switch files
+    if (ed->buffer.file_path && ed->buffer.file_path[0]) {
+        char cur_norm[PATH_MAX];
+        normalize_abs_path(ed->buffer.file_path, cur_norm, sizeof(cur_norm));
+        if (strcmp(cur_norm, resolved) == 0) {
+            return false;
+        }
+    }
+
+    if (out_resolved && cap > 0) {
+        snprintf(out_resolved, cap, "%s", resolved);
+    }
+    return true;
+}
+
+/** @brief Follow a local Markdown file link or `#heading` anchor under the cursor. */
 bool editor_follow_link(Editor *ed) {
     if (!ed) return false;
     editor_touch_key(ed);
@@ -1767,6 +2157,7 @@ bool editor_follow_link(Editor *ed) {
     return true;
 }
 
+/** @brief Pop link history, reload the previous file, and restore saved cursor coordinates. */
 bool editor_navigate_back(Editor *ed) {
     if (!ed) return false;
     editor_touch_key(ed);
@@ -1801,22 +2192,26 @@ bool editor_navigate_back(Editor *ed) {
     return true;
 }
 
+/** @brief Return the current monotonic clock time in milliseconds. */
 uint64_t editor_get_time_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000 + (uint64_t)(ts.tv_nsec / 1000000);
 }
 
+/** @brief Update ed->last_key_time to the current monotonic timestamp. */
 void editor_touch_key(Editor *ed) {
     if (!ed) return;
     ed->last_key_time = editor_get_time_ms();
 }
 
+/** @brief Return true when the cursor should be shown (always true for steady cursor). */
 bool editor_cursor_is_visible(const Editor *ed) {
     (void)ed;
     return true; // Steady, non-flashing cursor
 }
 
+/** @brief Portable case-insensitive substring search (C11 equivalent of strcasestr). */
 static char *strcasestr_custom(const char *haystack, const char *needle) {
     if (!haystack || !needle) return NULL;
     if (!*needle) return (char*)haystack;
@@ -1834,6 +2229,7 @@ static char *strcasestr_custom(const char *haystack, const char *needle) {
     return NULL;
 }
 
+/** @brief Search forward or backward (case-insensitive, wrap-around) and jump to the match. */
 bool editor_search_find_next(Editor *ed, const char *query, bool forward) {
     if (!ed || !query || !*query) return false;
 
@@ -1912,6 +2308,111 @@ bool editor_search_find_next(Editor *ed, const char *query, bool forward) {
     return false;
 }
 
+/** @brief Search forward (case-insensitive) starting strictly at (from_row, from_col). */
+bool editor_search_find_from(Editor *ed, const char *query,
+                             size_t from_row, size_t from_col, bool wrap) {
+    if (!ed || !query || !*query) return false;
+
+    strncpy(ed->search_query, query, sizeof(ed->search_query) - 1);
+    ed->search_query[sizeof(ed->search_query) - 1] = '\0';
+    size_t qlen = strlen(query);
+    size_t total_lines = buffer_line_count(&ed->buffer);
+    if (total_lines == 0) return false;
+    if (from_row >= total_lines) {
+        if (!wrap) return false;
+        from_row = 0;
+        from_col = 0;
+    }
+
+    size_t max_steps = wrap ? (total_lines + 1) : (total_lines - from_row);
+    for (size_t step = 0; step < max_steps; ++step) {
+        size_t r = (from_row + step) % total_lines;
+        const char *line = buffer_line(&ed->buffer, r);
+        size_t line_len = strlen(line);
+        const char *search_from = line;
+        if (step == 0) {
+            if (from_col <= line_len) {
+                search_from = line + from_col;
+            } else {
+                continue;
+            }
+        }
+        char *found = strcasestr_custom(search_from, query);
+        if (found && (!wrap || step < total_lines || (size_t)(found - line) < from_col)) {
+            ed->search_active = true;
+            ed->cursor_row = r;
+            ed->cursor_col = (size_t)(found - line);
+            ed->target_visual_col = utf8_byte_to_col(line, ed->cursor_col);
+            ed->search_match_row = r;
+            ed->search_match_col = ed->cursor_col;
+            ed->search_match_len = qlen;
+            return true;
+        }
+    }
+
+    ed->search_active = false;
+    return false;
+}
+
+/** @brief Replace the currently highlighted search match with replacement text. */
+bool editor_replace_current_match(Editor *ed, const char *replacement, uint64_t group) {
+    if (!ed || !replacement || !ed->search_active || ed->search_match_len == 0) return false;
+    if (ed->search_match_row >= buffer_line_count(&ed->buffer)) return false;
+
+    size_t row = ed->search_match_row;
+    size_t col = ed->search_match_col;
+    size_t mlen = ed->search_match_len;
+    size_t line_len = buffer_line_len(&ed->buffer, row);
+    if (col + mlen > line_len) return false;
+
+    if (group == 0) {
+        group = buffer_next_group(&ed->buffer);
+    }
+
+    size_t rlen = strlen(replacement);
+    buffer_delete_range(&ed->buffer, row, col, mlen, group);
+    if (rlen > 0) {
+        buffer_insert_string(&ed->buffer, row, col, replacement, rlen, group);
+    }
+
+    ed->cursor_row = row;
+    ed->cursor_col = col + rlen;
+    ed->target_visual_col = utf8_byte_to_col(buffer_line(&ed->buffer, row), ed->cursor_col);
+    ed->mark_active = false;
+    ed->rendered_dirty = true;
+    return true;
+}
+
+/** @brief Replace all case-insensitive occurrences of query with replacement as one undo group. */
+size_t editor_replace_all(Editor *ed, const char *query, const char *replacement) {
+    if (!ed || !query || !*query || !replacement) return 0;
+    editor_touch_key(ed);
+
+    uint64_t group = buffer_next_group(&ed->buffer);
+    size_t count = 0;
+    size_t row = 0;
+    size_t col = 0;
+    size_t rlen = strlen(replacement);
+
+    while (editor_search_find_from(ed, query, row, col, false)) {
+        size_t mrow = ed->search_match_row;
+        size_t mcol = ed->search_match_col;
+        if (!editor_replace_current_match(ed, replacement, group)) break;
+        count++;
+        row = mrow;
+        col = mcol + rlen;
+    }
+
+    ed->search_active = false;
+    if (count > 0) {
+        editor_set_status(ed, "Replaced %zu occurrence%s", count, count == 1 ? "" : "s");
+    } else {
+        editor_set_status(ed, "Search: '%s' not found", query);
+    }
+    return count;
+}
+
+/** @brief Clamp and synchronize editor vertical/horizontal scroll and preview scroll offsets. */
 void editor_update_scroll(Editor *ed, int view_rows) {
     if (!ed || view_rows <= 0) return;
 

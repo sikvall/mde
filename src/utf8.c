@@ -11,6 +11,9 @@
 #include <string.h>
 #include <stdlib.h>
 
+/**
+ * @brief Determine the byte length of a UTF-8 sequence from its leading byte.
+ */
 size_t utf8_char_len(unsigned char c) {
     if ((c & 0x80) == 0) return 1;       // 0xxxxxxx: 1-byte ASCII
     if ((c & 0xE0) == 0xC0) return 2;   // 110xxxxx: 2-byte sequence
@@ -19,6 +22,9 @@ size_t utf8_char_len(unsigned char c) {
     return 1; // Fallback for invalid or continuation byte
 }
 
+/**
+ * @brief Compute the terminal display width of a byte slice [byte_start, byte_end).
+ */
 int utf8_visual_width_range(const char *str, size_t byte_start, size_t byte_end) {
     if (!str || byte_start >= byte_end) return 0;
 
@@ -52,14 +58,23 @@ int utf8_visual_width_range(const char *str, size_t byte_start, size_t byte_end)
     return total_width;
 }
 
+/**
+ * @brief Compute the terminal display width of a UTF-8 string of byte_len bytes.
+ */
 int utf8_visual_width(const char *str, size_t byte_len) {
     return utf8_visual_width_range(str, 0, byte_len);
 }
 
+/**
+ * @brief Convert a byte offset within str to its 0-indexed visual screen column.
+ */
 int utf8_byte_to_col(const char *str, size_t byte_offset) {
     return utf8_visual_width_range(str, 0, byte_offset);
 }
 
+/**
+ * @brief Convert a 0-indexed visual screen column to the closest UTF-8 byte offset.
+ */
 size_t utf8_col_to_byte(const char *str, int target_col) {
     if (!str || target_col <= 0) return 0;
 
@@ -101,6 +116,9 @@ size_t utf8_col_to_byte(const char *str, int target_col) {
     return str_len;
 }
 
+/**
+ * @brief Step backward from byte_offset to the previous UTF-8 character boundary.
+ */
 size_t utf8_prev_char(const char *str, size_t byte_offset) {
     if (!str || byte_offset == 0) return 0;
     size_t i = byte_offset - 1;
@@ -111,6 +129,9 @@ size_t utf8_prev_char(const char *str, size_t byte_offset) {
     return i;
 }
 
+/**
+ * @brief Step forward from byte_offset to the next UTF-8 character boundary.
+ */
 size_t utf8_next_char(const char *str, size_t byte_offset, size_t max_len) {
     if (!str || byte_offset >= max_len) return max_len;
     size_t len = utf8_char_len((unsigned char)str[byte_offset]);
@@ -118,6 +139,9 @@ size_t utf8_next_char(const char *str, size_t byte_offset, size_t max_len) {
     return (next > max_len) ? max_len : next;
 }
 
+/**
+ * @brief Count the number of Unicode codepoints encoded in str[0..byte_len).
+ */
 size_t utf8_codepoint_count(const char *str, size_t byte_len) {
     if (!str) return 0;
     size_t count = 0;
@@ -129,6 +153,9 @@ size_t utf8_codepoint_count(const char *str, size_t byte_len) {
     return count;
 }
 
+/**
+ * @brief Return true if byte_offset lies on a valid UTF-8 codepoint boundary.
+ */
 bool utf8_is_boundary(const char *str, size_t byte_offset, size_t max_len) {
     if (!str || byte_offset > max_len) return false;
     if (byte_offset == 0 || byte_offset == max_len) return true;
