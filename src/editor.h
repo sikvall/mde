@@ -38,7 +38,7 @@ typedef struct {
     bool rendered_dirty;         /**< Dirty flag indicating preview needs refresh */
 
     ViewMode view_mode;          /**< Current active view mode */
-    bool insert_mode;            /**< Insert mode active (true) vs Overwrite mode (false) */
+    bool insert_mode;            /**< Insert mode active (true, default) vs Overwrite mode (false) */
 
     // Cursor position in buffer
     size_t cursor_row;           /**< 0-indexed line index */
@@ -55,6 +55,15 @@ typedef struct {
     int screen_cols;             /**< Total terminal screen columns */
     int editor_width;            /**< Width of editor pane in columns */
     int preview_width;           /**< Width of preview pane in columns */
+
+    // Selection / Mark state
+    bool mark_active;            /**< Flag indicating if selection mark is active */
+    size_t mark_row;             /**< Selection anchor line index */
+    size_t mark_col;             /**< Selection anchor byte offset */
+
+    // Clipboard
+    char *clipboard;             /**< Heap-allocated text clipboard */
+    size_t clipboard_len;        /**< Byte length of clipboard contents */
 
     // Search state
     char search_query[128];      /**< Current search query string */
@@ -116,6 +125,25 @@ void editor_delete(Editor *ed);
 void editor_smart_enter(Editor *ed);
 void editor_indent(Editor *ed);
 void editor_unindent(Editor *ed);
+
+// Selection & Mark operations
+void editor_set_mark(Editor *ed);
+void editor_clear_mark(Editor *ed);
+bool editor_has_selection(const Editor *ed);
+bool editor_get_selection(const Editor *ed, size_t *start_row, size_t *start_col,
+                          size_t *end_row, size_t *end_col);
+char *editor_get_selected_text(const Editor *ed, size_t *out_len);
+bool editor_delete_selection(Editor *ed, uint64_t group);
+
+// Clipboard & Cut / Copy / Paste
+bool editor_copy(Editor *ed);
+bool editor_cut(Editor *ed);
+bool editor_paste(Editor *ed);
+bool editor_paste_text(Editor *ed, const char *text, size_t len);
+
+// Line & Word Killing
+void editor_kill_to_end_of_line(Editor *ed);
+void editor_kill_prev_word(Editor *ed);
 
 // Markdown helpers
 void editor_toggle_insert_mode(Editor *ed);

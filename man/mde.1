@@ -1,4 +1,4 @@
-.TH MDE 1 "November 2026" "mde 1.0.0" "User Commands"
+.TH MDE 1 "November 2026" "mde 0.1.0" "User Commands"
 .SH NAME
 mde \- full-screen text-mode Markdown editor
 .SH SYNOPSIS
@@ -8,7 +8,8 @@ mde \- full-screen text-mode Markdown editor
 .B mde
 is a specialized terminal text editor designed for editing and reading Markdown documents.
 It supports real-time dual-pane split preview, in-place rich formatting, an active line
-column ruler, task checkboxes, smart list continuation, and multi-level undo/redo.
+column ruler, persistent bottom shortcut key hint rows, interactive directory and file dialogue,
+task checkboxes, smart list continuation, and multi-level undo/redo.
 .SH OPTIONS
 .TP
 .BR \-h ", " \-\-help
@@ -22,7 +23,10 @@ Print program version and build date.
 Save current file. Prompts for a file name if untitled.
 .TP
 .B Ctrl+O
-Open a file dialog.
+Open interactive file dialogue to browse directories and open a Markdown file.
+.TP
+.B Ctrl+W
+Save As interactive file dialogue to browse directories and select or type destination file name.
 .TP
 .B Ctrl+Q
 Quit mde. Prompts to save if unsaved changes exist.
@@ -33,11 +37,32 @@ Cycle view modes: Split View, In-Place Rich View, Fullscreen Rendered View. All 
 .B Ctrl+T
 Toggle checkbox (\- [ ] <-> \- [x]) on the active line.
 .TP
-.B Ctrl+B
-Insert bold formatting markers (**).
+.B Ctrl+Space
+Set selection mark anchor. Move cursor with arrow keys, Ctrl+A, or Ctrl+E to extend the visual selection highlight.
+.TP
+.B Ctrl+X
+Cut active selection to the clipboard (synced via OSC 52 to terminal/system clipboard).
+.TP
+.B Ctrl+C
+Copy active selection to the clipboard (synced via OSC 52).
+.TP
+.B Ctrl+V
+Paste text from the clipboard at current cursor position.
 .TP
 .B Ctrl+K
-Insert inline code formatting markers (`).
+Kill text from cursor to end of line, or join with next line if already at end of line.
+.TP
+.BR Ctrl+A " / " Home
+Jump to beginning of current line.
+.TP
+.BR Ctrl+E " / " End
+Jump to end of current line.
+.TP
+.BR Esc " / " Ctrl+G
+Clear active selection mark.
+.TP
+.B Ctrl+B
+Insert bold formatting markers (**) or wrap active selection.
 .TP
 .BR Ctrl+Z " / " Ctrl+Y
 Undo and Redo changes.
@@ -55,7 +80,7 @@ Smart list auto-continuation. Hitting Enter on an empty list bullet cancels the 
 Indent or unindent line by 2 spaces.
 .TP
 .B Ins
-Toggle between Insert mode (steady underscore cursor) and Normal mode (steady block cursor). Cursor does not flash.
+Toggle between Insert mode (steady block cursor) and Overwrite mode (steady underscore cursor). Cursor does not flash.
 .SH AUTHORS
 Written by Anders.
 .SH COPYRIGHT

@@ -21,7 +21,7 @@ void editor_init(Editor *ed, const char *filename) {
     rendered_doc_init(&ed->rendered_doc);
 
     ed->view_mode = VIEW_SPLIT; // Default to dual-pane split view
-    ed->insert_mode = false;    // Default to Overwrite (block cursor), press Ins for Insert
+    ed->insert_mode = true;     // Default to Insert mode (steady block cursor), press Ins for Overwrite
     ed->rendered_dirty = true;
     ed->cursor_row = 0;
     ed->cursor_col = 0;
@@ -31,6 +31,11 @@ void editor_init(Editor *ed, const char *filename) {
     ed->preview_scroll_row = 0;
     ed->quit_requested = false;
     ed->search_active = false;
+    ed->mark_active = false;
+    ed->mark_row = 0;
+    ed->mark_col = 0;
+    ed->clipboard = NULL;
+    ed->clipboard_len = 0;
     editor_touch_key(ed);
 
     if (filename && filename[0]) {
@@ -50,6 +55,9 @@ void editor_free(Editor *ed) {
     if (!ed) return;
     buffer_free(&ed->buffer);
     rendered_doc_free(&ed->rendered_doc);
+    free(ed->clipboard);
+    ed->clipboard = NULL;
+    ed->clipboard_len = 0;
 }
 
 void editor_set_status(Editor *ed, const char *fmt, ...) {
@@ -132,12 +140,14 @@ void editor_move_down(Editor *ed) {
 
 void editor_move_home(Editor *ed) {
     if (!ed) return;
+    editor_touch_key(ed);
     ed->cursor_col = 0;
     ed->target_visual_col = 0;
 }
 
 void editor_move_end(Editor *ed) {
     if (!ed) return;
+    editor_touch_key(ed);
     ed->cursor_col = buffer_line_len(&ed->buffer, ed->cursor_row);
     const char *line = buffer_line(&ed->buffer, ed->cursor_row);
     ed->target_visual_col = utf8_byte_to_col(line, ed->cursor_col);
@@ -162,9 +172,395 @@ void editor_move_page_down(Editor *ed) {
     ed->cursor_col = utf8_col_to_byte(line, ed->target_visual_col);
 }
 
+void editor_set_mark(Editor *ed) {
+    if (!ed) return;
+    editor_touch_key(ed);
+    ed->mark_active = true;
+    ed->mark_row = ed->cursor_row;
+    ed->mark_col = ed->cursor_col;
+    editor_set_status(ed, "Mark set");
+}
+
+void editor_clear_mark(Editor *ed) {
+    if (!ed) return;
+    editor_touch_key(ed);
+    ed->mark_active = false;
+    editor_set_status(ed, "Mark cleared");
+}
+
+bool editor_has_selection(const Editor *ed) {
+    if (!ed || !ed->mark_active) return false;
+    return (ed->mark_row != ed->cursor_row || ed->mark_col != ed->cursor_col);
+}
+
+bool editor_get_selection(const Editor *ed, size_t *start_row, size_t *start_col,
+                          size_t *end_row, size_t *end_col) {
+    if (!ed || !ed->mark_active) return false;
+    if (ed->mark_row == ed->cursor_row && ed->mark_col == ed->cursor_col) return false;
+
+    if (ed->mark_row < ed->cursor_row ||
+        (ed->mark_row == ed->cursor_row && ed->mark_col < ed->cursor_col)) {
+        if (start_row) *start_row = ed->mark_row;
+        if (start_col) *start_col = ed->mark_col;
+        if (end_row) *end_row = ed->cursor_row;
+        if (end_col) *end_col = ed->cursor_col;
+    } else {
+        if (start_row) *start_row = ed->cursor_row;
+        if (start_col) *start_col = ed->cursor_col;
+        if (end_row) *end_row = ed->mark_row;
+        if (end_col) *end_col = ed->mark_col;
+    }
+    return true;
+}
+
+char *editor_get_selected_text(const Editor *ed, size_t *out_len) {
+    size_t s_row, s_col, e_row, e_col;
+    if (!editor_get_selection(ed, &s_row, &s_col, &e_row, &e_col)) {
+        if (out_len) *out_len = 0;
+        return NULL;
+    }
+
+    size_t s_line_len = buffer_line_len(&ed->buffer, s_row);
+    if (s_col > s_line_len) s_col = s_line_len;
+    size_t e_line_len = buffer_line_len(&ed->buffer, e_row);
+    if (e_col > e_line_len) e_col = e_line_len;
+
+    size_t total_len = 0;
+    if (s_row == e_row) {
+        total_len = (e_col > s_col) ? (e_col - s_col) : 0;
+    } else {
+        total_len += (s_line_len > s_col ? s_line_len - s_col : 0) + 1; // +1 for '\n'
+        for (size_t r = s_row + 1; r < e_row; ++r) {
+            total_len += buffer_line_len(&ed->buffer, r) + 1; // +1 for '\n'
+        }
+        total_len += e_col;
+    }
+
+    char *buf = (char *)malloc(total_len + 1);
+    if (!buf) {
+        if (out_len) *out_len = 0;
+        return NULL;
+    }
+
+    size_t offset = 0;
+    if (s_row == e_row) {
+        const char *l = buffer_line(&ed->buffer, s_row);
+        if (e_col > s_col) {
+            memcpy(buf + offset, l + s_col, e_col - s_col);
+            offset += (e_col - s_col);
+        }
+    } else {
+        const char *l0 = buffer_line(&ed->buffer, s_row);
+        if (s_line_len > s_col) {
+            memcpy(buf + offset, l0 + s_col, s_line_len - s_col);
+            offset += (s_line_len - s_col);
+        }
+        buf[offset++] = '\n';
+
+        for (size_t r = s_row + 1; r < e_row; ++r) {
+            const char *lr = buffer_line(&ed->buffer, r);
+            size_t lr_len = buffer_line_len(&ed->buffer, r);
+            if (lr_len > 0) {
+                memcpy(buf + offset, lr, lr_len);
+                offset += lr_len;
+            }
+            buf[offset++] = '\n';
+        }
+
+        const char *le = buffer_line(&ed->buffer, e_row);
+        if (e_col > 0) {
+            memcpy(buf + offset, le, e_col);
+            offset += e_col;
+        }
+    }
+
+    buf[offset] = '\0';
+    if (out_len) *out_len = offset;
+    return buf;
+}
+
+bool editor_delete_selection(Editor *ed, uint64_t group) {
+    size_t s_row, s_col, e_row, e_col;
+    if (!editor_get_selection(ed, &s_row, &s_col, &e_row, &e_col)) {
+        return false;
+    }
+
+    if (group == 0) {
+        group = buffer_next_group(&ed->buffer);
+    }
+
+    size_t s_line_len = buffer_line_len(&ed->buffer, s_row);
+    if (s_col > s_line_len) s_col = s_line_len;
+    size_t e_line_len = buffer_line_len(&ed->buffer, e_row);
+    if (e_col > e_line_len) e_col = e_line_len;
+
+    if (s_row == e_row) {
+        if (e_col > s_col) {
+            buffer_delete_range(&ed->buffer, s_row, s_col, e_col - s_col, group);
+        }
+    } else {
+        // Step 1: On e_row, delete range [0, e_col)
+        if (e_col > 0) {
+            buffer_delete_range(&ed->buffer, e_row, 0, e_col, group);
+        }
+        // Step 2: On intermediate lines from e_row - 1 down to s_row + 1:
+        // delete entire line content, then join with line below
+        for (size_t r = e_row - 1; r > s_row; --r) {
+            size_t r_len = buffer_line_len(&ed->buffer, r);
+            if (r_len > 0) {
+                buffer_delete_range(&ed->buffer, r, 0, r_len, group);
+            }
+            buffer_join_lines(&ed->buffer, r, group);
+        }
+        // Step 3: On s_row, delete from s_col to end of line
+        size_t cur_s_len = buffer_line_len(&ed->buffer, s_row);
+        if (cur_s_len > s_col) {
+            buffer_delete_range(&ed->buffer, s_row, s_col, cur_s_len - s_col, group);
+        }
+        // Step 4: Join s_row with next line (which is now what remains of e_row)
+        buffer_join_lines(&ed->buffer, s_row, group);
+    }
+
+    ed->cursor_row = s_row;
+    ed->cursor_col = s_col;
+    const char *line = buffer_line(&ed->buffer, ed->cursor_row);
+    ed->target_visual_col = utf8_byte_to_col(line, ed->cursor_col);
+    ed->mark_active = false;
+    ed->rendered_dirty = true;
+    return true;
+}
+
+static void set_clipboard(Editor *ed, const char *text, size_t len) {
+    if (!ed) return;
+    free(ed->clipboard);
+    ed->clipboard = NULL;
+    ed->clipboard_len = 0;
+
+    if (text && len > 0) {
+        ed->clipboard = (char *)malloc(len + 1);
+        if (ed->clipboard) {
+            memcpy(ed->clipboard, text, len);
+            ed->clipboard[len] = '\0';
+            ed->clipboard_len = len;
+        }
+
+        // Emit OSC 52 escape sequence so host terminal / OS clipboard receives the text
+        static const char b64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        size_t b64_len = 4 * ((len + 2) / 3);
+        char *b64 = (char *)malloc(b64_len + 1);
+        if (b64) {
+            size_t j = 0;
+            for (size_t i = 0; i < len; i += 3) {
+                uint32_t octet_a = (unsigned char)text[i];
+                uint32_t octet_b = (i + 1 < len) ? (unsigned char)text[i + 1] : 0;
+                uint32_t octet_c = (i + 2 < len) ? (unsigned char)text[i + 2] : 0;
+                uint32_t triple = (octet_a << 16) | (octet_b << 8) | octet_c;
+
+                b64[j++] = b64_table[(triple >> 18) & 0x3F];
+                b64[j++] = b64_table[(triple >> 12) & 0x3F];
+                b64[j++] = (i + 1 < len) ? b64_table[(triple >> 6) & 0x3F] : '=';
+                b64[j++] = (i + 2 < len) ? b64_table[triple & 0x3F] : '=';
+            }
+            b64[j] = '\0';
+            fprintf(stdout, "\033]52;c;%s\007", b64);
+            fflush(stdout);
+            free(b64);
+        }
+    }
+}
+
+bool editor_copy(Editor *ed) {
+    if (!ed) return false;
+    editor_touch_key(ed);
+
+    size_t len = 0;
+    char *text = editor_get_selected_text(ed, &len);
+    if (!text || len == 0) {
+        free(text);
+        editor_set_status(ed, "No selection to copy");
+        return false;
+    }
+
+    set_clipboard(ed, text, len);
+    free(text);
+    ed->mark_active = false;
+    editor_set_status(ed, "Copied %zu character%s", len, len == 1 ? "" : "s");
+    return true;
+}
+
+bool editor_cut(Editor *ed) {
+    if (!ed) return false;
+    editor_touch_key(ed);
+
+    size_t len = 0;
+    char *text = editor_get_selected_text(ed, &len);
+    if (!text || len == 0) {
+        free(text);
+        editor_set_status(ed, "No selection to cut");
+        return false;
+    }
+
+    set_clipboard(ed, text, len);
+    free(text);
+
+    uint64_t group = buffer_next_group(&ed->buffer);
+    editor_delete_selection(ed, group);
+    editor_set_status(ed, "Cut %zu character%s", len, len == 1 ? "" : "s");
+    return true;
+}
+
+bool editor_paste_text(Editor *ed, const char *text, size_t len) {
+    if (!ed || !text || len == 0) return false;
+    editor_touch_key(ed);
+
+    uint64_t group = buffer_next_group(&ed->buffer);
+
+    if (editor_get_selection(ed, NULL, NULL, NULL, NULL)) {
+        editor_delete_selection(ed, group);
+    }
+
+    size_t pos = 0;
+    while (pos < len) {
+        const char *nl = (const char *)memchr(text + pos, '\n', len - pos);
+        if (nl) {
+            size_t seg_len = (size_t)(nl - (text + pos));
+            if (seg_len > 0) {
+                buffer_insert_string(&ed->buffer, ed->cursor_row, ed->cursor_col,
+                                     text + pos, seg_len, group);
+                ed->cursor_col += seg_len;
+            }
+            buffer_split_line(&ed->buffer, ed->cursor_row, ed->cursor_col, group);
+            ed->cursor_row++;
+            ed->cursor_col = 0;
+            pos += seg_len + 1; // +1 to skip '\n'
+        } else {
+            size_t seg_len = len - pos;
+            if (seg_len > 0) {
+                buffer_insert_string(&ed->buffer, ed->cursor_row, ed->cursor_col,
+                                     text + pos, seg_len, group);
+                ed->cursor_col += seg_len;
+            }
+            pos += seg_len;
+        }
+    }
+
+    const char *cur_l = buffer_line(&ed->buffer, ed->cursor_row);
+    ed->target_visual_col = utf8_byte_to_col(cur_l, ed->cursor_col);
+    ed->rendered_dirty = true;
+    return true;
+}
+
+bool editor_paste(Editor *ed) {
+    if (!ed) return false;
+    editor_touch_key(ed);
+
+    if (!ed->clipboard || ed->clipboard_len == 0) {
+        editor_set_status(ed, "Clipboard is empty");
+        return false;
+    }
+
+    size_t len = ed->clipboard_len;
+    editor_paste_text(ed, ed->clipboard, len);
+    editor_set_status(ed, "Pasted %zu character%s", len, len == 1 ? "" : "s");
+    return true;
+}
+
+void editor_kill_to_end_of_line(Editor *ed) {
+    if (!ed) return;
+    editor_touch_key(ed);
+
+    size_t line_len = buffer_line_len(&ed->buffer, ed->cursor_row);
+
+    if (ed->cursor_col < line_len) {
+        size_t kill_len = line_len - ed->cursor_col;
+        const char *line = buffer_line(&ed->buffer, ed->cursor_row);
+        set_clipboard(ed, line + ed->cursor_col, kill_len);
+
+        uint64_t group = buffer_next_group(&ed->buffer);
+        buffer_delete_range(&ed->buffer, ed->cursor_row, ed->cursor_col, kill_len, group);
+        ed->rendered_dirty = true;
+        ed->mark_active = false;
+        editor_set_status(ed, "Killed %zu character%s", kill_len, kill_len == 1 ? "" : "s");
+    } else if (ed->cursor_row + 1 < buffer_line_count(&ed->buffer)) {
+        set_clipboard(ed, "\n", 1);
+        uint64_t group = buffer_next_group(&ed->buffer);
+        buffer_join_lines(&ed->buffer, ed->cursor_row, group);
+        ed->rendered_dirty = true;
+        ed->mark_active = false;
+        editor_set_status(ed, "Killed newline");
+    }
+}
+
+void editor_kill_prev_word(Editor *ed) {
+    if (!ed) return;
+    editor_touch_key(ed);
+
+    if (ed->cursor_col == 0) {
+        if (ed->cursor_row > 0) {
+            ed->cursor_row--;
+            ed->cursor_col = buffer_line_len(&ed->buffer, ed->cursor_row);
+            uint64_t group = buffer_next_group(&ed->buffer);
+            buffer_join_lines(&ed->buffer, ed->cursor_row, group);
+            set_clipboard(ed, "\n", 1);
+            const char *l = buffer_line(&ed->buffer, ed->cursor_row);
+            ed->target_visual_col = utf8_byte_to_col(l, ed->cursor_col);
+            ed->rendered_dirty = true;
+            ed->mark_active = false;
+            editor_set_status(ed, "Killed newline");
+        }
+        return;
+    }
+
+    const char *line = buffer_line(&ed->buffer, ed->cursor_row);
+    size_t pos = ed->cursor_col;
+
+    // 1. Skip whitespace backwards
+    while (pos > 0 && isspace((unsigned char)line[pos - 1])) {
+        pos--;
+    }
+
+    // 2. Skip word characters backwards
+    if (pos > 0) {
+        if (isalnum((unsigned char)line[pos - 1]) || line[pos - 1] == '_') {
+            while (pos > 0 && (isalnum((unsigned char)line[pos - 1]) || line[pos - 1] == '_')) {
+                pos--;
+            }
+        } else {
+            while (pos > 0 && !isalnum((unsigned char)line[pos - 1]) && !isspace((unsigned char)line[pos - 1]) && line[pos - 1] != '_') {
+                pos--;
+            }
+        }
+    }
+
+    if (pos < ed->cursor_col) {
+        size_t kill_len = ed->cursor_col - pos;
+        set_clipboard(ed, line + pos, kill_len);
+
+        uint64_t group = buffer_next_group(&ed->buffer);
+        buffer_delete_range(&ed->buffer, ed->cursor_row, pos, kill_len, group);
+        ed->cursor_col = pos;
+        const char *l = buffer_line(&ed->buffer, ed->cursor_row);
+        ed->target_visual_col = utf8_byte_to_col(l, ed->cursor_col);
+        ed->rendered_dirty = true;
+        ed->mark_active = false;
+        editor_set_status(ed, "Killed %zu character%s", kill_len, kill_len == 1 ? "" : "s");
+    }
+}
+
 void editor_insert_char(Editor *ed, const char *utf8_seq, size_t len) {
     if (!ed || !utf8_seq || len == 0) return;
     editor_touch_key(ed);
+
+    if (editor_get_selection(ed, NULL, NULL, NULL, NULL)) {
+        uint64_t group = buffer_next_group(&ed->buffer);
+        editor_delete_selection(ed, group);
+        buffer_insert_string(&ed->buffer, ed->cursor_row, ed->cursor_col, utf8_seq, len, group);
+        ed->cursor_col += len;
+        const char *line = buffer_line(&ed->buffer, ed->cursor_row);
+        ed->target_visual_col = utf8_byte_to_col(line, ed->cursor_col);
+        ed->rendered_dirty = true;
+        return;
+    }
 
     size_t line_len = buffer_line_len(&ed->buffer, ed->cursor_row);
 
@@ -190,6 +586,10 @@ void editor_insert_char(Editor *ed, const char *utf8_seq, size_t len) {
 void editor_backspace(Editor *ed) {
     if (!ed) return;
     editor_touch_key(ed);
+    if (editor_get_selection(ed, NULL, NULL, NULL, NULL)) {
+        editor_delete_selection(ed, 0);
+        return;
+    }
     if (buffer_backspace(&ed->buffer, &ed->cursor_row, &ed->cursor_col, ed->buffer.current_group_id)) {
         const char *line = buffer_line(&ed->buffer, ed->cursor_row);
         ed->target_visual_col = utf8_byte_to_col(line, ed->cursor_col);
@@ -200,6 +600,10 @@ void editor_backspace(Editor *ed) {
 void editor_delete(Editor *ed) {
     if (!ed) return;
     editor_touch_key(ed);
+    if (editor_get_selection(ed, NULL, NULL, NULL, NULL)) {
+        editor_delete_selection(ed, 0);
+        return;
+    }
     if (buffer_delete(&ed->buffer, ed->cursor_row, ed->cursor_col, ed->buffer.current_group_id)) {
         const char *line = buffer_line(&ed->buffer, ed->cursor_row);
         ed->target_visual_col = utf8_byte_to_col(line, ed->cursor_col);
@@ -211,6 +615,10 @@ void editor_smart_enter(Editor *ed) {
     if (!ed) return;
     editor_touch_key(ed);
     uint64_t group = buffer_next_group(&ed->buffer);
+
+    if (editor_get_selection(ed, NULL, NULL, NULL, NULL)) {
+        editor_delete_selection(ed, group);
+    }
 
     const char *cur_line = buffer_line(&ed->buffer, ed->cursor_row);
     size_t cur_len = buffer_line_len(&ed->buffer, ed->cursor_row);
@@ -318,9 +726,9 @@ void editor_toggle_insert_mode(Editor *ed) {
     ed->insert_mode = !ed->insert_mode;
     editor_touch_key(ed);
     if (ed->insert_mode) {
-        editor_set_status(ed, "INSERT Mode (Underscore cursor)");
+        editor_set_status(ed, "INSERT Mode (Block cursor)");
     } else {
-        editor_set_status(ed, "NORMAL Mode (Normal cursor)");
+        editor_set_status(ed, "OVERWRITE Mode (Underscore cursor)");
     }
 }
 
@@ -379,11 +787,20 @@ void editor_wrap_format(Editor *ed, const char *marker) {
     uint64_t group = buffer_next_group(&ed->buffer);
     size_t mlen = strlen(marker);
 
-    // Insert marker twice (opening and closing), leaving cursor in the middle
-    char both[32];
-    snprintf(both, sizeof(both), "%s%s", marker, marker);
-    buffer_insert_string(&ed->buffer, ed->cursor_row, ed->cursor_col, both, mlen * 2, group);
-    ed->cursor_col += mlen;
+    size_t s_row, s_col, e_row, e_col;
+    if (editor_get_selection(ed, &s_row, &s_col, &e_row, &e_col) && s_row == e_row) {
+        // Wrap existing single-line selection
+        buffer_insert_string(&ed->buffer, s_row, s_col, marker, mlen, group);
+        buffer_insert_string(&ed->buffer, s_row, e_col + mlen, marker, mlen, group);
+        ed->cursor_col = e_col + 2 * mlen;
+        ed->mark_active = false;
+    } else {
+        // Insert marker twice (opening and closing), leaving cursor in the middle
+        char both[32];
+        snprintf(both, sizeof(both), "%s%s", marker, marker);
+        buffer_insert_string(&ed->buffer, ed->cursor_row, ed->cursor_col, both, mlen * 2, group);
+        ed->cursor_col += mlen;
+    }
 
     const char *l = buffer_line(&ed->buffer, ed->cursor_row);
     ed->target_visual_col = utf8_byte_to_col(l, ed->cursor_col);

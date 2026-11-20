@@ -34,17 +34,30 @@
   - **Active Line Gutter Marker (`▶`)**: Visually indicates the currently active line in the gutter.
   - **Prominent Active Markers**: Syntax markers (`#`, `**`, `*`, `` ` ``, `~~`, `[ ]`, `[x]`, `>`) on the active line are highlighted vibrantly in bold accent color so you can clearly see and edit Markdown delimiters.
   - **Column Ruler**: A top-aligned ruler displaying ticks (`·`), 5-column markers (`+`), 10-column tens numbers, column 80 wrap guideline (`┆`), and an interactive cursor column pointer (`▼`).
+- **Interactive File Dialogue (`Ctrl+O` Open / `Ctrl+W` Save As)**:
+  - Browse directories and files visually with directory navigation (`..` parent, subdirectories).
+  - Shows file names, directories with `<DIR>`, and file sizes formatted in B, KB, or MB.
+  - In Save As mode (`Ctrl+W`), an editable filename input field is available with `Tab` switching between list and input box.
+  - Arrow keys (`↑`/`↓`/`PgUp`/`PgDn`), `Backspace` to navigate up a directory, `Enter` to open or save, and `Esc` to cancel.
+- **Persistent Bottom Shortcut Hint Rows**:
+  - Displays two rows of prominent shortcut key hints at the bottom of the screen (or three on taller displays $\ge 28$ rows), styled with reverse-video key badges and clear labels.
+- **Selection & Clipboard Editing**:
+  - **`Ctrl+Space`**: Set mark start. Move cursor (arrows, `Ctrl+A`, `Ctrl+E`, mouse click) to extend the visual selection highlight (`A_REVERSE`).
+  - **`Ctrl+X` / `Ctrl+C` / `Ctrl+V`**: Cut, copy, and paste text with undo/redo support. Clipboard is synchronized with terminal/system clipboard via ANSI OSC 52 escape sequences.
+  - **`Ctrl+K`**: Kill text from cursor to end of line, or join with next line if at end of line.
+  - **`Esc` / `Ctrl+G`**: Clear active selection mark.
 - **Smart Markdown Editing Helpers**:
   - **List Auto-Continuation**: Pressing `Enter` on a list item (`-`, `*`, `+`, `1.`) or task box (`- [ ]`) automatically inserts the next item with the correct indentation or incremented numbering. Hitting `Enter` on an empty bullet cancels the list.
   - **Task Checkbox Toggle (`Ctrl+T`)**: Instantly toggle `- [ ]` $\leftrightarrow$ `- [x]` under the cursor, or convert any line into a task item.
-  - **Quick Formatting**: `Ctrl+B` for bold (`**...**`), `Ctrl+K` for inline code (`` `...` ``).
+  - **Quick Formatting (`Ctrl+B`)**: Insert bold markers (`**...**`) or wrap the currently selected text.
+  - **Quick Navigation (`Ctrl+A` / `Ctrl+E`)**: Jump to beginning (`Home`) or end (`End`) of current line.
 - **Full UTF-8 & Unicode Support**:
   - Accurate terminal column calculation via `wcwidth`.
   - Multi-byte character navigation and wide characters (emojis, box drawing, accented characters).
 - **Steady Non-Flashing Cursor & Mode Switching (`Ins`)**:
   - The cursor remains steady and non-flashing at all times for distraction-free writing.
-  - Normal mode features a steady solid block cursor (`█`).
-  - Pressing **`Ins`** toggles Insert mode with a steady underscore cursor (`_`).
+  - Insert mode (default) features a steady solid block cursor (`█`).
+  - Pressing **`Ins`** toggles Overwrite mode with a steady underscore cursor (`_`).
 - **Two-Tab Interactive Help Overlay (`F1` / `Ctrl+H`)**:
   - **Tab 1: Editor Cheat Sheet**: Quick reference for all editor keybindings, navigation, and controls.
   - **Tab 2: Markdown Syntax Guide**: Learn about all Markdown functions (headings, styles, lists, tasks, blockquotes, code blocks, tables, rules, and smart features) with scrollable reference.
@@ -58,7 +71,7 @@ All application metadata, title, version, and build date are defined centrally i
 
 ```c
 #define MDE_APP_NAME        "mde"
-#define MDE_VERSION_STRING  "1.0.0"
+#define MDE_VERSION_STRING  "0.1.0"
 #define MDE_BUILD_DATE      __DATE__
 #define MDE_BUILD_TIME      __TIME__
 ```
@@ -71,13 +84,21 @@ Updating this single file automatically updates the CLI output (`mde -v`), the h
 
 | Shortcut | Description |
 |---|---|
-| **`Ctrl+S`** | Save file (prompts for path if untitled) |
-| **`Ctrl+O`** | Open an existing file |
+| **`Ctrl+S`** | Save file (opens Save As dialogue if untitled) |
+| **`Ctrl+O`** | Open File dialogue to browse and open a file |
+| **`Ctrl+W`** | Save As file dialogue to choose directory & name |
 | **`Ctrl+Q`** | Quit editor (prompts to save unsaved changes) |
 | **`Ctrl+P` / `F2`** | Cycle View Modes (**Split** → **In-Place** → **Preview**) |
 | **`Ctrl+T`** | Toggle checkbox `[ ]` <-> `[x]` on current line |
-| **`Ctrl+B`** | Insert Bold markers (`**...**`) |
-| **`Ctrl+K`** | Insert Inline Code markers (`` `...` ``) |
+| **`Ctrl+Space`** | Set selection mark start (move cursor to select) |
+| **`Ctrl+X`** | Cut selected text to clipboard |
+| **`Ctrl+C`** | Copy selected text to clipboard |
+| **`Ctrl+V`** | Paste text from clipboard |
+| **`Ctrl+K`** | Kill to end of line / join with next line |
+| **`Ctrl+A` / `Home`** | Jump to beginning of line |
+| **`Ctrl+E` / `End`** | Jump to end of line |
+| **`Esc` / `Ctrl+G`** | Clear active selection mark |
+| **`Ctrl+B`** | Insert Bold markers (`**...**`) or wrap selection |
 | **`Ctrl+Z`** | Undo last change |
 | **`Ctrl+Y`** | Redo last undone change |
 | **`Ctrl+F`** | Search / Find text |
@@ -86,8 +107,8 @@ Updating this single file automatically updates the CLI output (`mde -v`), the h
 | **`Enter`** | Smart list continuation & auto-indent |
 | **`Tab`** | Indent line by 2 spaces |
 | **`Shift+Tab`** | Dedent line by 2 spaces |
-| **`Ins`** | Toggle Insert / Overwrite mode (steady underscore vs. steady block cursor) |
-| **Arrows / Home / End** | Cursor navigation |
+| **`Ins`** | Toggle Insert / Overwrite mode (steady block vs. steady underscore cursor) |
+| **Arrows** | Cursor navigation |
 | **PageUp / PageDown** | Scroll viewport by page |
 
 ---
@@ -125,7 +146,7 @@ Builds an installable Debian package at `bin/mde_<version>_<arch>.deb` (includes
 To install the built package:
 
 ```bash
-sudo dpkg -i bin/mde_1.0.0_amd64.deb
+sudo dpkg -i bin/mde_0.1.0_amd64.deb
 ```
 
 ### Install Directly

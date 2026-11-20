@@ -11,8 +11,8 @@
 
 #define MDE_APP_NAME        "mde"
 #define MDE_APP_TITLE       "Markdown Editor"
-#define MDE_VERSION_MAJOR   1
-#define MDE_VERSION_MINOR   0
+#define MDE_VERSION_MAJOR   0
+#define MDE_VERSION_MINOR   1
 #define MDE_VERSION_PATCH   0
 #define MDE_VERSION_STRING  "0.1.0"
 

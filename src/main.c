@@ -15,6 +15,7 @@
 #include <string.h>
 #include <signal.h>
 #include <unistd.h>
+#include <limits.h>
 
 /**
  * @brief Macro to compute ASCII control key code.
@@ -131,8 +132,10 @@ int main(int argc, char *argv[]) {
                     // Left click to position cursor
                     int click_y = mevent.y;
                     int click_x = mevent.x;
+                    int num_hints = ui_get_shortcut_hint_rows(g_editor.screen_rows);
+                    int text_max_y = g_editor.screen_rows - num_hints - 1;
                     // Click is below the header/ruler (row 0) and above the status bar
-                    if (click_y >= 1 && click_y < g_editor.screen_rows - 2) {
+                    if (click_y >= 1 && click_y < text_max_y) {
                         if (g_editor.view_mode == VIEW_PREVIEW) {
                             size_t rend_idx = g_editor.preview_scroll_row + (size_t)(click_y - 1);
                             if (rend_idx < g_editor.rendered_doc.count) {
@@ -168,8 +171,8 @@ int main(int argc, char *argv[]) {
             int action = ui_confirm_quit(&g_editor);
             if (action == 1) { // Save and quit
                 if (!g_editor.buffer.file_path) {
-                    char save_path[256];
-                    if (ui_prompt(&g_editor, "Save file as", save_path, sizeof(save_path))) {
+                    char save_path[PATH_MAX];
+                    if (ui_file_dialog(&g_editor, FILE_DIALOG_SAVE_AS, save_path, sizeof(save_path))) {
                         editor_save(&g_editor, save_path);
                         g_editor.quit_requested = true;
                     }
@@ -183,18 +186,24 @@ int main(int argc, char *argv[]) {
         } else if (ch == CTRL_KEY('s')) {
             // Save file
             if (!g_editor.buffer.file_path) {
-                char save_path[256];
-                if (ui_prompt(&g_editor, "Save file as", save_path, sizeof(save_path))) {
+                char save_path[PATH_MAX];
+                if (ui_file_dialog(&g_editor, FILE_DIALOG_SAVE_AS, save_path, sizeof(save_path))) {
                     editor_save(&g_editor, save_path);
                 }
             } else {
                 editor_save(&g_editor, NULL);
             }
         } else if (ch == CTRL_KEY('o')) {
-            // Open file
-            char open_path[256];
-            if (ui_prompt(&g_editor, "Open file", open_path, sizeof(open_path))) {
+            // Open file dialog
+            char open_path[PATH_MAX];
+            if (ui_file_dialog(&g_editor, FILE_DIALOG_OPEN, open_path, sizeof(open_path))) {
                 editor_open(&g_editor, open_path);
+            }
+        } else if (ch == CTRL_KEY('w')) {
+            // Save As file dialog
+            char save_path[PATH_MAX];
+            if (ui_file_dialog(&g_editor, FILE_DIALOG_SAVE_AS, save_path, sizeof(save_path))) {
+                editor_save(&g_editor, save_path);
             }
         } else if (ch == CTRL_KEY('p') || ch == KEY_F(2)) {
             // Toggle view mode: Split <-> In-place <-> Preview
@@ -202,6 +211,26 @@ int main(int argc, char *argv[]) {
         } else if (ch == KEY_F(1) || ch == CTRL_KEY('h')) {
             // Help overlay (Cheat sheet & Markdown guide)
             ui_show_help(&g_editor);
+        } else if (ch == 0 || ch == CTRL_KEY(' ')) {
+            // Set selection mark start
+            editor_set_mark(&g_editor);
+        } else if (ch == 27 || ch == CTRL_KEY('g')) {
+            // Escape / Cancel: clear selection mark
+            if (g_editor.mark_active) {
+                editor_clear_mark(&g_editor);
+            }
+        } else if (ch == CTRL_KEY('x')) {
+            // Cut selection
+            editor_cut(&g_editor);
+        } else if (ch == CTRL_KEY('c')) {
+            // Copy selection
+            editor_copy(&g_editor);
+        } else if (ch == CTRL_KEY('v')) {
+            // Paste
+            editor_paste(&g_editor);
+        } else if (ch == CTRL_KEY('k')) {
+            // Kill to end of line / kill newline
+            editor_kill_to_end_of_line(&g_editor);
         } else if (ch == CTRL_KEY('z')) {
             // Undo
             editor_undo(&g_editor);
@@ -214,9 +243,6 @@ int main(int argc, char *argv[]) {
         } else if (ch == CTRL_KEY('b')) {
             // Wrap bold
             editor_wrap_format(&g_editor, "**");
-        } else if (ch == CTRL_KEY('k')) {
-            // Wrap inline code
-            editor_wrap_format(&g_editor, "`");
         } else if (ch == CTRL_KEY('f')) {
             // Find in file
             if (ui_prompt(&g_editor, "Find", search_buf, sizeof(search_buf))) {
@@ -236,9 +262,9 @@ int main(int argc, char *argv[]) {
             editor_move_up(&g_editor);
         } else if (ch == KEY_DOWN) {
             editor_move_down(&g_editor);
-        } else if (ch == KEY_HOME) {
+        } else if (ch == KEY_HOME || ch == CTRL_KEY('a')) {
             editor_move_home(&g_editor);
-        } else if (ch == KEY_END) {
+        } else if (ch == KEY_END || ch == CTRL_KEY('e')) {
             editor_move_end(&g_editor);
         } else if (ch == KEY_PPAGE) {
             editor_move_page_up(&g_editor);

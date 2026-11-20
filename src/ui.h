@@ -15,6 +15,10 @@
 #include "editor.h"
 #include <stdbool.h>
 
+#ifndef CTRL_KEY
+#define CTRL_KEY(k) ((k) & 0x1f)
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -53,6 +57,33 @@ bool ui_prompt(Editor *ed, const char *prompt, char *out_buf, size_t buf_size);
  * @return 1 for Save & Quit, 0 for Discard & Quit, -1 for Cancel.
  */
 int ui_confirm_quit(Editor *ed);
+
+/**
+ * @brief File dialog operation mode.
+ */
+typedef enum {
+    FILE_DIALOG_OPEN,    /**< Select an existing file to open */
+    FILE_DIALOG_SAVE_AS  /**< Choose directory and filename to save buffer */
+} FileDialogMode;
+
+/**
+ * @brief Display an interactive modal file browser dialogue for navigating files and directories.
+ *
+ * @param ed Pointer to Editor.
+ * @param mode FILE_DIALOG_OPEN or FILE_DIALOG_SAVE_AS.
+ * @param out_path Destination buffer for selected absolute/relative file path.
+ * @param max_len Size of out_path buffer.
+ * @return true if a file was selected/confirmed, false if cancelled (Esc/q).
+ */
+bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_len);
+
+/**
+ * @brief Determine number of shortcut hint rows to render at the bottom of the screen.
+ *
+ * @param screen_rows Screen height in rows.
+ * @return 2 on standard displays (e.g. 24 rows), 3 on taller displays (>= 28 rows), 1 on minimal screens.
+ */
+int ui_get_shortcut_hint_rows(int screen_rows);
 
 /**
  * @brief Display a centered popup dialog with two overlay tabs:

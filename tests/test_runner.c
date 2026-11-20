@@ -19,6 +19,7 @@
 #include "../src/renderer.h"
 #include "../src/theme.h"
 #include "../src/editor.h"
+#include "../src/ui.h"
 
 static int g_tests_run = 0;
 static int g_tests_passed = 0;
@@ -36,7 +37,7 @@ static int g_tests_passed = 0;
 static void test_version(void) {
     printf("--- Testing Version & Build Metadata ---\n");
     TEST_ASSERT(strcmp(MDE_APP_NAME, "mde") == 0, "App name is 'mde'");
-    TEST_ASSERT(strcmp(MDE_VERSION_STRING, "1.0.0") == 0, "Version string is '1.0.0'");
+    TEST_ASSERT(strcmp(MDE_VERSION_STRING, "0.1.0") == 0, "Version string is '0.1.0'");
     TEST_ASSERT(strlen(MDE_BUILD_DATE) > 0, "Build date is non-empty");
 }
 
@@ -240,31 +241,31 @@ static void test_cursor_visibility(void) {
     Editor ed;
     editor_init(&ed, NULL);
 
-    TEST_ASSERT(editor_cursor_is_visible(&ed) == true, "Normal cursor is visible after init");
+    TEST_ASSERT(editor_cursor_is_visible(&ed) == true, "Insert cursor is visible after init");
 
     uint64_t now = editor_get_time_ms();
     ed.last_key_time = now - 100; // 100 ms ago
-    TEST_ASSERT(editor_cursor_is_visible(&ed) == true, "Normal cursor is steady while typing (100 ms)");
+    TEST_ASSERT(editor_cursor_is_visible(&ed) == true, "Insert cursor is steady while typing (100 ms)");
 
     ed.last_key_time = now - 600; // 600 ms ago
-    TEST_ASSERT(editor_cursor_is_visible(&ed) == true, "Normal cursor remains steady after typing (no flash)");
-
-    ed.last_key_time = now - 5000; // 5000 ms ago
-    TEST_ASSERT(editor_cursor_is_visible(&ed) == true, "Normal cursor remains steady when idle (no flash)");
-
-    // Test in Insert mode as well
-    editor_toggle_insert_mode(&ed);
-    TEST_ASSERT(ed.insert_mode == true, "Insert mode enabled");
-    TEST_ASSERT(editor_cursor_is_visible(&ed) == true, "Insert cursor is visible");
-
-    ed.last_key_time = now - 200;
-    TEST_ASSERT(editor_cursor_is_visible(&ed) == true, "Insert cursor is steady while typing (200 ms)");
-
-    ed.last_key_time = now - 800;
     TEST_ASSERT(editor_cursor_is_visible(&ed) == true, "Insert cursor remains steady after typing (no flash)");
 
-    ed.last_key_time = now - 10000;
+    ed.last_key_time = now - 5000; // 5000 ms ago
     TEST_ASSERT(editor_cursor_is_visible(&ed) == true, "Insert cursor remains steady when idle (no flash)");
+
+    // Test in Overwrite mode as well
+    editor_toggle_insert_mode(&ed);
+    TEST_ASSERT(ed.insert_mode == false, "Overwrite mode enabled");
+    TEST_ASSERT(editor_cursor_is_visible(&ed) == true, "Overwrite cursor is visible");
+
+    ed.last_key_time = now - 200;
+    TEST_ASSERT(editor_cursor_is_visible(&ed) == true, "Overwrite cursor is steady while typing (200 ms)");
+
+    ed.last_key_time = now - 800;
+    TEST_ASSERT(editor_cursor_is_visible(&ed) == true, "Overwrite cursor remains steady after typing (no flash)");
+
+    ed.last_key_time = now - 10000;
+    TEST_ASSERT(editor_cursor_is_visible(&ed) == true, "Overwrite cursor remains steady when idle (no flash)");
 
     editor_free(&ed);
 }
@@ -274,13 +275,9 @@ static void test_insert_mode(void) {
     Editor ed;
     editor_init(&ed, NULL);
 
-    TEST_ASSERT(ed.insert_mode == false, "Initial mode is Normal (normal cursor)");
+    TEST_ASSERT(ed.insert_mode == true, "Initial mode is Insert (block cursor)");
 
-    // Switch to Insert mode via Ins button toggle
-    editor_toggle_insert_mode(&ed);
-    TEST_ASSERT(ed.insert_mode == true, "Switched to Insert mode (underscore cursor)");
-
-    // Test text insertion in insert mode
+    // Test text insertion in default insert mode
     editor_insert_char(&ed, "H", 1);
     editor_insert_char(&ed, "e", 1);
     editor_insert_char(&ed, "l", 1);
@@ -293,18 +290,22 @@ static void test_insert_mode(void) {
     editor_insert_char(&ed, "a", 1);
     TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "Haello") == 0, "Insert mode inserted 'a' without overwriting");
 
-    // Toggle back to Normal mode
+    // Toggle to Overwrite mode via Ins button toggle
     editor_toggle_insert_mode(&ed);
-    TEST_ASSERT(ed.insert_mode == false, "Switched to Normal mode");
+    TEST_ASSERT(ed.insert_mode == false, "Switched to Overwrite mode (underscore cursor)");
 
-    // In normal mode, cursor is at index 2 ('e'), typing 'i' overwrites 'e' with 'i'
+    // In overwrite mode, cursor is at index 2 ('e'), typing 'i' overwrites 'e' with 'i'
     editor_insert_char(&ed, "i", 1);
-    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "Haillo") == 0, "Normal mode replaced 'e' with 'i'");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "Haillo") == 0, "Overwrite mode replaced 'e' with 'i'");
 
-    // Move to end of line and type in normal mode (should append)
+    // Move to end of line and type in overwrite mode (should append)
     ed.cursor_col = buffer_line_len(&ed.buffer, 0);
     editor_insert_char(&ed, "!", 1);
-    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "Haillo!") == 0, "Normal mode appended '!' at line end");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "Haillo!") == 0, "Overwrite mode appended '!' at line end");
+
+    // Toggle back to Insert mode
+    editor_toggle_insert_mode(&ed);
+    TEST_ASSERT(ed.insert_mode == true, "Switched back to Insert mode");
 
     editor_free(&ed);
 }
@@ -357,6 +358,193 @@ static void test_renderer(void) {
     buffer_free(&buf);
 }
 
+static void test_selection_and_mark(void) {
+    printf("--- Testing Selection & Mark (Ctrl-Space) ---\n");
+    Editor ed;
+    editor_init(&ed, NULL);
+
+    // Insert text: "Hello World\nSecond Line"
+    editor_paste_text(&ed, "Hello World\nSecond Line", 23);
+    TEST_ASSERT(buffer_line_count(&ed.buffer) == 2, "Buffer has 2 lines");
+
+    // Initially no selection
+    TEST_ASSERT(!editor_has_selection(&ed), "No selection initially");
+
+    // Move to (0, 0), set mark
+    ed.cursor_row = 0;
+    ed.cursor_col = 0;
+    editor_set_mark(&ed);
+    TEST_ASSERT(ed.mark_active == true, "Mark is active");
+    TEST_ASSERT(!editor_has_selection(&ed), "No selection yet (mark == cursor)");
+
+    // Move cursor to (0, 5)
+    ed.cursor_col = 5;
+    TEST_ASSERT(editor_has_selection(&ed), "Selection active after cursor move");
+    size_t sr, sc, er, ec;
+    TEST_ASSERT(editor_get_selection(&ed, &sr, &sc, &er, &ec), "get_selection succeeds");
+    TEST_ASSERT(sr == 0 && sc == 0 && er == 0 && ec == 5, "Selection coordinates are (0,0)-(0,5)");
+
+    size_t sel_len = 0;
+    char *sel_text = editor_get_selected_text(&ed, &sel_len);
+    TEST_ASSERT(sel_text != NULL, "Selected text extracted");
+    TEST_ASSERT(sel_len == 5 && strcmp(sel_text, "Hello") == 0, "Selected text is 'Hello'");
+    free(sel_text);
+
+    // Clear mark
+    editor_clear_mark(&ed);
+    TEST_ASSERT(ed.mark_active == false, "Mark deactivated after clear");
+    TEST_ASSERT(!editor_has_selection(&ed), "No selection after clear");
+
+    // Test reverse selection: mark at (0, 5), cursor at (0, 0)
+    ed.cursor_col = 5;
+    editor_set_mark(&ed);
+    ed.cursor_col = 0;
+    TEST_ASSERT(editor_get_selection(&ed, &sr, &sc, &er, &ec), "get_selection succeeds for reversed selection");
+    TEST_ASSERT(sr == 0 && sc == 0 && er == 0 && ec == 5, "Normalized selection is (0,0)-(0,5)");
+
+    editor_free(&ed);
+}
+
+static void test_cut_copy_paste(void) {
+    printf("--- Testing Cut, Copy, Paste ---\n");
+    Editor ed;
+    editor_init(&ed, NULL);
+
+    editor_paste_text(&ed, "Hello World", 11);
+
+    // Select "World"
+    ed.cursor_col = 6;
+    editor_set_mark(&ed);
+    ed.cursor_col = 11;
+
+    // Copy
+    TEST_ASSERT(editor_copy(&ed), "Copy succeeded");
+    TEST_ASSERT(ed.clipboard != NULL && strcmp(ed.clipboard, "World") == 0, "Clipboard has 'World'");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "Hello World") == 0, "Buffer unchanged after copy");
+
+    // Select "Hello " and Cut
+    ed.cursor_col = 0;
+    editor_set_mark(&ed);
+    ed.cursor_col = 6;
+    TEST_ASSERT(editor_cut(&ed), "Cut succeeded");
+    TEST_ASSERT(ed.clipboard != NULL && strcmp(ed.clipboard, "Hello ") == 0, "Clipboard has 'Hello '");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "World") == 0, "Buffer has 'World' after cut");
+    TEST_ASSERT(ed.cursor_col == 0, "Cursor at start of cut");
+
+    // Undo cut
+    editor_undo(&ed);
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "Hello World") == 0, "Undo restored 'Hello World'");
+
+    // Redo cut
+    editor_redo(&ed);
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "World") == 0, "Redo re-cut 'Hello '");
+
+    // Move to end and Paste ("Hello ")
+    ed.cursor_col = 5;
+    TEST_ASSERT(editor_paste(&ed), "Paste succeeded");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "WorldHello ") == 0, "Pasted 'Hello ' at end");
+
+    // Multiline selection cut & paste
+    editor_smart_enter(&ed);
+    editor_paste_text(&ed, "Line Two\nLine Three", 19);
+    TEST_ASSERT(buffer_line_count(&ed.buffer) == 3, "Buffer has 3 lines");
+
+    // Select from row 0 col 5 to row 2 col 4
+    ed.cursor_row = 0; ed.cursor_col = 5;
+    editor_set_mark(&ed);
+    ed.cursor_row = 2; ed.cursor_col = 4;
+    TEST_ASSERT(editor_cut(&ed), "Multiline cut succeeded");
+    TEST_ASSERT(buffer_line_count(&ed.buffer) == 1, "Multiline cut reduced to 1 line");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "World Three") == 0, "Joined line is 'World Three'");
+
+    // Undo multiline cut
+    editor_undo(&ed);
+    TEST_ASSERT(buffer_line_count(&ed.buffer) == 3, "Undo restored all 3 lines");
+
+    editor_free(&ed);
+}
+
+static void test_kill_line_and_word(void) {
+    printf("--- Testing C-k (Kill Line) & C-w (Kill Word) ---\n");
+    Editor ed;
+    editor_init(&ed, NULL);
+
+    editor_paste_text(&ed, "First Line\nSecond Line", 22);
+
+    // C-k in middle of line 0
+    ed.cursor_row = 0;
+    ed.cursor_col = 5; // after "First"
+    editor_kill_to_end_of_line(&ed);
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "First") == 0, "Line 0 killed to 'First'");
+    TEST_ASSERT(strcmp(ed.clipboard, " Line") == 0, "Clipboard has ' Line'");
+
+    // C-k at end of line 0 kills newline (joins with Line 1)
+    TEST_ASSERT(ed.cursor_col == 5, "Cursor at line end");
+    editor_kill_to_end_of_line(&ed);
+    TEST_ASSERT(buffer_line_count(&ed.buffer) == 1, "C-k at line end joined lines");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "FirstSecond Line") == 0, "Joined line content");
+
+    // C-w (Kill previous word)
+    // Cursor at col 5 ("First|Second Line") -> kill prev word kills "First"
+    editor_kill_prev_word(&ed);
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "Second Line") == 0, "C-w killed 'First'");
+    TEST_ASSERT(strcmp(ed.clipboard, "First") == 0, "Clipboard has 'First'");
+    TEST_ASSERT(ed.cursor_col == 0, "Cursor at 0 after killing word");
+
+    // Move to end of line
+    ed.cursor_col = buffer_line_len(&ed.buffer, 0); // after "Line"
+    editor_kill_prev_word(&ed);
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "Second ") == 0, "C-w killed 'Line'");
+    TEST_ASSERT(strcmp(ed.clipboard, "Line") == 0, "Clipboard has 'Line'");
+
+    editor_kill_prev_word(&ed);
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "") == 0, "C-w killed 'Second '");
+
+    editor_free(&ed);
+}
+
+static void test_home_and_end(void) {
+    printf("--- Testing C-a (Home) & C-e (End) ---\n");
+    Editor ed;
+    editor_init(&ed, NULL);
+
+    editor_paste_text(&ed, "The quick brown fox", 19);
+    ed.cursor_col = 5;
+
+    // C-a (Home)
+    editor_move_home(&ed);
+    TEST_ASSERT(ed.cursor_col == 0, "C-a moved cursor to 0");
+    TEST_ASSERT(ed.target_visual_col == 0, "Target visual col is 0");
+
+    // C-e (End)
+    editor_move_end(&ed);
+    TEST_ASSERT(ed.cursor_col == 19, "C-e moved cursor to 19 (line length)");
+
+    editor_free(&ed);
+}
+
+static void test_shortcut_hints_and_dialog(void) {
+    printf("--- Testing Shortcut Hints & File Dialogue API ---\n");
+
+    // Shortcut hint rows calculation
+    TEST_ASSERT(ui_get_shortcut_hint_rows(24) == 2, "Standard 24-row terminal gets 2 shortcut hint rows");
+    TEST_ASSERT(ui_get_shortcut_hint_rows(25) == 2, "25-row terminal gets 2 shortcut hint rows");
+    TEST_ASSERT(ui_get_shortcut_hint_rows(28) == 3, "28-row terminal gets 3 shortcut hint rows");
+    TEST_ASSERT(ui_get_shortcut_hint_rows(40) == 3, "40-row terminal gets 3 shortcut hint rows");
+    TEST_ASSERT(ui_get_shortcut_hint_rows(15) == 1, "Small 15-row terminal gets 1 shortcut hint row");
+
+    // File dialog safe parameter validation
+    Editor ed;
+    editor_init(&ed, NULL);
+
+    char path_buf[256];
+    TEST_ASSERT(!ui_file_dialog(NULL, FILE_DIALOG_OPEN, path_buf, sizeof(path_buf)), "Null editor returns false");
+    TEST_ASSERT(!ui_file_dialog(&ed, FILE_DIALOG_OPEN, NULL, 100), "Null out_path returns false");
+    TEST_ASSERT(!ui_file_dialog(&ed, FILE_DIALOG_OPEN, path_buf, 0), "Zero max_len returns false");
+
+    editor_free(&ed);
+}
+
 int main(void) {
     setlocale(LC_ALL, "");
     printf("==========================================\n");
@@ -372,6 +560,11 @@ int main(void) {
     test_cursor_visibility();
     test_insert_mode();
     test_renderer();
+    test_selection_and_mark();
+    test_cut_copy_paste();
+    test_kill_line_and_word();
+    test_home_and_end();
+    test_shortcut_hints_and_dialog();
 
     printf("==========================================\n");
     printf("Test Results: %d / %d tests passed (%.1f%%)\n",

@@ -13,8 +13,14 @@
 #include "version.h"
 #include <locale.h>
 #include <string.h>
+#include <strings.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <libgen.h>
+#include <limits.h>
 
 void ui_init(void) {
     setlocale(LC_ALL, "");
@@ -22,6 +28,7 @@ void ui_init(void) {
     raw();
     noecho();
     keypad(stdscr, TRUE);
+    set_escdelay(25);
     curs_set(1);
     fputs("\033[2 q", stdout);
     fflush(stdout);
@@ -138,6 +145,9 @@ static void draw_editor_pane(Editor *ed, int start_col, int width, int start_row
         md_parsed_line_free(&pl);
     }
 
+    size_t sel_s_row = 0, sel_s_col = 0, sel_e_row = 0, sel_e_col = 0;
+    bool has_selection = editor_get_selection(ed, &sel_s_row, &sel_s_col, &sel_e_row, &sel_e_col);
+
     for (int y = 0; y < text_height; ++y) {
         size_t row_idx = ed->scroll_row + (size_t)y;
         int screen_y = text_start_y + y;
@@ -183,7 +193,24 @@ static void draw_editor_pane(Editor *ed, int start_col, int width, int start_row
                     int ch_w = utf8_visual_width_range(raw, byte_pos, byte_pos + ch_len);
 
                     if (cur_vcol >= (int)ed->scroll_col && render_x + ch_w <= start_col + width) {
-                        if (ed->search_active && row_idx == ed->search_match_row &&
+                        bool is_sel = false;
+                        if (has_selection) {
+                            if (row_idx > sel_s_row && row_idx < sel_e_row) {
+                                is_sel = true;
+                            } else if (sel_s_row == sel_e_row && row_idx == sel_s_row) {
+                                is_sel = (byte_pos >= sel_s_col && byte_pos < sel_e_col);
+                            } else if (row_idx == sel_s_row) {
+                                is_sel = (byte_pos >= sel_s_col);
+                            } else if (row_idx == sel_e_row) {
+                                is_sel = (byte_pos < sel_e_col);
+                            }
+                        }
+
+                        if (is_sel) {
+                            attron(A_REVERSE);
+                            mvaddnstr(screen_y, render_x, raw + byte_pos, ch_len);
+                            attroff(A_REVERSE);
+                        } else if (ed->search_active && row_idx == ed->search_match_row &&
                             byte_pos >= ed->search_match_col &&
                             byte_pos < ed->search_match_col + ed->search_match_len) {
                             // Active search match highlight
@@ -205,6 +232,12 @@ static void draw_editor_pane(Editor *ed, int start_col, int width, int start_row
             }
 
             // Clear rest of line in editor pane
+            bool newline_selected = (has_selection && row_idx >= sel_s_row && row_idx < sel_e_row);
+            if (newline_selected && render_x < start_col + width) {
+                attron(A_REVERSE);
+                mvaddch(screen_y, render_x++, ' ');
+                attroff(A_REVERSE);
+            }
             while (render_x < start_col + width) {
                 mvaddch(screen_y, render_x++, ' ');
             }
@@ -284,9 +317,8 @@ static void draw_preview_pane(Editor *ed, int start_col, int width, int start_ro
 /**
  * @brief Render the bottom status bar with file, position, word count, and mode.
  */
-static void draw_status_bar(Editor *ed, int screen_rows, int screen_cols) {
-    int y = screen_rows - 2;
-
+static void draw_status_bar(Editor *ed, int screen_rows, int screen_cols, int y) {
+    (void)screen_rows;
     attron(COLOR_PAIR(CP_STATUS_BAR));
     for (int x = 0; x < screen_cols; ++x) {
         mvaddch(y, x, ' ');
@@ -301,27 +333,46 @@ static void draw_status_bar(Editor *ed, int screen_rows, int screen_cols) {
     mvaddstr(y, 1, mode_str);
     attroff(COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_BOLD);
 
+    // Right-aligned stats
+    char right_buf[128];
+    const char *cur_line = buffer_line(&ed->buffer, ed->cursor_row);
+    int visual_col = utf8_byte_to_col(cur_line, ed->cursor_col) + 1;
+    char mode_buf[16];
+    if (ed->mark_active) {
+        snprintf(mode_buf, sizeof(mode_buf), "%s [SEL]", ed->insert_mode ? "INS" : "OVR");
+    } else {
+        snprintf(mode_buf, sizeof(mode_buf), "%s", ed->insert_mode ? "INS" : "OVR");
+    }
+    snprintf(right_buf, sizeof(right_buf), "%s | Ln %zu, Col %d | %zu words | UTF-8",
+             mode_buf,
+             ed->cursor_row + 1, visual_col, buffer_word_count(&ed->buffer));
+
+    int right_len = (int)strlen(right_buf);
+    int right_x = screen_cols - right_len - 2;
+
     // File name and dirty marker
     attron(COLOR_PAIR(CP_STATUS_BAR));
     const char *fname = ed->buffer.file_path ? ed->buffer.file_path : "[No Name]";
     mvprintw(y, 14, " %s ", fname);
 
+    int fname_end_x = 14 + (int)strlen(fname) + 2;
     if (ed->buffer.is_dirty) {
         attron(COLOR_PAIR(CP_STATUS_BAR_DIRTY) | A_BOLD);
-        mvaddstr(y, 14 + strlen(fname) + 2, "[*]");
+        mvaddstr(y, fname_end_x, "[*]");
         attroff(COLOR_PAIR(CP_STATUS_BAR_DIRTY) | A_BOLD);
+        fname_end_x += 4;
     }
 
-    // Right-aligned stats
-    char right_buf[128];
-    const char *cur_line = buffer_line(&ed->buffer, ed->cursor_row);
-    int visual_col = utf8_byte_to_col(cur_line, ed->cursor_col) + 1;
-    snprintf(right_buf, sizeof(right_buf), "%s | Ln %zu, Col %d | %zu words | UTF-8",
-             ed->insert_mode ? "INS" : "NORM",
-             ed->cursor_row + 1, visual_col, buffer_word_count(&ed->buffer));
+    // Ephemeral status notification (if active within 5 seconds)
+    if (ed->status_msg[0] && time(NULL) - ed->status_time < 5) {
+        int avail_w = right_x - fname_end_x - 4;
+        if (avail_w > 8) {
+            attron(COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_BOLD);
+            mvprintw(y, fname_end_x + 2, " %.*s ", avail_w - 2, ed->status_msg);
+            attroff(COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_BOLD);
+        }
+    }
 
-    int right_len = (int)strlen(right_buf);
-    int right_x = screen_cols - right_len - 2;
     if (right_x > 25) {
         attron(COLOR_PAIR(CP_STATUS_BAR));
         mvaddstr(y, right_x, right_buf);
@@ -329,23 +380,73 @@ static void draw_status_bar(Editor *ed, int screen_rows, int screen_cols) {
     attroff(COLOR_PAIR(CP_STATUS_BAR));
 }
 
-/**
- * @brief Render the bottom message line (status notification or key shortcuts).
- */
-static void draw_message_bar(Editor *ed, int screen_rows, int screen_cols) {
-    int y = screen_rows - 1;
+typedef struct {
+    const char *key;
+    const char *desc;
+} ShortcutHint;
 
-    move(y, 0);
-    clrtoeol();
+static const ShortcutHint s_hints_r1[] = {
+    { "^S", "Save" },
+    { "^O", "Open" },
+    { "^W", "Save As" },
+    { "^P", "View" },
+    { "^F", "Find" },
+    { "^Q", "Quit" }
+};
 
-    if (ed->status_msg[0] && time(NULL) - ed->status_time < 5) {
-        attron(COLOR_PAIR(CP_DEFAULT) | A_BOLD);
-        mvaddnstr(y, 1, ed->status_msg, screen_cols - 2);
-        attroff(COLOR_PAIR(CP_DEFAULT) | A_BOLD);
-    } else {
-        attron(COLOR_PAIR(CP_MARKER) | A_DIM);
-        mvaddstr(y, 1, "Ctrl+S: Save | Ctrl+Q: Quit | Ctrl+P: View | Ctrl+T: Checkbox | Ctrl+F: Find | Ctrl+H: Help");
-        attroff(COLOR_PAIR(CP_MARKER) | A_DIM);
+static const ShortcutHint s_hints_r2[] = {
+    { "^X", "Cut" },
+    { "^C", "Copy" },
+    { "^V", "Paste" },
+    { "^K", "Kill" },
+    { "^Z", "Undo" },
+    { "^H", "Help" }
+};
+
+static const ShortcutHint s_hints_r3[] = {
+    { "^Space", "Mark" },
+    { "^A", "Home" },
+    { "^E", "End" },
+    { "^T", "Task" },
+    { "^B", "Bold" },
+    { "Ins", "Mode" }
+};
+
+int ui_get_shortcut_hint_rows(int screen_rows) {
+    if (screen_rows >= 28) return 3;
+    if (screen_rows >= 16) return 2;
+    return 1;
+}
+
+static void draw_shortcut_hints(int screen_cols, int start_y, int num_rows) {
+    const ShortcutHint *all_rows[3] = { s_hints_r1, s_hints_r2, s_hints_r3 };
+
+    for (int r = 0; r < num_rows; ++r) {
+        int y = start_y + r;
+        move(y, 0);
+        clrtoeol();
+
+        int num_items = 6;
+        int col_w = screen_cols / num_items;
+        if (col_w < 10) col_w = 10;
+
+        for (int i = 0; i < num_items; ++i) {
+            int x = i * col_w;
+            if (x + col_w > screen_cols && i > 0) break;
+
+            const ShortcutHint *h = &all_rows[r][i];
+
+            // Render key badge (inverted bold)
+            attron(COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_REVERSE | A_BOLD);
+            mvaddstr(y, x + 1, h->key);
+            attroff(COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_REVERSE | A_BOLD);
+
+            // Render description
+            int kw = (int)strlen(h->key);
+            attron(COLOR_PAIR(CP_DEFAULT));
+            mvaddstr(y, x + 1 + kw + 1, h->desc);
+            attroff(COLOR_PAIR(CP_DEFAULT));
+        }
     }
 }
 
@@ -354,9 +455,9 @@ static void update_cursor_shape(bool insert_mode) {
     if (s_last_cursor_mode != (int)insert_mode) {
         s_last_cursor_mode = (int)insert_mode;
         if (insert_mode) {
-            fputs("\033[4 q", stdout); // DECSCUSR 4: steady underline cursor
-        } else {
             fputs("\033[2 q", stdout); // DECSCUSR 2: steady block cursor
+        } else {
+            fputs("\033[4 q", stdout); // DECSCUSR 4: steady underline cursor
         }
         fflush(stdout);
     }
@@ -370,7 +471,9 @@ void ui_draw(Editor *ed) {
     ed->screen_rows = rows;
     ed->screen_cols = cols;
 
-    int body_height = rows - 2;
+    int num_hint_rows = ui_get_shortcut_hint_rows(rows);
+    int status_bar_y = rows - num_hint_rows - 1;
+    int body_height = status_bar_y;
     if (body_height < 2) body_height = 2;
 
     // Body height minus 1 row for ruler
@@ -409,8 +512,8 @@ void ui_draw(Editor *ed) {
         }
     }
 
-    draw_status_bar(ed, rows, cols);
-    draw_message_bar(ed, rows, cols);
+    draw_status_bar(ed, rows, cols, status_bar_y);
+    draw_shortcut_hints(cols, status_bar_y + 1, num_hint_rows);
 
     // Position terminal hardware cursor directly on screen
     int text_start_y = 1; // Row 0 is column ruler or preview header
@@ -539,6 +642,474 @@ int ui_confirm_quit(Editor *ed) {
     }
 }
 
+typedef struct {
+    char name[256];
+    bool is_dir;
+    size_t size;
+} FileItem;
+
+static int compare_file_items(const void *a, const void *b) {
+    const FileItem *fa = (const FileItem *)a;
+    const FileItem *fb = (const FileItem *)b;
+
+    // ".." is always first
+    if (strcmp(fa->name, "..") == 0) return -1;
+    if (strcmp(fb->name, "..") == 0) return 1;
+
+    // Directories come before regular files
+    if (fa->is_dir != fb->is_dir) {
+        return fa->is_dir ? -1 : 1;
+    }
+
+    // Both are directories or both are files: case-insensitive alphabetical sort
+    return strcasecmp(fa->name, fb->name);
+}
+
+static FileItem *load_directory_items(const char *dir_path, size_t *out_count) {
+    *out_count = 0;
+    DIR *d = opendir(dir_path);
+    if (!d) return NULL;
+
+    size_t cap = 64;
+    FileItem *items = (FileItem *)malloc(cap * sizeof(FileItem));
+    if (!items) {
+        closedir(d);
+        return NULL;
+    }
+
+    // Always add ".." if not root "/"
+    if (strcmp(dir_path, "/") != 0) {
+        strncpy(items[0].name, "..", sizeof(items[0].name) - 1);
+        items[0].name[sizeof(items[0].name) - 1] = '\0';
+        items[0].is_dir = true;
+        items[0].size = 0;
+        *out_count = 1;
+    }
+
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) {
+            continue;
+        }
+
+        // Build full path for stat
+        char full_path[PATH_MAX];
+        if (strcmp(dir_path, "/") == 0) {
+            snprintf(full_path, sizeof(full_path), "/%s", ent->d_name);
+        } else {
+            snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, ent->d_name);
+        }
+
+        struct stat st;
+        bool is_dir = false;
+        size_t size = 0;
+        if (stat(full_path, &st) == 0) {
+            is_dir = S_ISDIR(st.st_mode);
+            size = (size_t)st.st_size;
+        } else {
+#ifdef DT_DIR
+            if (ent->d_type == DT_DIR) is_dir = true;
+#endif
+        }
+
+        if (*out_count >= cap) {
+            cap *= 2;
+            FileItem *new_items = (FileItem *)realloc(items, cap * sizeof(FileItem));
+            if (!new_items) break;
+            items = new_items;
+        }
+
+        strncpy(items[*out_count].name, ent->d_name, sizeof(items[*out_count].name) - 1);
+        items[*out_count].name[sizeof(items[*out_count].name) - 1] = '\0';
+        items[*out_count].is_dir = is_dir;
+        items[*out_count].size = size;
+        (*out_count)++;
+    }
+
+    closedir(d);
+
+    if (*out_count > 1) {
+        qsort(items, *out_count, sizeof(FileItem), compare_file_items);
+    }
+
+    return items;
+}
+
+static void navigate_to_parent(char *dir_buf, size_t buf_size) {
+    (void)buf_size;
+    if (strcmp(dir_buf, "/") == 0) return;
+
+    size_t len = strlen(dir_buf);
+    while (len > 1 && dir_buf[len - 1] == '/') {
+        dir_buf[--len] = '\0';
+    }
+
+    char *last_slash = strrchr(dir_buf, '/');
+    if (last_slash == dir_buf) {
+        dir_buf[1] = '\0';
+    } else if (last_slash) {
+        *last_slash = '\0';
+    } else {
+        strncpy(dir_buf, "/", buf_size);
+    }
+}
+
+static void navigate_into_sub(char *dir_buf, size_t buf_size, const char *sub) {
+    if (strcmp(sub, "..") == 0) {
+        navigate_to_parent(dir_buf, buf_size);
+        return;
+    }
+    char temp[PATH_MAX];
+    if (strcmp(dir_buf, "/") == 0) {
+        snprintf(temp, sizeof(temp), "/%s", sub);
+    } else {
+        snprintf(temp, sizeof(temp), "%s/%s", dir_buf, sub);
+    }
+    char resolved[PATH_MAX];
+    if (realpath(temp, resolved)) {
+        snprintf(dir_buf, buf_size, "%s", resolved);
+    } else {
+        snprintf(dir_buf, buf_size, "%s", temp);
+    }
+}
+
+static void format_file_size(size_t size, char *buf, size_t buf_len) {
+    if (size < 1024) {
+        snprintf(buf, buf_len, "%zu B", size);
+    } else if (size < 1024 * 1024) {
+        snprintf(buf, buf_len, "%.1f KB", (double)size / 1024.0);
+    } else {
+        snprintf(buf, buf_len, "%.1f MB", (double)size / (1024.0 * 1024.0));
+    }
+}
+
+bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_len) {
+    if (!ed || !out_path || max_len == 0) return false;
+
+    char current_dir[PATH_MAX];
+    if (ed->buffer.file_path && ed->buffer.file_path[0]) {
+        char dir_copy[PATH_MAX];
+        strncpy(dir_copy, ed->buffer.file_path, sizeof(dir_copy) - 1);
+        dir_copy[sizeof(dir_copy) - 1] = '\0';
+        char *d = dirname(dir_copy);
+        if (!realpath(d, current_dir)) {
+            if (!getcwd(current_dir, sizeof(current_dir))) {
+                strncpy(current_dir, ".", sizeof(current_dir));
+            }
+        }
+    } else {
+        if (!getcwd(current_dir, sizeof(current_dir))) {
+            strncpy(current_dir, ".", sizeof(current_dir));
+        }
+    }
+
+    char input_buf[256] = {0};
+    if (mode == FILE_DIALOG_SAVE_AS) {
+        if (ed->buffer.file_path && ed->buffer.file_path[0]) {
+            char file_copy[PATH_MAX];
+            strncpy(file_copy, ed->buffer.file_path, sizeof(file_copy) - 1);
+            file_copy[sizeof(file_copy) - 1] = '\0';
+            char *b = basename(file_copy);
+            strncpy(input_buf, b, sizeof(input_buf) - 1);
+        } else {
+            strncpy(input_buf, "untitled.md", sizeof(input_buf) - 1);
+        }
+    }
+
+    size_t count = 0;
+    FileItem *items = load_directory_items(current_dir, &count);
+    int selected_idx = 0;
+    int scroll_offset = 0;
+
+    enum { FOCUS_LIST, FOCUS_INPUT } focus = (mode == FILE_DIALOG_SAVE_AS) ? FOCUS_INPUT : FOCUS_LIST;
+
+    int rows, cols;
+    getmaxyx(stdscr, rows, cols);
+
+    int win_w = 72;
+    if (win_w > cols - 4) win_w = cols - 4;
+    if (win_w < 44) win_w = 44;
+
+    int win_h = 22;
+    if (win_h > rows - 2) win_h = rows - 2;
+    if (win_h < 12) win_h = 12;
+
+    int win_y = (rows - win_h) / 2;
+    int win_x = (cols - win_w) / 2;
+
+    WINDOW *win = newwin(win_h, win_w, win_y, win_x);
+    if (!win) {
+        free(items);
+        return false;
+    }
+    keypad(win, TRUE);
+    wbkgd(win, COLOR_PAIR(CP_HELP_BOX));
+
+    bool confirmed = false;
+
+    while (1) {
+        werase(win);
+        box(win, 0, 0);
+
+        // Title
+        wattron(win, COLOR_PAIR(CP_HEADER1) | A_BOLD);
+        const char *title = (mode == FILE_DIALOG_OPEN) ? " Open File " : " Save As ";
+        int tx = (win_w - (int)strlen(title)) / 2;
+        mvwaddstr(win, 0, tx, title);
+        wattroff(win, COLOR_PAIR(CP_HEADER1) | A_BOLD);
+
+        // Current Directory display (truncated on left if too long)
+        wattron(win, COLOR_PAIR(CP_DEFAULT) | A_BOLD);
+        mvwaddstr(win, 1, 2, "Dir: ");
+        wattroff(win, COLOR_PAIR(CP_DEFAULT) | A_BOLD);
+
+        int max_dir_disp = win_w - 9;
+        size_t dlen = strlen(current_dir);
+        if ((int)dlen > max_dir_disp) {
+            char short_dir[256];
+            snprintf(short_dir, sizeof(short_dir), "...%s", current_dir + dlen - (max_dir_disp - 3));
+            wattron(win, COLOR_PAIR(CP_LINK));
+            mvwaddstr(win, 1, 7, short_dir);
+            wattroff(win, COLOR_PAIR(CP_LINK));
+        } else {
+            wattron(win, COLOR_PAIR(CP_LINK));
+            mvwaddstr(win, 1, 7, current_dir);
+            wattroff(win, COLOR_PAIR(CP_LINK));
+        }
+
+        // Horizontal separator line under directory
+        mvwaddch(win, 2, 0, ACS_LTEE);
+        for (int x = 1; x < win_w - 1; ++x) mvwaddch(win, 2, x, ACS_HLINE);
+        mvwaddch(win, 2, win_w - 1, ACS_RTEE);
+
+        // List dimensions
+        int list_start_y = 3;
+        int list_h = (mode == FILE_DIALOG_SAVE_AS) ? (win_h - 7) : (win_h - 5);
+        if (list_h < 3) list_h = 3;
+
+        // Ensure selected_idx and scroll_offset are valid
+        if (selected_idx < 0) selected_idx = 0;
+        if (count > 0 && selected_idx >= (int)count) selected_idx = (int)count - 1;
+        if (selected_idx < scroll_offset) scroll_offset = selected_idx;
+        if (selected_idx >= scroll_offset + list_h) scroll_offset = selected_idx - list_h + 1;
+
+        // Render file list items
+        for (int i = 0; i < list_h; ++i) {
+            int idx = scroll_offset + i;
+            int y = list_start_y + i;
+
+            if (idx < (int)count) {
+                bool is_sel = (idx == selected_idx && focus == FOCUS_LIST);
+                FileItem *fi = &items[idx];
+
+                if (is_sel) {
+                    wattron(win, COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_REVERSE | A_BOLD);
+                    for (int x = 1; x < win_w - 1; ++x) mvwaddch(win, y, x, ' ');
+                    mvwaddstr(win, y, 2, "▶ ");
+                } else {
+                    mvwaddstr(win, y, 2, "  ");
+                }
+
+                if (fi->is_dir) {
+                    wattron(win, COLOR_PAIR(CP_HEADER2) | A_BOLD);
+                    char dname[260];
+                    if (strcmp(fi->name, "..") == 0) {
+                        snprintf(dname, sizeof(dname), "[..] (Parent Directory)");
+                    } else {
+                        snprintf(dname, sizeof(dname), "%s/", fi->name);
+                    }
+                    mvwaddnstr(win, y, 4, dname, win_w - 18);
+                    wattroff(win, COLOR_PAIR(CP_HEADER2) | A_BOLD);
+
+                    // Right column: <DIR>
+                    mvwaddstr(win, y, win_w - 8, "<DIR>");
+                } else {
+                    wattron(win, COLOR_PAIR(CP_DEFAULT));
+                    mvwaddnstr(win, y, 4, fi->name, win_w - 18);
+                    wattroff(win, COLOR_PAIR(CP_DEFAULT));
+
+                    // Right column: File size
+                    char sz_buf[32];
+                    format_file_size(fi->size, sz_buf, sizeof(sz_buf));
+                    int sz_len = (int)strlen(sz_buf);
+                    mvwaddstr(win, y, win_w - sz_len - 3, sz_buf);
+                }
+
+                if (is_sel) {
+                    wattroff(win, COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_REVERSE | A_BOLD);
+                }
+            } else {
+                for (int x = 1; x < win_w - 1; ++x) mvwaddch(win, y, x, ' ');
+            }
+        }
+
+        // Scrollbar indicator on right border
+        if (count > (size_t)list_h) {
+            int thumb_pos = (selected_idx * (list_h - 1)) / ((int)count - 1);
+            wattron(win, COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_BOLD);
+            mvwaddch(win, list_start_y + thumb_pos, win_w - 1, ACS_BLOCK);
+            wattroff(win, COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_BOLD);
+        }
+
+        // Save As input row
+        if (mode == FILE_DIALOG_SAVE_AS) {
+            int input_sep_y = win_h - 4;
+            int input_y = win_h - 3;
+
+            mvwaddch(win, input_sep_y, 0, ACS_LTEE);
+            for (int x = 1; x < win_w - 1; ++x) mvwaddch(win, input_sep_y, x, ACS_HLINE);
+            mvwaddch(win, input_sep_y, win_w - 1, ACS_RTEE);
+
+            bool is_input_focused = (focus == FOCUS_INPUT);
+            wattron(win, is_input_focused ? (COLOR_PAIR(CP_DEFAULT) | A_BOLD) : COLOR_PAIR(CP_MARKER));
+            mvwaddstr(win, input_y, 2, "File name: ");
+            wattroff(win, is_input_focused ? (COLOR_PAIR(CP_DEFAULT) | A_BOLD) : COLOR_PAIR(CP_MARKER));
+
+            // Input field box
+            int box_start_x = 13;
+            int box_width = win_w - 16;
+            wattron(win, COLOR_PAIR(CP_DEFAULT) | (is_input_focused ? A_REVERSE : 0));
+            for (int x = 0; x < box_width; ++x) mvwaddch(win, input_y, box_start_x + x, ' ');
+            mvwaddnstr(win, input_y, box_start_x, input_buf, box_width - 1);
+            wattroff(win, COLOR_PAIR(CP_DEFAULT) | (is_input_focused ? A_REVERSE : 0));
+
+            if (is_input_focused) {
+                curs_set(1);
+                wmove(win, input_y, box_start_x + (int)strlen(input_buf));
+            } else {
+                curs_set(0);
+            }
+        } else {
+            curs_set(0);
+        }
+
+        // Bottom separator & help instructions
+        mvwaddch(win, win_h - 2, 0, ACS_LTEE);
+        for (int x = 1; x < win_w - 1; ++x) mvwaddch(win, win_h - 2, x, ACS_HLINE);
+        mvwaddch(win, win_h - 2, win_w - 1, ACS_RTEE);
+
+        wattron(win, COLOR_PAIR(CP_MARKER) | A_DIM);
+        if (mode == FILE_DIALOG_OPEN) {
+            mvwaddstr(win, win_h - 1, 2, " [Enter] Open  [Backspace] Up  [Esc] Cancel ");
+        } else {
+            mvwaddstr(win, win_h - 1, 2, " [Enter] Save  [Tab] Switch  [Backspace] Up  [Esc] Cancel ");
+        }
+        wattroff(win, COLOR_PAIR(CP_MARKER) | A_DIM);
+
+        wrefresh(win);
+
+        int ch = wgetch(win);
+        if (ch == ERR) continue;
+
+        if (ch == 27 || ch == CTRL_KEY('q') || ch == CTRL_KEY('c') || ch == CTRL_KEY('g')) {
+            confirmed = false;
+            break;
+        }
+
+        if (ch == '\t') {
+            if (mode == FILE_DIALOG_SAVE_AS) {
+                focus = (focus == FOCUS_INPUT) ? FOCUS_LIST : FOCUS_INPUT;
+            }
+            continue;
+        }
+
+        if (focus == FOCUS_INPUT) {
+            if (ch == '\n' || ch == '\r') {
+                if (input_buf[0] != '\0') {
+                    if (input_buf[0] == '/') {
+                        strncpy(out_path, input_buf, max_len - 1);
+                    } else {
+                        snprintf(out_path, max_len, "%s/%s", current_dir, input_buf);
+                    }
+                    out_path[max_len - 1] = '\0';
+                    confirmed = true;
+                    break;
+                }
+            } else if (ch == KEY_UP) {
+                focus = FOCUS_LIST;
+            } else if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
+                size_t ilen = strlen(input_buf);
+                if (ilen > 0) {
+                    size_t prev = utf8_prev_char(input_buf, ilen);
+                    input_buf[prev] = '\0';
+                }
+            } else if (ch >= 32 && ch <= 126) {
+                size_t ilen = strlen(input_buf);
+                if (ilen + 1 < sizeof(input_buf)) {
+                    input_buf[ilen] = (char)ch;
+                    input_buf[ilen + 1] = '\0';
+                }
+            }
+        } else {
+            // FOCUS_LIST
+            if (ch == KEY_UP || ch == 'k') {
+                if (selected_idx > 0) selected_idx--;
+            } else if (ch == KEY_DOWN || ch == 'j') {
+                if (selected_idx + 1 < (int)count) selected_idx++;
+            } else if (ch == KEY_PPAGE) {
+                selected_idx -= list_h;
+                if (selected_idx < 0) selected_idx = 0;
+            } else if (ch == KEY_NPAGE) {
+                selected_idx += list_h;
+                if (selected_idx >= (int)count) selected_idx = (int)count - 1;
+            } else if (ch == KEY_HOME) {
+                selected_idx = 0;
+            } else if (ch == KEY_END) {
+                selected_idx = (int)count - 1;
+            } else if (ch == KEY_LEFT || ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
+                free(items);
+                navigate_to_parent(current_dir, sizeof(current_dir));
+                items = load_directory_items(current_dir, &count);
+                selected_idx = 0;
+                scroll_offset = 0;
+            } else if (ch == '\n' || ch == '\r') {
+                if (count > 0 && selected_idx < (int)count) {
+                    if (items[selected_idx].is_dir) {
+                        char sub[256];
+                        strncpy(sub, items[selected_idx].name, sizeof(sub) - 1);
+                        sub[sizeof(sub) - 1] = '\0';
+                        free(items);
+                        navigate_into_sub(current_dir, sizeof(current_dir), sub);
+                        items = load_directory_items(current_dir, &count);
+                        selected_idx = 0;
+                        scroll_offset = 0;
+                    } else {
+                        // File selected
+                        if (mode == FILE_DIALOG_OPEN) {
+                            snprintf(out_path, max_len, "%s/%s", current_dir, items[selected_idx].name);
+                            out_path[max_len - 1] = '\0';
+                            confirmed = true;
+                            break;
+                        } else {
+                            // In Save As mode, selecting a file updates input_buf and focuses input
+                            strncpy(input_buf, items[selected_idx].name, sizeof(input_buf) - 1);
+                            input_buf[sizeof(input_buf) - 1] = '\0';
+                            focus = FOCUS_INPUT;
+                        }
+                    }
+                }
+            } else if (ch >= 32 && ch <= 126) {
+                // Quick search / jump to next entry starting with that char
+                char target = (char)tolower(ch);
+                for (size_t i = 1; i <= count; ++i) {
+                    size_t candidate = (selected_idx + i) % count;
+                    if (tolower((unsigned char)items[candidate].name[0]) == target) {
+                        selected_idx = (int)candidate;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    free(items);
+    delwin(win);
+    curs_set(1);
+    touchwin(stdscr);
+    ui_draw(ed);
+    return confirmed;
+}
+
 typedef enum {
     HELP_LINE_SECTION,
     HELP_LINE_ITEM,
@@ -555,29 +1126,38 @@ typedef struct {
 static const HelpEntry s_editor_help[] = {
     { HELP_LINE_SECTION, "FILE & SESSION", NULL },
     { HELP_LINE_ITEM, "Ctrl+S", "Save current document to disk" },
-    { HELP_LINE_ITEM, "Ctrl+O", "Open / load file into buffer" },
+    { HELP_LINE_ITEM, "Ctrl+O", "Open file dialogue to browse & open file" },
+    { HELP_LINE_ITEM, "Ctrl+W", "Save As file dialogue (browse directory & set name)" },
     { HELP_LINE_ITEM, "Ctrl+Q", "Quit editor (prompts if unsaved changes)" },
     { HELP_LINE_ITEM, "Ctrl+H / F1", "Open / close this Help & Reference overlay" },
     { HELP_LINE_BLANK, NULL, NULL },
     { HELP_LINE_SECTION, "VIEW MODES & CURSOR", NULL },
     { HELP_LINE_ITEM, "Ctrl+P / F2", "Cycle view: Split -> In-Place -> Preview" },
-    { HELP_LINE_ITEM, "Ins", "Toggle mode: Insert (steady _) / Normal (steady █)" },
+    { HELP_LINE_ITEM, "Ins", "Toggle mode: Insert (steady █) / Overwrite (steady _)" },
     { HELP_LINE_BLANK, NULL, NULL },
-    { HELP_LINE_SECTION, "EDITING & FORMATTING", NULL },
+    { HELP_LINE_SECTION, "SELECTION & CLIPBOARD", NULL },
+    { HELP_LINE_ITEM, "Ctrl+Space", "Set selection mark start (move cursor to extend)" },
+    { HELP_LINE_ITEM, "Ctrl+X", "Cut selected text to clipboard (OSC 52 synced)" },
+    { HELP_LINE_ITEM, "Ctrl+C", "Copy selected text to clipboard (OSC 52 synced)" },
+    { HELP_LINE_ITEM, "Ctrl+V", "Paste text from clipboard" },
+    { HELP_LINE_ITEM, "Esc / Ctrl+G", "Clear active selection mark" },
+    { HELP_LINE_BLANK, NULL, NULL },
+    { HELP_LINE_SECTION, "LINE & WORD EDITING", NULL },
+    { HELP_LINE_ITEM, "Ctrl+K", "Kill (cut) from cursor to end of line / newline" },
     { HELP_LINE_ITEM, "Ctrl+Z", "Undo last editing operation" },
     { HELP_LINE_ITEM, "Ctrl+Y", "Redo undone editing operation" },
     { HELP_LINE_ITEM, "Ctrl+T", "Toggle task checkbox: - [ ] <-> - [x]" },
-    { HELP_LINE_ITEM, "Ctrl+B", "Insert Markdown bold markers (****)" },
-    { HELP_LINE_ITEM, "Ctrl+K", "Insert Markdown inline code backticks (``)" },
+    { HELP_LINE_ITEM, "Ctrl+B", "Insert Markdown bold markers / wrap selection" },
     { HELP_LINE_ITEM, "Enter", "Smart Enter: auto-continues lists, tasks & indents" },
     { HELP_LINE_ITEM, "Tab", "Indent current line or block by 2 spaces" },
     { HELP_LINE_ITEM, "Shift+Tab", "Unindent current line or block by 2 spaces" },
     { HELP_LINE_BLANK, NULL, NULL },
     { HELP_LINE_SECTION, "SEARCH & NAVIGATION", NULL },
+    { HELP_LINE_ITEM, "Ctrl+A / Home", "Jump to beginning of current line" },
+    { HELP_LINE_ITEM, "Ctrl+E / End", "Jump to end of current line" },
     { HELP_LINE_ITEM, "Ctrl+F", "Find / search text pattern in document" },
     { HELP_LINE_ITEM, "F3", "Repeat search: jump to next occurrence" },
     { HELP_LINE_ITEM, "Arrow Keys", "Navigate cursor by character / line" },
-    { HELP_LINE_ITEM, "Home / End", "Jump to beginning / end of current line" },
     { HELP_LINE_ITEM, "PgUp / PgDn", "Scroll viewport up / down by page" }
 };
 
