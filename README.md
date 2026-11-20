@@ -17,8 +17,9 @@
 │  10 │ ```                                    │   └──                                        │
 │   ~ │                                        │                                              │
 ├─────┴────────────────────────────────────────┴──────────────────────────────────────────────┤
-│ [ SPLIT ]  demo.md [*]                              Ln 1, Col 1 | 38 words | UTF-8          │
-│ Ctrl+S: Save | Ctrl+Q: Quit | Ctrl+P: View | Ctrl+T: Checkbox | Ctrl+F: Find | Ctrl+H: Help │
+│ [ SPLIT ]  demo.md [*]                    INS | W:78 | Ln 1, Col 1 | 38 words | UTF-8       │
+│  ^S Save      ^O Open      ^W Save As   ^P View      ^F Find      ^Q Quit                   │
+│  ^X Cut       ^C Copy      ^V Paste     ^K Kill      ^Z Undo      ^H Help                   │
 └─────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -33,7 +34,12 @@
 - **Active Line Highlighting & Column Ruler**:
   - **Active Line Gutter Marker (`▶`)**: Visually indicates the currently active line in the gutter.
   - **Prominent Active Markers**: Syntax markers (`#`, `**`, `*`, `` ` ``, `~~`, `[ ]`, `[x]`, `>`) on the active line are highlighted vibrantly in bold accent color so you can clearly see and edit Markdown delimiters.
-  - **Column Ruler**: A top-aligned ruler displaying ticks (`·`), 5-column markers (`+`), 10-column tens numbers, column 80 wrap guideline (`┆`), and an interactive cursor column pointer (`▼`).
+  - **Column Ruler**: A top-aligned ruler displaying ticks (`·`), 5-column markers (`+`), 10-column tens numbers, a dynamic wrap guide (`┆`) at the active line break column, and an interactive cursor column pointer (`▼`).
+- **Automatic Line Break (Default: 78 Columns)**:
+  - Automatically wraps lines at word boundaries when typing past the configured column limit, stripping break whitespace and moving the wrapped word and cursor seamlessly onto the next line.
+  - Falls back to a UTF-8 boundary hard break for unbroken tokens exceeding the column limit, and preserves leading indentation and Markdown blockquote (`> `) prefixes on continuation lines.
+  - Press **`Ctrl+L` / `F4`** inside the editor or pass **`-w <20-255|off>`** / **`--wrap=<20-255|off>`** on the command line to set an arbitrary wrap column between **20 and 255**, or turn it **off** (`0`, `off`, or `none`).
+  - The active setting is displayed on the status bar (`W:78` or `W:OFF`) and reflected by the wrap guide (`┆`) on the column ruler.
 - **Interactive File Dialogue (`Ctrl+O` Open / `Ctrl+W` Save As)**:
   - Browse directories and files visually with directory navigation (`..` parent, subdirectories).
   - Shows file names, directories with `<DIR>`, and file sizes formatted in B, KB, or MB.
@@ -80,6 +86,16 @@ Updating this single file automatically updates the CLI output (`mde -v`), the h
 
 ---
 
+## Command-Line Options
+
+| Option | Description |
+|---|---|
+| **`-h`, `--help`** | Display command-line usage and keybindings summary |
+| **`-v`, `--version`** | Print version string and build date/time |
+| **`-w <cols>`, `--wrap <cols>`, `--wrap=<cols>`** | Set automatic line break column width (`20`–`255`, or `off`/`0` to disable; default `78`) |
+
+---
+
 ## Keybindings Reference
 
 | Shortcut | Description |
@@ -89,6 +105,7 @@ Updating this single file automatically updates the CLI output (`mde -v`), the h
 | **`Ctrl+W`** | Save As file dialogue to choose directory & name |
 | **`Ctrl+Q`** | Quit editor (prompts to save unsaved changes) |
 | **`Ctrl+P` / `F2`** | Cycle View Modes (**Split** → **In-Place** → **Preview**) |
+| **`Ctrl+L` / `F4`** | Set automatic line break column (`20`–`255` or `off`; default `78`) |
 | **`Ctrl+T`** | Toggle checkbox `[ ]` <-> `[x]` on current line |
 | **`Ctrl+Space`** | Set selection mark start (move cursor to select) |
 | **`Ctrl+X`** | Cut selected text to clipboard |
@@ -160,8 +177,14 @@ sudo make install
 ## Usage
 
 ```bash
-# Open an existing Markdown document
+# Open an existing Markdown document (default 78-column auto line break)
 mde notes.md
+
+# Open with a custom automatic line break at 100 columns
+mde -w 100 notes.md
+
+# Open with automatic line break disabled
+mde --wrap=off notes.md
 
 # Open sample demo file
 mde demo.md
@@ -185,16 +208,16 @@ mde/
 ├── src/
 │   ├── version.h       # Centralized name, version, and build date
 │   ├── buffer.h / .c   # Text buffer with UTF-8 & dynamic reallocation
-│   ├── editor.h / .c   # Editor state, viewport tracking & smart Markdown helpers
+│   ├── editor.h / .c   # Editor state, auto line break, selection & Markdown helpers
 │   ├── markdown.h / .c # Markdown lexer, AST spans & block/inline tokenizer
 │   ├── renderer.h / .c # Formatted preview renderer with synchronized line mapping
 │   ├── theme.h / .c    # 256-color & 16-color ncurses palette & token styles
-│   ├── ui.h / .c       # Screen layout, column ruler, split pane & status bar
+│   ├── ui.h / .c       # Screen layout, column ruler, file dialog & status bar
 │   ├── undo.h / .c     # Multi-level undo & redo action stacks
 │   ├── utf8.h / .c     # UTF-8 boundary checks, visual column conversions (wcwidth)
-│   └── main.c          # Event loop, terminal signals, key dispatch & mouse events
+│   └── main.c          # Event loop, CLI parsing, signals, key & mouse dispatch
 └── tests/
-    └── test_runner.c   # Comprehensive C11 unit test suite (53 tests)
+    └── test_runner.c   # Comprehensive C11 unit test suite (175 tests)
 ```
 
 ---

@@ -63,22 +63,34 @@ static int get_line_num_width(size_t max_lines) {
  * column 80, and a cursor position marker (▼) above the active column.
  */
 static void draw_column_ruler(Editor *ed, int start_col, int width, int screen_y, int gutter_w) {
+    if (width <= 0) return;
+
+    int gutter_text_end = start_col + gutter_w - 2;
+    if (gutter_text_end > start_col + width) gutter_text_end = start_col + width;
+
     // Gutter header: " COL │ "
     attron(COLOR_PAIR(CP_RULER));
-    for (int x = start_col; x < start_col + gutter_w - 2; ++x) {
+    for (int x = start_col; x < gutter_text_end; ++x) {
         mvaddch(screen_y, x, ' ');
     }
-    mvaddstr(screen_y, start_col + 1, "COL");
+    if (gutter_text_end - (start_col + 1) >= 3) {
+        mvaddstr(screen_y, start_col + 1, "COL");
+    }
     attroff(COLOR_PAIR(CP_RULER));
 
-    attron(COLOR_PAIR(CP_DIVIDER));
-    mvaddstr(screen_y, start_col + gutter_w - 2, "│ ");
-    attroff(COLOR_PAIR(CP_DIVIDER));
+    if (start_col + gutter_w <= start_col + width) {
+        attron(COLOR_PAIR(CP_DIVIDER));
+        mvaddstr(screen_y, start_col + gutter_w - 2, "│ ");
+        attroff(COLOR_PAIR(CP_DIVIDER));
+    } else {
+        return;
+    }
 
     const char *cur_line = buffer_line(&ed->buffer, ed->cursor_row);
     int cursor_vcol = utf8_byte_to_col(cur_line, ed->cursor_col);
 
     int content_w = width - gutter_w;
+    if (content_w <= 0) return;
     int render_x = start_col + gutter_w;
 
     for (int i = 0; i < content_w; ++i) {
@@ -90,8 +102,8 @@ static void draw_column_ruler(Editor *ed, int start_col, int width, int screen_y
             attron(COLOR_PAIR(CP_RULER_CURSOR) | A_BOLD);
             mvaddstr(screen_y, render_x + i, "▼");
             attroff(COLOR_PAIR(CP_RULER_CURSOR) | A_BOLD);
-        } else if (col_num == 80) {
-            // Column 80 guide
+        } else if (ed->wrap_col > 0 && col_num == ed->wrap_col) {
+            // Active automatic line break guide
             attron(COLOR_PAIR(CP_RULER_LIMIT) | A_BOLD);
             mvaddstr(screen_y, render_x + i, "┆");
             attroff(COLOR_PAIR(CP_RULER_LIMIT) | A_BOLD);
@@ -133,6 +145,7 @@ static void draw_editor_pane(Editor *ed, int start_col, int width, int start_row
 
     int text_start_y = start_row + 1;
     int text_height = height - 1;
+    if (text_height <= 0) return;
 
     // Track multi-line code block state up to scroll_row
     bool in_code_block = false;
@@ -151,6 +164,13 @@ static void draw_editor_pane(Editor *ed, int start_col, int width, int start_row
     for (int y = 0; y < text_height; ++y) {
         size_t row_idx = ed->scroll_row + (size_t)y;
         int screen_y = text_start_y + y;
+
+        if (width < gutter_w) {
+            for (int x = start_col; x < start_col + width; ++x) {
+                mvaddch(screen_y, x, ' ');
+            }
+            continue;
+        }
 
         if (row_idx < total_lines) {
             bool is_cur_row = (row_idx == ed->cursor_row);
@@ -262,17 +282,20 @@ static void draw_editor_pane(Editor *ed, int start_col, int width, int start_row
 static void draw_preview_pane(Editor *ed, int start_col, int width, int start_row, int height) {
     if (width <= 0 || height <= 0) return;
 
-    // Header bar for preview pane
+    // Header bar for preview pane (clipped to pane width)
     attron(COLOR_PAIR(CP_RULER));
-    mvaddstr(start_row, start_col, "  PREVIEW");
-    int rx = start_col + 9;
-    while (rx < start_col + width) {
-        mvaddch(start_row, rx++, ' ');
+    for (int x = start_col; x < start_col + width; ++x) {
+        mvaddch(start_row, x, ' ');
     }
+    const char *hdr = "  PREVIEW";
+    int hdr_len = (int)strlen(hdr);
+    if (hdr_len > width) hdr_len = width;
+    mvaddnstr(start_row, start_col, hdr, hdr_len);
     attroff(COLOR_PAIR(CP_RULER));
 
     int text_start_y = start_row + 1;
     int text_height = height - 1;
+    if (text_height <= 0) return;
     size_t total_rendered = ed->rendered_doc.count;
 
     for (int y = 0; y < text_height; ++y) {
@@ -280,9 +303,11 @@ static void draw_preview_pane(Editor *ed, int start_col, int width, int start_ro
         int screen_y = text_start_y + y;
         int render_x = start_col;
 
-        // Left margin padding
-        mvaddstr(screen_y, render_x, "  ");
-        render_x += 2;
+        // Left margin padding (respecting narrow panes)
+        int pad = width >= 2 ? 2 : width;
+        for (int p = 0; p < pad; ++p) {
+            mvaddch(screen_y, render_x++, ' ');
+        }
 
         if (rend_idx < total_rendered) {
             RenderedLine *rl = &ed->rendered_doc.lines[rend_idx];
@@ -318,7 +343,7 @@ static void draw_preview_pane(Editor *ed, int start_col, int width, int start_ro
  * @brief Render the bottom status bar with file, position, word count, and mode.
  */
 static void draw_status_bar(Editor *ed, int screen_rows, int screen_cols, int y) {
-    (void)screen_rows;
+    if (y < 0 || y >= screen_rows || screen_cols <= 0) return;
     attron(COLOR_PAIR(CP_STATUS_BAR));
     for (int x = 0; x < screen_cols; ++x) {
         mvaddch(y, x, ' ');
@@ -329,9 +354,13 @@ static void draw_status_bar(Editor *ed, int screen_rows, int screen_cols, int y)
     if (ed->view_mode == VIEW_INPLACE) mode_str = "[ IN-PLACE ]";
     else if (ed->view_mode == VIEW_PREVIEW) mode_str = "[ PREVIEW ]";
 
-    attron(COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_BOLD);
-    mvaddstr(y, 1, mode_str);
-    attroff(COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_BOLD);
+    int mode_len = (int)strlen(mode_str);
+    if (screen_cols > 2) {
+        int draw_len = mode_len < screen_cols - 1 ? mode_len : screen_cols - 1;
+        attron(COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_BOLD);
+        mvaddnstr(y, 1, mode_str, draw_len);
+        attroff(COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_BOLD);
+    }
 
     // Right-aligned stats
     char right_buf[128];
@@ -343,20 +372,38 @@ static void draw_status_bar(Editor *ed, int screen_rows, int screen_cols, int y)
     } else {
         snprintf(mode_buf, sizeof(mode_buf), "%s", ed->insert_mode ? "INS" : "OVR");
     }
-    snprintf(right_buf, sizeof(right_buf), "%s | Ln %zu, Col %d | %zu words | UTF-8",
-             mode_buf,
+    char wrap_buf[16];
+    if (ed->wrap_col > 0) {
+        snprintf(wrap_buf, sizeof(wrap_buf), "W:%d", ed->wrap_col);
+    } else {
+        snprintf(wrap_buf, sizeof(wrap_buf), "W:OFF");
+    }
+    snprintf(right_buf, sizeof(right_buf), "%s | %s | Ln %zu, Col %d | %zu words | UTF-8",
+             mode_buf, wrap_buf,
              ed->cursor_row + 1, visual_col, buffer_word_count(&ed->buffer));
 
     int right_len = (int)strlen(right_buf);
     int right_x = screen_cols - right_len - 2;
+    bool show_right = (right_x > mode_len + 4);
+    int left_limit = show_right ? (right_x - 1) : (screen_cols - 1);
 
-    // File name and dirty marker
+    // File name and dirty marker (strictly clipped to left_limit)
     attron(COLOR_PAIR(CP_STATUS_BAR));
     const char *fname = ed->buffer.file_path ? ed->buffer.file_path : "[No Name]";
-    mvprintw(y, 14, " %s ", fname);
+    int fname_x = mode_len + 3;
+    int fname_end_x = fname_x;
+    if (fname_x < left_limit) {
+        int max_fname = left_limit - fname_x;
+        if (ed->buffer.is_dirty && max_fname > 4) max_fname -= 4;
+        int fn_len = (int)strlen(fname);
+        if (fn_len > max_fname) fn_len = max_fname;
+        if (fn_len > 0) {
+            mvaddnstr(y, fname_x, fname, fn_len);
+            fname_end_x = fname_x + fn_len + 1;
+        }
+    }
 
-    int fname_end_x = 14 + (int)strlen(fname) + 2;
-    if (ed->buffer.is_dirty) {
+    if (ed->buffer.is_dirty && fname_end_x + 3 <= left_limit) {
         attron(COLOR_PAIR(CP_STATUS_BAR_DIRTY) | A_BOLD);
         mvaddstr(y, fname_end_x, "[*]");
         attroff(COLOR_PAIR(CP_STATUS_BAR_DIRTY) | A_BOLD);
@@ -365,17 +412,17 @@ static void draw_status_bar(Editor *ed, int screen_rows, int screen_cols, int y)
 
     // Ephemeral status notification (if active within 5 seconds)
     if (ed->status_msg[0] && time(NULL) - ed->status_time < 5) {
-        int avail_w = right_x - fname_end_x - 4;
-        if (avail_w > 8) {
+        int avail_w = left_limit - fname_end_x - 3;
+        if (avail_w > 6) {
             attron(COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_BOLD);
-            mvprintw(y, fname_end_x + 2, " %.*s ", avail_w - 2, ed->status_msg);
+            mvprintw(y, fname_end_x + 1, " %.*s ", avail_w - 2, ed->status_msg);
             attroff(COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_BOLD);
         }
     }
 
-    if (right_x > 25) {
+    if (show_right) {
         attron(COLOR_PAIR(CP_STATUS_BAR));
-        mvaddstr(y, right_x, right_buf);
+        mvaddnstr(y, right_x, right_buf, screen_cols - right_x);
     }
     attroff(COLOR_PAIR(CP_STATUS_BAR));
 }
@@ -415,10 +462,12 @@ static const ShortcutHint s_hints_r3[] = {
 int ui_get_shortcut_hint_rows(int screen_rows) {
     if (screen_rows >= 28) return 3;
     if (screen_rows >= 16) return 2;
-    return 1;
+    if (screen_rows >= 6) return 1;
+    return 0;
 }
 
 static void draw_shortcut_hints(int screen_cols, int start_y, int num_rows) {
+    if (num_rows <= 0 || screen_cols <= 2) return;
     const ShortcutHint *all_rows[3] = { s_hints_r1, s_hints_r2, s_hints_r3 };
 
     for (int r = 0; r < num_rows; ++r) {
@@ -432,20 +481,25 @@ static void draw_shortcut_hints(int screen_cols, int start_y, int num_rows) {
 
         for (int i = 0; i < num_items; ++i) {
             int x = i * col_w;
-            if (x + col_w > screen_cols && i > 0) break;
+            if (x + 2 >= screen_cols) break;
 
             const ShortcutHint *h = &all_rows[r][i];
+            int kw = (int)strlen(h->key);
+            if (x + 1 + kw >= screen_cols) break;
 
             // Render key badge (inverted bold)
             attron(COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_REVERSE | A_BOLD);
-            mvaddstr(y, x + 1, h->key);
+            mvaddnstr(y, x + 1, h->key, screen_cols - (x + 1));
             attroff(COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_REVERSE | A_BOLD);
 
-            // Render description
-            int kw = (int)strlen(h->key);
-            attron(COLOR_PAIR(CP_DEFAULT));
-            mvaddstr(y, x + 1 + kw + 1, h->desc);
-            attroff(COLOR_PAIR(CP_DEFAULT));
+            // Render description (strictly clipped so bottom row never wraps)
+            int desc_x = x + 1 + kw + 1;
+            int max_desc = (x + col_w < screen_cols ? x + col_w : screen_cols - 1) - desc_x;
+            if (max_desc > 0) {
+                attron(COLOR_PAIR(CP_DEFAULT));
+                mvaddnstr(y, desc_x, h->desc, max_desc);
+                attroff(COLOR_PAIR(CP_DEFAULT));
+            }
         }
     }
 }
@@ -468,48 +522,89 @@ void ui_draw(Editor *ed) {
 
     int rows, cols;
     getmaxyx(stdscr, rows, cols);
+
+    bool resized = (rows != ed->screen_rows || cols != ed->screen_cols);
     ed->screen_rows = rows;
     ed->screen_cols = cols;
+
+    if (resized) {
+        ed->rendered_dirty = true;
+        erase();
+    }
+
+    // Graceful fallback for ultra-tiny terminals
+    if (rows < 3 || cols < 10) {
+        erase();
+        curs_set(0);
+        const char *msg = "Resize terminal";
+        int mlen = (int)strlen(msg);
+        if (mlen > cols) mlen = cols;
+        mvaddnstr(rows / 2, (cols - mlen) / 2, msg, mlen);
+        refresh();
+        return;
+    }
 
     int num_hint_rows = ui_get_shortcut_hint_rows(rows);
     int status_bar_y = rows - num_hint_rows - 1;
     int body_height = status_bar_y;
-    if (body_height < 2) body_height = 2;
+    if (body_height < 1) body_height = 1;
 
-    // Body height minus 1 row for ruler
-    editor_update_scroll(ed, body_height - 1);
+    // Compute pane widths BEFORE updating scroll and re-rendering preview
+    int new_editor_width = 0;
+    int new_preview_width = 0;
+    int split_col = cols / 2;
+
+    switch (ed->view_mode) {
+        case VIEW_SPLIT:
+            new_editor_width = split_col;
+            new_preview_width = cols - split_col - 1;
+            if (new_preview_width < 0) new_preview_width = 0;
+            break;
+        case VIEW_INPLACE:
+            new_editor_width = cols;
+            new_preview_width = 0;
+            break;
+        case VIEW_PREVIEW:
+            new_editor_width = 0;
+            new_preview_width = cols;
+            break;
+    }
+
+    if (new_preview_width != ed->preview_width) {
+        ed->rendered_dirty = true;
+    }
+    ed->editor_width = new_editor_width;
+    ed->preview_width = new_preview_width;
+
+    // Refresh preview and scroll offsets using the new geometry
     editor_refresh_rendered(ed);
+    int view_rows = body_height > 1 ? (body_height - 1) : 1;
+    editor_update_scroll(ed, view_rows);
 
     switch (ed->view_mode) {
         case VIEW_SPLIT: {
-            int split_col = cols / 2;
-            ed->editor_width = split_col;
-            ed->preview_width = cols - split_col - 1;
-
             draw_editor_pane(ed, 0, split_col, 0, body_height);
 
             // Center vertical divider
-            attron(COLOR_PAIR(CP_DIVIDER));
-            for (int y = 0; y < body_height; ++y) {
-                mvaddstr(y, split_col, "│");
+            if (split_col < cols) {
+                attron(COLOR_PAIR(CP_DIVIDER));
+                for (int y = 0; y < body_height; ++y) {
+                    mvaddstr(y, split_col, "│");
+                }
+                attroff(COLOR_PAIR(CP_DIVIDER));
             }
-            attroff(COLOR_PAIR(CP_DIVIDER));
 
-            draw_preview_pane(ed, split_col + 1, cols - split_col - 1, 0, body_height);
+            if (new_preview_width > 0) {
+                draw_preview_pane(ed, split_col + 1, new_preview_width, 0, body_height);
+            }
             break;
         }
-        case VIEW_INPLACE: {
-            ed->editor_width = cols;
-            ed->preview_width = 0;
+        case VIEW_INPLACE:
             draw_editor_pane(ed, 0, cols, 0, body_height);
             break;
-        }
-        case VIEW_PREVIEW: {
-            ed->editor_width = 0;
-            ed->preview_width = cols;
+        case VIEW_PREVIEW:
             draw_preview_pane(ed, 0, cols, 0, body_height);
             break;
-        }
     }
 
     draw_status_bar(ed, rows, cols, status_bar_y);
@@ -578,25 +673,48 @@ bool ui_prompt(Editor *ed, const char *prompt, char *out_buf, size_t buf_size) {
 
     out_buf[0] = '\0';
     size_t len = 0;
-    int y = ed->screen_rows - 1;
 
     curs_set(1);
 
     while (1) {
+        int rows, cols;
+        getmaxyx(stdscr, rows, cols);
+        int y = rows > 0 ? rows - 1 : 0;
+
         move(y, 0);
         clrtoeol();
+
+        int prompt_len = (int)strlen(prompt);
+        int avail_prompt = cols > 4 ? cols - 4 : 0;
+        if (prompt_len > avail_prompt) prompt_len = avail_prompt;
+
         attron(COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_BOLD);
-        mvprintw(y, 1, "%s: ", prompt);
+        mvprintw(y, 1, "%.*s: ", prompt_len, prompt);
         attroff(COLOR_PAIR(CP_STATUS_BAR_ACCENT) | A_BOLD);
 
-        attron(COLOR_PAIR(CP_DEFAULT));
-        mvaddstr(y, (int)strlen(prompt) + 3, out_buf);
-        attroff(COLOR_PAIR(CP_DEFAULT));
+        int input_x = prompt_len + 3;
+        int max_vis = cols - input_x - 1;
+        if (max_vis > 0) {
+            const char *disp = out_buf;
+            if ((int)len > max_vis) {
+                disp = out_buf + (len - (size_t)max_vis);
+            }
+            attron(COLOR_PAIR(CP_DEFAULT));
+            mvaddnstr(y, input_x, disp, max_vis);
+            attroff(COLOR_PAIR(CP_DEFAULT));
+        }
 
         refresh();
 
         int ch = getch();
         if (ch == ERR) continue;
+        if (ch == KEY_RESIZE) {
+            ed->rendered_dirty = true;
+            erase();
+            ui_draw(ed);
+            curs_set(1);
+            continue;
+        }
         if (ch == 27) { // Escape
             out_buf[0] = '\0';
             return false;
@@ -620,18 +738,31 @@ bool ui_prompt(Editor *ed, const char *prompt, char *out_buf, size_t buf_size) {
 int ui_confirm_quit(Editor *ed) {
     if (!ed || !ed->buffer.is_dirty) return 0;
 
-    int y = ed->screen_rows - 1;
-    move(y, 0);
-    clrtoeol();
-
-    attron(COLOR_PAIR(CP_STATUS_BAR_DIRTY) | A_BOLD);
-    mvaddstr(y, 1, "Unsaved changes! Save before quit? (y = Save & Quit, n = Discard, Esc = Cancel): ");
-    attroff(COLOR_PAIR(CP_STATUS_BAR_DIRTY) | A_BOLD);
-    refresh();
+    const char *msg = "Unsaved changes! Save before quit? (y = Save & Quit, n = Discard, Esc = Cancel): ";
 
     while (1) {
+        int rows, cols;
+        getmaxyx(stdscr, rows, cols);
+        int y = rows > 0 ? rows - 1 : 0;
+
+        move(y, 0);
+        clrtoeol();
+
+        attron(COLOR_PAIR(CP_STATUS_BAR_DIRTY) | A_BOLD);
+        if (cols > 2) {
+            mvaddnstr(y, 1, msg, cols - 2);
+        }
+        attroff(COLOR_PAIR(CP_STATUS_BAR_DIRTY) | A_BOLD);
+        refresh();
+
         int ch = getch();
         if (ch == ERR) continue;
+        if (ch == KEY_RESIZE) {
+            ed->rendered_dirty = true;
+            erase();
+            ui_draw(ed);
+            continue;
+        }
         if (ch == 'y' || ch == 'Y') {
             return 1;
         } else if (ch == 'n' || ch == 'N') {
@@ -829,13 +960,19 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
     int win_w = 72;
     if (win_w > cols - 4) win_w = cols - 4;
     if (win_w < 44) win_w = 44;
+    if (win_w > cols) win_w = cols;
+    if (win_w < 10) win_w = cols > 0 ? cols : 10;
 
     int win_h = 22;
     if (win_h > rows - 2) win_h = rows - 2;
     if (win_h < 12) win_h = 12;
+    if (win_h > rows) win_h = rows;
+    if (win_h < 6) win_h = rows > 0 ? rows : 6;
 
     int win_y = (rows - win_h) / 2;
     int win_x = (cols - win_w) / 2;
+    if (win_y < 0) win_y = 0;
+    if (win_x < 0) win_x = 0;
 
     WINDOW *win = newwin(win_h, win_w, win_y, win_x);
     if (!win) {
@@ -855,7 +992,8 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
         wattron(win, COLOR_PAIR(CP_HEADER1) | A_BOLD);
         const char *title = (mode == FILE_DIALOG_OPEN) ? " Open File " : " Save As ";
         int tx = (win_w - (int)strlen(title)) / 2;
-        mvwaddstr(win, 0, tx, title);
+        if (tx < 1) tx = 1;
+        mvwaddnstr(win, 0, tx, title, win_w - 2);
         wattroff(win, COLOR_PAIR(CP_HEADER1) | A_BOLD);
 
         // Current Directory display (truncated on left if too long)
@@ -864,17 +1002,19 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
         wattroff(win, COLOR_PAIR(CP_DEFAULT) | A_BOLD);
 
         int max_dir_disp = win_w - 9;
-        size_t dlen = strlen(current_dir);
-        if ((int)dlen > max_dir_disp) {
-            char short_dir[256];
-            snprintf(short_dir, sizeof(short_dir), "...%s", current_dir + dlen - (max_dir_disp - 3));
-            wattron(win, COLOR_PAIR(CP_LINK));
-            mvwaddstr(win, 1, 7, short_dir);
-            wattroff(win, COLOR_PAIR(CP_LINK));
-        } else {
-            wattron(win, COLOR_PAIR(CP_LINK));
-            mvwaddstr(win, 1, 7, current_dir);
-            wattroff(win, COLOR_PAIR(CP_LINK));
+        if (max_dir_disp > 4) {
+            size_t dlen = strlen(current_dir);
+            if ((int)dlen > max_dir_disp) {
+                char short_dir[256];
+                snprintf(short_dir, sizeof(short_dir), "...%s", current_dir + dlen - (max_dir_disp - 3));
+                wattron(win, COLOR_PAIR(CP_LINK));
+                mvwaddnstr(win, 1, 7, short_dir, max_dir_disp);
+                wattroff(win, COLOR_PAIR(CP_LINK));
+            } else {
+                wattron(win, COLOR_PAIR(CP_LINK));
+                mvwaddnstr(win, 1, 7, current_dir, max_dir_disp);
+                wattroff(win, COLOR_PAIR(CP_LINK));
+            }
         }
 
         // Horizontal separator line under directory
@@ -989,10 +1129,12 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
         mvwaddch(win, win_h - 2, win_w - 1, ACS_RTEE);
 
         wattron(win, COLOR_PAIR(CP_MARKER) | A_DIM);
-        if (mode == FILE_DIALOG_OPEN) {
-            mvwaddstr(win, win_h - 1, 2, " [Enter] Open  [Backspace] Up  [Esc] Cancel ");
-        } else {
-            mvwaddstr(win, win_h - 1, 2, " [Enter] Save  [Tab] Switch  [Backspace] Up  [Esc] Cancel ");
+        if (win_w > 4) {
+            if (mode == FILE_DIALOG_OPEN) {
+                mvwaddnstr(win, win_h - 1, 2, " [Enter] Open  [Backspace] Up  [Esc] Cancel ", win_w - 4);
+            } else {
+                mvwaddnstr(win, win_h - 1, 2, " [Enter] Save  [Tab] Switch  [Backspace] Up  [Esc] Cancel ", win_w - 4);
+            }
         }
         wattroff(win, COLOR_PAIR(CP_MARKER) | A_DIM);
 
@@ -1000,6 +1142,40 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
 
         int ch = wgetch(win);
         if (ch == ERR) continue;
+
+        if (ch == KEY_RESIZE) {
+            delwin(win);
+            ed->rendered_dirty = true;
+            erase();
+            ui_draw(ed);
+
+            getmaxyx(stdscr, rows, cols);
+            win_w = 72;
+            if (win_w > cols - 4) win_w = cols - 4;
+            if (win_w < 44) win_w = 44;
+            if (win_w > cols) win_w = cols;
+            if (win_w < 10) win_w = cols > 0 ? cols : 10;
+
+            win_h = 22;
+            if (win_h > rows - 2) win_h = rows - 2;
+            if (win_h < 12) win_h = 12;
+            if (win_h > rows) win_h = rows;
+            if (win_h < 6) win_h = rows > 0 ? rows : 6;
+
+            win_y = (rows - win_h) / 2;
+            win_x = (cols - win_w) / 2;
+            if (win_y < 0) win_y = 0;
+            if (win_x < 0) win_x = 0;
+
+            win = newwin(win_h, win_w, win_y, win_x);
+            if (!win) {
+                free(items);
+                return false;
+            }
+            keypad(win, TRUE);
+            wbkgd(win, COLOR_PAIR(CP_HELP_BOX));
+            continue;
+        }
 
         if (ch == 27 || ch == CTRL_KEY('q') || ch == CTRL_KEY('c') || ch == CTRL_KEY('g')) {
             confirmed = false;
@@ -1133,6 +1309,7 @@ static const HelpEntry s_editor_help[] = {
     { HELP_LINE_BLANK, NULL, NULL },
     { HELP_LINE_SECTION, "VIEW MODES & CURSOR", NULL },
     { HELP_LINE_ITEM, "Ctrl+P / F2", "Cycle view: Split -> In-Place -> Preview" },
+    { HELP_LINE_ITEM, "Ctrl+L / F4", "Set auto line break column (20-255 or off)" },
     { HELP_LINE_ITEM, "Ins", "Toggle mode: Insert (steady █) / Overwrite (steady _)" },
     { HELP_LINE_BLANK, NULL, NULL },
     { HELP_LINE_SECTION, "SELECTION & CLIPBOARD", NULL },
@@ -1211,9 +1388,15 @@ void ui_show_help(Editor *ed) {
     if (box_w > cols - 2) box_w = cols - 2;
     if (box_h < 12) box_h = 12;
     if (box_w < 50) box_w = 50;
+    if (box_h > rows) box_h = rows;
+    if (box_w > cols) box_w = cols;
+    if (box_h < 6) box_h = rows > 0 ? rows : 6;
+    if (box_w < 16) box_w = cols > 0 ? cols : 16;
 
     int start_y = (rows - box_h) / 2;
     int start_x = (cols - box_w) / 2;
+    if (start_y < 0) start_y = 0;
+    if (start_x < 0) start_x = 0;
 
     WINDOW *win = newwin(box_h, box_w, start_y, start_x);
     if (!win) return;
@@ -1373,7 +1556,43 @@ void ui_show_help(Editor *ed) {
         int ch = wgetch(win);
         if (ch == ERR) continue;
 
-        if (ch == 27 || ch == 'q' || ch == 'Q' || ch == KEY_F(1) || ch == 8 || ch == KEY_RESIZE) {
+        if (ch == KEY_RESIZE) {
+            delwin(win);
+            ed->rendered_dirty = true;
+            erase();
+            ui_draw(ed);
+
+            getmaxyx(stdscr, rows, cols);
+            box_h = 26;
+            box_w = 76;
+            if (rows >= 32) box_h = 28;
+            else if (box_h > rows - 2) box_h = rows - 2;
+            if (box_w > cols - 2) box_w = cols - 2;
+            if (box_h < 12) box_h = 12;
+            if (box_w < 50) box_w = 50;
+            if (box_h > rows) box_h = rows;
+            if (box_w > cols) box_w = cols;
+            if (box_h < 6) box_h = rows > 0 ? rows : 6;
+            if (box_w < 16) box_w = cols > 0 ? cols : 16;
+
+            start_y = (rows - box_h) / 2;
+            start_x = (cols - box_w) / 2;
+            if (start_y < 0) start_y = 0;
+            if (start_x < 0) start_x = 0;
+
+            win = newwin(box_h, box_w, start_y, start_x);
+            if (!win) {
+                touchwin(stdscr);
+                ui_draw(ed);
+                return;
+            }
+            keypad(win, TRUE);
+            wbkgd(win, COLOR_PAIR(CP_HELP_BOX));
+            curs_set(0);
+            continue;
+        }
+
+        if (ch == 27 || ch == 'q' || ch == 'Q' || ch == KEY_F(1) || ch == 8) {
             break;
         } else if (ch == '\n' || ch == '\r') {
             break;

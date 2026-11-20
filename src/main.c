@@ -25,17 +25,6 @@
 static Editor g_editor;
 
 /**
- * @brief Signal handler for terminal window resize (SIGWINCH).
- */
-static void handle_sigwinch(int sig) {
-    (void)sig;
-    endwin();
-    refresh();
-    clear();
-    ui_draw(&g_editor);
-}
-
-/**
  * @brief Signal handler for program termination (SIGINT, SIGTERM).
  */
 static void handle_sigint(int sig) {
@@ -51,13 +40,15 @@ static void print_usage(const char *prog) {
     printf("%s - %s\n\n", MDE_APP_NAME, MDE_DESCRIPTION);
     printf("Usage: %s [options] [filename.md]\n\n", prog);
     printf("Options:\n");
-    printf("  -h, --help       Display this help message and exit\n");
-    printf("  -v, --version    Output version and build information and exit\n\n");
+    printf("  -h, --help         Display this help message and exit\n");
+    printf("  -v, --version      Output version and build information and exit\n");
+    printf("  -w, --wrap <cols>  Set automatic line break (20-255, or off; default %d)\n\n", MDE_WRAP_COL_DEFAULT);
     printf("Keybindings:\n");
     printf("  Ctrl+S           Save file\n");
     printf("  Ctrl+O           Open file\n");
     printf("  Ctrl+Q           Quit\n");
     printf("  Ctrl+P / F2      Toggle View Mode (Split / In-place / Preview)\n");
+    printf("  Ctrl+L / F4      Set automatic line break column (20-255 or off)\n");
     printf("  Ctrl+T           Toggle checkbox [- [ ] <-> - [x]]\n");
     printf("  Ctrl+B           Insert bold markers (**)\n");
     printf("  Ctrl+K           Insert inline code markers (`)\n");
@@ -80,6 +71,8 @@ static void print_version(void) {
 
 int main(int argc, char *argv[]) {
     const char *file_to_open = NULL;
+    bool has_cli_wrap = false;
+    int cli_wrap_col = MDE_WRAP_COL_DEFAULT;
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -88,19 +81,37 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
             print_version();
             return 0;
+        } else if (strcmp(argv[i], "-w") == 0 || strcmp(argv[i], "--wrap") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: %s requires an argument (20-255 or off)\n", argv[i]);
+                return 1;
+            }
+            if (!editor_parse_wrap_col(argv[++i], &cli_wrap_col)) {
+                fprintf(stderr, "Error: invalid wrap column '%s' (expected 20-255 or off)\n", argv[i]);
+                return 1;
+            }
+            has_cli_wrap = true;
+        } else if (strncmp(argv[i], "--wrap=", 7) == 0) {
+            if (!editor_parse_wrap_col(argv[i] + 7, &cli_wrap_col)) {
+                fprintf(stderr, "Error: invalid wrap column '%s' (expected 20-255 or off)\n", argv[i] + 7);
+                return 1;
+            }
+            has_cli_wrap = true;
         } else if (argv[i][0] != '-') {
             file_to_open = argv[i];
         }
     }
 
-    // Set up signal handling
-    signal(SIGWINCH, handle_sigwinch);
+    // Set up signal handling (leave SIGWINCH to ncurses for async-signal-safe KEY_RESIZE)
     signal(SIGINT, handle_sigint);
     signal(SIGTERM, handle_sigint);
 
     // Initialize UI and Editor state
     ui_init();
     editor_init(&g_editor, file_to_open);
+    if (has_cli_wrap) {
+        editor_set_wrap_col(&g_editor, cli_wrap_col);
+    }
 
     char search_buf[128] = {0};
 
@@ -113,8 +124,10 @@ int main(int argc, char *argv[]) {
 
         editor_touch_key(&g_editor);
 
-        // Terminal resize event
+        // Terminal resize event (handled safely via ncurses KEY_RESIZE)
         if (ch == KEY_RESIZE) {
+            g_editor.rendered_dirty = true;
+            erase();
             continue;
         }
 
@@ -208,6 +221,25 @@ int main(int argc, char *argv[]) {
         } else if (ch == CTRL_KEY('p') || ch == KEY_F(2)) {
             // Toggle view mode: Split <-> In-place <-> Preview
             editor_cycle_view_mode(&g_editor);
+        } else if (ch == CTRL_KEY('l') || ch == KEY_F(4)) {
+            // Configure automatic line break column (20-255 or off)
+            char prompt_label[80];
+            if (g_editor.wrap_col > 0) {
+                snprintf(prompt_label, sizeof(prompt_label),
+                         "Auto line break (20-255 or off, now %d)", g_editor.wrap_col);
+            } else {
+                snprintf(prompt_label, sizeof(prompt_label),
+                         "Auto line break (20-255 or off, now OFF)");
+            }
+            char wrap_input[32];
+            if (ui_prompt(&g_editor, prompt_label, wrap_input, sizeof(wrap_input))) {
+                int new_wrap = 0;
+                if (editor_parse_wrap_col(wrap_input, &new_wrap)) {
+                    editor_set_wrap_col(&g_editor, new_wrap);
+                } else {
+                    editor_set_status(&g_editor, "Invalid wrap column: use 20-255 or off");
+                }
+            }
         } else if (ch == KEY_F(1) || ch == CTRL_KEY('h')) {
             // Help overlay (Cheat sheet & Markdown guide)
             ui_show_help(&g_editor);

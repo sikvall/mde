@@ -101,31 +101,39 @@ void render_document(const Buffer *buf, int width, RenderedDoc *out_doc) {
 
         if (pl.is_code_block) {
             if (pl.span_count > 0 && pl.spans[0].type == MD_CODE_FENCE) {
-                // Code fence header / footer
+                // Code fence header / footer scaled to preview width
                 RenderedLine *rl = doc_add_line(out_doc, row);
+                int max_cols = width > 4 ? (width - 3) : 4;
+                if (max_cols > 300) max_cols = 300;
                 if (in_code_block) {
                     // Opening fence: ┌── [ lang ] ───────────────────────
-                    char fence_bar[128];
+                    char fence_bar[1024];
                     if (code_lang[0]) {
                         snprintf(fence_bar, sizeof(fence_bar), "┌── [ %s ] ", code_lang);
                     } else {
                         snprintf(fence_bar, sizeof(fence_bar), "┌── [ code ] ");
                     }
-                    size_t bar_len = strlen(fence_bar);
-                    while (bar_len + 3 < (size_t)width && bar_len < sizeof(fence_bar) - 4) {
-                        strcat(fence_bar, "─");
-                        bar_len = strlen(fence_bar);
+                    int cur_vcols = utf8_visual_width(fence_bar, strlen(fence_bar));
+                    size_t bar_bytes = strlen(fence_bar);
+                    while (cur_vcols < max_cols && bar_bytes + 4 < sizeof(fence_bar)) {
+                        memcpy(fence_bar + bar_bytes, "─", 3);
+                        bar_bytes += 3;
+                        fence_bar[bar_bytes] = '\0';
+                        cur_vcols++;
                     }
-                    line_add_chunk(rl, fence_bar, strlen(fence_bar), COLOR_PAIR(CP_MARKER) | A_DIM);
+                    line_add_chunk(rl, fence_bar, bar_bytes, COLOR_PAIR(CP_MARKER) | A_DIM);
                 } else {
                     // Closing fence: └───────────────────────────────────
-                    char fence_bar[128] = "└──";
-                    size_t bar_len = strlen(fence_bar);
-                    while (bar_len + 3 < (size_t)width && bar_len < sizeof(fence_bar) - 4) {
-                        strcat(fence_bar, "─");
-                        bar_len = strlen(fence_bar);
+                    char fence_bar[1024] = "└──";
+                    int cur_vcols = 3;
+                    size_t bar_bytes = strlen(fence_bar);
+                    while (cur_vcols < max_cols && bar_bytes + 4 < sizeof(fence_bar)) {
+                        memcpy(fence_bar + bar_bytes, "─", 3);
+                        bar_bytes += 3;
+                        fence_bar[bar_bytes] = '\0';
+                        cur_vcols++;
                     }
-                    line_add_chunk(rl, fence_bar, strlen(fence_bar), COLOR_PAIR(CP_MARKER) | A_DIM);
+                    line_add_chunk(rl, fence_bar, bar_bytes, COLOR_PAIR(CP_MARKER) | A_DIM);
                 }
             } else {
                 // Interior code line: │ code
@@ -138,14 +146,16 @@ void render_document(const Buffer *buf, int width, RenderedDoc *out_doc) {
         } else if (pl.is_hrule) {
             // Horizontal rule: smooth full-width line
             RenderedLine *rl = doc_add_line(out_doc, row);
-            char hr[256];
-            size_t w = width > 4 ? (size_t)(width - 2) : 20;
+            char hr[1024];
+            size_t w = width > 4 ? (size_t)(width - 3) : 4;
             if (w >= sizeof(hr) / 3) w = sizeof(hr) / 3 - 1;
-            hr[0] = '\0';
+            size_t hr_bytes = 0;
             for (size_t i = 0; i < w; ++i) {
-                strcat(hr, "─");
+                memcpy(hr + hr_bytes, "─", 3);
+                hr_bytes += 3;
             }
-            line_add_chunk(rl, hr, strlen(hr), COLOR_PAIR(CP_HRULE) | A_BOLD);
+            hr[hr_bytes] = '\0';
+            line_add_chunk(rl, hr, hr_bytes, COLOR_PAIR(CP_HRULE) | A_BOLD);
         } else if (pl.header_level > 0) {
             // Rendered header: omit raw '#' markers, render title cleanly
             RenderedLine *rl = doc_add_line(out_doc, row);
@@ -170,18 +180,28 @@ void render_document(const Buffer *buf, int width, RenderedDoc *out_doc) {
             // Decorative underline for H1 and H2
             if (pl.header_level == 1) {
                 RenderedLine *rl_bar = doc_add_line(out_doc, row);
-                char bar[128] = "";
-                size_t bar_w = width > 4 ? (size_t)(width - 4) : 20;
+                char bar[256];
+                size_t bar_w = width > 4 ? (size_t)(width - 4) : 4;
                 if (bar_w > 40) bar_w = 40;
-                for (size_t k = 0; k < bar_w; ++k) strcat(bar, "═");
-                line_add_chunk(rl_bar, bar, strlen(bar), COLOR_PAIR(CP_HEADER1) | A_BOLD);
+                size_t b = 0;
+                for (size_t k = 0; k < bar_w; ++k) {
+                    memcpy(bar + b, "═", 3);
+                    b += 3;
+                }
+                bar[b] = '\0';
+                line_add_chunk(rl_bar, bar, b, COLOR_PAIR(CP_HEADER1) | A_BOLD);
             } else if (pl.header_level == 2) {
                 RenderedLine *rl_bar = doc_add_line(out_doc, row);
-                char bar[128] = "";
-                size_t bar_w = width > 4 ? (size_t)(width - 4) : 20;
+                char bar[256];
+                size_t bar_w = width > 4 ? (size_t)(width - 4) : 4;
                 if (bar_w > 30) bar_w = 30;
-                for (size_t k = 0; k < bar_w; ++k) strcat(bar, "─");
-                line_add_chunk(rl_bar, bar, strlen(bar), COLOR_PAIR(CP_HEADER2));
+                size_t b = 0;
+                for (size_t k = 0; k < bar_w; ++k) {
+                    memcpy(bar + b, "─", 3);
+                    b += 3;
+                }
+                bar[b] = '\0';
+                line_add_chunk(rl_bar, bar, b, COLOR_PAIR(CP_HEADER2));
             }
         } else if (pl.is_blockquote) {
             // Rendered blockquote: replace > with solid bar ▎

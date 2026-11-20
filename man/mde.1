@@ -6,51 +6,95 @@ mde \- full-screen text-mode Markdown editor
 [\fIOPTIONS\fR] [\fIFILENAME.md\fR]
 .SH DESCRIPTION
 .B mde
-is a specialized terminal text editor designed for editing and reading Markdown documents.
-It supports real-time dual-pane split preview, in-place rich formatting, an active line
-column ruler, persistent bottom shortcut key hint rows, interactive directory and file dialogue,
-task checkboxes, smart list continuation, and multi-level undo/redo.
+is a specialized terminal text editor written in C11 and ncursesw, designed for
+editing and reading Markdown (\fI.md\fR) documents.
+It supports real-time dual-pane split preview, in-place rich syntax styling,
+fullscreen rendered editing, an active line column ruler with dynamic wrap guide,
+automatic line breaking (default 78 columns, configurable 20\-255 or off),
+persistent bottom shortcut key hint rows, an interactive directory and file
+dialogue, selection and OSC 52 clipboard integration, task checkboxes, smart
+list continuation, and multi-level undo/redo.
 .SH OPTIONS
 .TP
 .BR \-h ", " \-\-help
-Print usage instructions and exit.
+Print usage instructions and keybindings summary, then exit.
 .TP
 .BR \-v ", " \-\-version
-Print program version and build date.
+Print program version and build date, then exit.
+.TP
+.BR \-w " " \fICOLS\fR ", " \-\-wrap " " \fICOLS\fR ", " \-\-wrap=\fICOLS\fR
+Set the automatic line break column width at startup.
+\fICOLS\fR may be any integer between \fB20\fR and \fB255\fR, or \fBoff\fR,
+\fBnone\fR, or \fB0\fR to disable automatic line breaking. Defaults to \fB78\fR.
+.SH VIEW MODES
+Press \fBCtrl+P\fR or \fBF2\fR to cycle between three editing modes:
+.TP
+.B Split View (default)
+Raw Markdown editor on the left with line numbers, active line marker, and
+column ruler; synchronized live-rendered Markdown preview on the right.
+.TP
+.B In-Place Rich View
+Full-width editor displaying syntax-highlighted headings, emphasis, code spans,
+and prominent Markdown markers on the active line.
+.TP
+.B Preview View
+Fullscreen formatted Markdown view with full cursor tracking, mouse navigation,
+and interactive editing.
+.SH AUTOMATIC LINE BREAK
+By default, \fBmde\fR automatically breaks lines when typing past column \fB78\fR.
+Line breaks occur at the last whitespace boundary at or before the configured
+column limit (using UTF-8 display widths via \fBwcwidth\fR(3)), moving the
+wrapped word and cursor to the next line while preserving leading indentation
+and Markdown blockquote (\fB> \fR) prefixes. Unbroken tokens longer than the
+configured limit are hard-broken on a valid UTF-8 character boundary.
+.PP
+The active column limit is shown on the status bar (\fBW:78\fR or \fBW:OFF\fR)
+and marked with a vertical guide (\fB┆\fR) on the column ruler. Press
+\fBCtrl+L\fR or \fBF4\fR at any time to change the setting to any width from
+\fB20\fR to \fB255\fR columns or turn it \fBoff\fR.
 .SH KEYBINDINGS
 .TP
 .B Ctrl+S
-Save current file. Prompts for a file name if untitled.
+Save current file. Opens the Save As dialogue if the buffer is untitled.
 .TP
 .B Ctrl+O
-Open interactive file dialogue to browse directories and open a Markdown file.
+Open interactive file dialogue to browse directories and open a file.
 .TP
 .B Ctrl+W
-Save As interactive file dialogue to browse directories and select or type destination file name.
+Open Save As interactive file dialogue to browse directories and select or type
+the destination file name.
 .TP
 .B Ctrl+Q
-Quit mde. Prompts to save if unsaved changes exist.
+Quit mde. Prompts to save or discard if unsaved changes exist.
 .TP
 .BR Ctrl+P " or " F2
-Cycle view modes: Split View, In-Place Rich View, Fullscreen Rendered View. All modes support full editing and cursor tracking.
+Cycle view modes: Split View, In-Place Rich View, Fullscreen Rendered View.
+.TP
+.BR Ctrl+L " or " F4
+Set automatic line break column width (\fB20\fR\-\fB255\fR, or \fBoff\fR / \fB0\fR
+to disable; default \fB78\fR).
 .TP
 .B Ctrl+T
-Toggle checkbox (\- [ ] <-> \- [x]) on the active line.
+Toggle task checkbox (\- [ ] <-> \- [x]) on the active line, or convert the
+current line/list item into a task item.
 .TP
 .B Ctrl+Space
-Set selection mark anchor. Move cursor with arrow keys, Ctrl+A, or Ctrl+E to extend the visual selection highlight.
+Set selection mark anchor. Move the cursor with arrow keys, Ctrl+A, Ctrl+E, or
+mouse click to extend the visual selection highlight.
 .TP
 .B Ctrl+X
-Cut active selection to the clipboard (synced via OSC 52 to terminal/system clipboard).
+Cut active selection to the clipboard (synced via ANSI OSC 52 to the host
+terminal/system clipboard).
 .TP
 .B Ctrl+C
-Copy active selection to the clipboard (synced via OSC 52).
+Copy active selection to the clipboard (synced via ANSI OSC 52).
 .TP
 .B Ctrl+V
-Paste text from the clipboard at current cursor position.
+Paste text from the clipboard at the current cursor position.
 .TP
 .B Ctrl+K
-Kill text from cursor to end of line, or join with next line if already at end of line.
+Kill text from the cursor to the end of the line, or join with the next line if
+already at the end of the line.
 .TP
 .BR Ctrl+A " / " Home
 Jump to beginning of current line.
@@ -62,25 +106,38 @@ Jump to end of current line.
 Clear active selection mark.
 .TP
 .B Ctrl+B
-Insert bold formatting markers (**) or wrap active selection.
+Insert Markdown bold formatting markers (\fB**\fR) or wrap the active selection.
 .TP
 .BR Ctrl+Z " / " Ctrl+Y
-Undo and Redo changes.
+Undo and Redo changes (grouped atomically).
 .TP
 .BR Ctrl+F " / " F3
-Search / find text in the document.
+Search / find text in the document and repeat search to jump to the next match.
 .TP
 .BR F1 " or " Ctrl+H
-Display the interactive two-tab help overlay (Tab 1: Editor Cheat Sheet, Tab 2: Markdown Syntax Guide).
+Display the interactive two-tab help overlay (Tab 1: Editor Cheat Sheet,
+Tab 2: Markdown Syntax Guide).
 .TP
 .B Enter
-Smart list auto-continuation. Hitting Enter on an empty list bullet cancels the list.
+Smart list and task auto-continuation with auto-indent. Hitting Enter on an
+empty list item cancels the list.
 .TP
 .BR Tab " / " Shift+Tab
-Indent or unindent line by 2 spaces.
+Indent or unindent the current line by 2 spaces.
 .TP
 .B Ins
-Toggle between Insert mode (steady block cursor) and Overwrite mode (steady underscore cursor). Cursor does not flash.
+Toggle between Insert mode (steady block cursor) and Overwrite mode (steady
+underscore cursor). The cursor never flashes.
+.SH EXAMPLES
+.TP
+Open or create a Markdown document with default 78-column automatic line break:
+.B mde notes.md
+.TP
+Edit with a custom 100-column automatic line break:
+.B mde -w 100 notes.md
+.TP
+Disable automatic line breaking:
+.B mde --wrap=off notes.md
 .SH AUTHORS
 Written by Anders.
 .SH COPYRIGHT

@@ -22,6 +22,7 @@ void editor_init(Editor *ed, const char *filename) {
 
     ed->view_mode = VIEW_SPLIT; // Default to dual-pane split view
     ed->insert_mode = true;     // Default to Insert mode (steady block cursor), press Ins for Overwrite
+    ed->wrap_col = MDE_WRAP_COL_DEFAULT; // Default automatic line break at 78 columns
     ed->rendered_dirty = true;
     ed->cursor_row = 0;
     ed->cursor_col = 0;
@@ -547,6 +548,144 @@ void editor_kill_prev_word(Editor *ed) {
     }
 }
 
+/**
+ * @brief Automatically break the current line if its visual width exceeds ed->wrap_col.
+ *
+ * Prefers breaking at the last whitespace boundary at or before ed->wrap_col,
+ * removing the break whitespace and preserving leading indentation or blockquote
+ * prefixes on the wrapped continuation line. Falls back to a hard break at
+ * ed->wrap_col on UTF-8 boundaries when no whitespace break point exists.
+ */
+static void editor_auto_wrap_line(Editor *ed, uint64_t group) {
+    if (!ed || ed->wrap_col <= 0) return;
+
+    for (int iter = 0; iter < 64; ++iter) {
+        size_t row = ed->cursor_row;
+        const char *line = buffer_line(&ed->buffer, row);
+        size_t len = buffer_line_len(&ed->buffer, row);
+
+        if (utf8_visual_width(line, len) <= ed->wrap_col) {
+            break;
+        }
+
+        // Determine leading indentation or blockquote prefix
+        size_t indent = 0;
+        while (indent < len && (line[indent] == ' ' || line[indent] == '\t')) {
+            indent++;
+        }
+
+        size_t prefix_end = indent;
+        if (indent < len && line[indent] == '>') {
+            size_t bq = indent;
+            while (bq < len && (line[bq] == '>' || line[bq] == ' ')) {
+                bq++;
+            }
+            prefix_end = bq;
+        }
+
+        char cont_prefix[128];
+        size_t cont_prefix_len = 0;
+        size_t min_break_byte = prefix_end;
+        int prefix_vcol = utf8_visual_width_range(line, 0, prefix_end);
+        if (prefix_end > 0 && prefix_end < sizeof(cont_prefix) &&
+            prefix_vcol < ed->wrap_col - 2) {
+            memcpy(cont_prefix, line, prefix_end);
+            cont_prefix[prefix_end] = '\0';
+            cont_prefix_len = prefix_end;
+        } else {
+            cont_prefix[0] = '\0';
+            cont_prefix_len = 0;
+            min_break_byte = 0;
+        }
+
+        // Scan UTF-8 characters to find the best break position at or before wrap_col
+        size_t pos = 0;
+        int vcol = 0;
+        bool found_ws = false;
+        size_t last_ws_byte = 0;
+        size_t hard_break_byte = 0;
+
+        while (pos < len) {
+            size_t ch_len = utf8_char_len((unsigned char)line[pos]);
+            if (pos + ch_len > len) ch_len = len - pos;
+            int ch_w = utf8_visual_width_range(line, pos, pos + ch_len);
+
+            if (pos >= min_break_byte && vcol <= ed->wrap_col &&
+                (line[pos] == ' ' || line[pos] == '\t')) {
+                found_ws = true;
+                last_ws_byte = pos;
+            }
+
+            if (vcol + ch_w <= ed->wrap_col) {
+                hard_break_byte = pos + ch_len;
+            }
+
+            if (vcol > ed->wrap_col) {
+                break;
+            }
+
+            vcol += ch_w;
+            pos += ch_len;
+        }
+
+        if (found_ws) {
+            // Expand to contiguous whitespace run at the break point
+            size_t ws_start = last_ws_byte;
+            while (ws_start > min_break_byte &&
+                   (line[ws_start - 1] == ' ' || line[ws_start - 1] == '\t')) {
+                ws_start--;
+            }
+            size_t ws_end = last_ws_byte + 1;
+            while (ws_end < len &&
+                   (line[ws_end] == ' ' || line[ws_end] == '\t')) {
+                ws_end++;
+            }
+
+            size_t old_cursor_col = ed->cursor_col;
+
+            buffer_delete_range(&ed->buffer, row, ws_start, ws_end - ws_start, group);
+            buffer_split_line(&ed->buffer, row, ws_start, group);
+            if (cont_prefix_len > 0) {
+                buffer_insert_string(&ed->buffer, row + 1, 0, cont_prefix, cont_prefix_len, group);
+            }
+
+            if (old_cursor_col >= ws_start) {
+                ed->cursor_row = row + 1;
+                if (old_cursor_col > ws_end) {
+                    ed->cursor_col = cont_prefix_len + (old_cursor_col - ws_end);
+                } else {
+                    ed->cursor_col = cont_prefix_len;
+                }
+            }
+        } else {
+            // No whitespace break point: hard break at wrap_col boundary
+            if (hard_break_byte == 0) {
+                hard_break_byte = utf8_next_char(line, 0, len);
+            }
+            if (hard_break_byte >= len) {
+                break;
+            }
+
+            size_t old_cursor_col = ed->cursor_col;
+
+            buffer_split_line(&ed->buffer, row, hard_break_byte, group);
+            if (cont_prefix_len > 0) {
+                buffer_insert_string(&ed->buffer, row + 1, 0, cont_prefix, cont_prefix_len, group);
+            }
+
+            if (old_cursor_col >= hard_break_byte) {
+                ed->cursor_row = row + 1;
+                ed->cursor_col = cont_prefix_len + (old_cursor_col - hard_break_byte);
+            }
+        }
+
+        // If cursor stayed on the original row, that row is now <= wrap_col
+        if (ed->cursor_row == row) {
+            break;
+        }
+    }
+}
+
 void editor_insert_char(Editor *ed, const char *utf8_seq, size_t len) {
     if (!ed || !utf8_seq || len == 0) return;
     editor_touch_key(ed);
@@ -556,6 +695,7 @@ void editor_insert_char(Editor *ed, const char *utf8_seq, size_t len) {
         editor_delete_selection(ed, group);
         buffer_insert_string(&ed->buffer, ed->cursor_row, ed->cursor_col, utf8_seq, len, group);
         ed->cursor_col += len;
+        editor_auto_wrap_line(ed, group);
         const char *line = buffer_line(&ed->buffer, ed->cursor_row);
         ed->target_visual_col = utf8_byte_to_col(line, ed->cursor_col);
         ed->rendered_dirty = true;
@@ -563,20 +703,23 @@ void editor_insert_char(Editor *ed, const char *utf8_seq, size_t len) {
     }
 
     size_t line_len = buffer_line_len(&ed->buffer, ed->cursor_row);
+    uint64_t group = ed->buffer.current_group_id;
 
     if (ed->insert_mode || ed->cursor_col >= line_len) {
         // Insert mode (or at line end in overwrite mode): insert character
-        buffer_insert_string(&ed->buffer, ed->cursor_row, ed->cursor_col, utf8_seq, len, ed->buffer.current_group_id);
+        buffer_insert_string(&ed->buffer, ed->cursor_row, ed->cursor_col, utf8_seq, len, group);
         ed->cursor_col += len;
     } else {
         // Overwrite mode: replace existing character at cursor
         const char *cur_line = buffer_line(&ed->buffer, ed->cursor_row);
         size_t old_char_len = utf8_char_len((unsigned char)cur_line[ed->cursor_col]);
-        uint64_t group = buffer_next_group(&ed->buffer);
+        group = buffer_next_group(&ed->buffer);
         buffer_delete_range(&ed->buffer, ed->cursor_row, ed->cursor_col, old_char_len, group);
         buffer_insert_string(&ed->buffer, ed->cursor_row, ed->cursor_col, utf8_seq, len, group);
         ed->cursor_col += len;
     }
+
+    editor_auto_wrap_line(ed, group);
 
     const char *line = buffer_line(&ed->buffer, ed->cursor_row);
     ed->target_visual_col = utf8_byte_to_col(line, ed->cursor_col);
@@ -730,6 +873,64 @@ void editor_toggle_insert_mode(Editor *ed) {
     } else {
         editor_set_status(ed, "OVERWRITE Mode (Underscore cursor)");
     }
+}
+
+bool editor_set_wrap_col(Editor *ed, int cols) {
+    if (!ed) return false;
+    if (cols != MDE_WRAP_COL_OFF && (cols < MDE_WRAP_COL_MIN || cols > MDE_WRAP_COL_MAX)) {
+        return false;
+    }
+    ed->wrap_col = cols;
+    editor_touch_key(ed);
+    if (cols == MDE_WRAP_COL_OFF) {
+        editor_set_status(ed, "Auto line break: OFF");
+    } else {
+        editor_set_status(ed, "Auto line break: %d columns", cols);
+    }
+    return true;
+}
+
+bool editor_parse_wrap_col(const char *str, int *out_cols) {
+    if (!str || !out_cols) return false;
+
+    while (*str && isspace((unsigned char)*str)) str++;
+    if (*str == '\0') return false;
+
+    // Extract trimmed token
+    const char *end = str + strlen(str);
+    while (end > str && isspace((unsigned char)*(end - 1))) end--;
+    size_t tok_len = (size_t)(end - str);
+
+    if ((tok_len == 3 && (tolower((unsigned char)str[0]) == 'o' &&
+                          tolower((unsigned char)str[1]) == 'f' &&
+                          tolower((unsigned char)str[2]) == 'f')) ||
+        (tok_len == 4 && (tolower((unsigned char)str[0]) == 'n' &&
+                          tolower((unsigned char)str[1]) == 'o' &&
+                          tolower((unsigned char)str[2]) == 'n' &&
+                          tolower((unsigned char)str[3]) == 'e'))) {
+        *out_cols = MDE_WRAP_COL_OFF;
+        return true;
+    }
+
+    // Must be purely digits (no sign or trailing junk)
+    for (size_t i = 0; i < tok_len; ++i) {
+        if (!isdigit((unsigned char)str[i])) return false;
+    }
+
+    char *parse_end = NULL;
+    long val = strtol(str, &parse_end, 10);
+    if (parse_end != end) return false;
+
+    if (val == 0) {
+        *out_cols = MDE_WRAP_COL_OFF;
+        return true;
+    }
+    if (val >= MDE_WRAP_COL_MIN && val <= MDE_WRAP_COL_MAX) {
+        *out_cols = (int)val;
+        return true;
+    }
+
+    return false;
 }
 
 void editor_toggle_checkbox(Editor *ed) {
@@ -967,6 +1168,15 @@ bool editor_search_find_next(Editor *ed, const char *query, bool forward) {
 void editor_update_scroll(Editor *ed, int view_rows) {
     if (!ed || view_rows <= 0) return;
 
+    size_t total_lines = buffer_line_count(&ed->buffer);
+
+    // Clamp scroll_row when terminal grows taller so content fills the viewport
+    if (total_lines <= (size_t)view_rows) {
+        ed->scroll_row = 0;
+    } else if (ed->scroll_row + (size_t)view_rows > total_lines) {
+        ed->scroll_row = total_lines - (size_t)view_rows;
+    }
+
     if (ed->cursor_row < ed->scroll_row) {
         ed->scroll_row = ed->cursor_row;
     }
@@ -974,19 +1184,39 @@ void editor_update_scroll(Editor *ed, int view_rows) {
         ed->scroll_row = ed->cursor_row - (size_t)view_rows + 1;
     }
 
+    // Compute actual visible content width in editor pane (accounting for gutter)
+    int digits = 1;
+    size_t tmp_lines = total_lines;
+    while (tmp_lines >= 10) {
+        digits++;
+        tmp_lines /= 10;
+    }
+    if (digits < 3) digits = 3;
+    int gutter_w = digits + 4;
+    int editor_w = ed->editor_width - gutter_w;
+    if (editor_w < 1) editor_w = 1;
+
     const char *line = buffer_line(&ed->buffer, ed->cursor_row);
     int cursor_vcol = utf8_byte_to_col(line, ed->cursor_col);
-    int editor_w = ed->editor_width > 8 ? ed->editor_width - 8 : 40;
 
+    // If terminal widened enough for cursor to fit without horizontal scroll, reset scroll_col
+    if (cursor_vcol < editor_w && ed->scroll_col > 0) {
+        ed->scroll_col = 0;
+    }
     if (cursor_vcol < (int)ed->scroll_col) {
         ed->scroll_col = cursor_vcol > 0 ? (size_t)cursor_vcol : 0;
     }
     if (cursor_vcol >= (int)ed->scroll_col + editor_w) {
-        ed->scroll_col = cursor_vcol - editor_w + 1;
+        ed->scroll_col = (size_t)(cursor_vcol - editor_w + 1);
     }
 
-    // Synchronize preview scroll with editor cursor row
+    // Synchronize preview scroll with editor cursor row / viewport
     if (ed->view_mode == VIEW_PREVIEW && ed->rendered_doc.count > 0) {
+        if (ed->rendered_doc.count <= (size_t)view_rows) {
+            ed->preview_scroll_row = 0;
+        } else if (ed->preview_scroll_row + (size_t)view_rows > ed->rendered_doc.count) {
+            ed->preview_scroll_row = ed->rendered_doc.count - (size_t)view_rows;
+        }
         size_t rend_idx = rendered_doc_find_line(&ed->rendered_doc, ed->cursor_row);
         if (rend_idx < ed->preview_scroll_row) {
             ed->preview_scroll_row = rend_idx;
@@ -996,6 +1226,12 @@ void editor_update_scroll(Editor *ed, int view_rows) {
         }
     } else if (ed->view_mode == VIEW_SPLIT && ed->rendered_doc.count > 0) {
         size_t rend_idx = rendered_doc_find_line(&ed->rendered_doc, ed->scroll_row);
-        ed->preview_scroll_row = rend_idx;
+        if (ed->rendered_doc.count <= (size_t)view_rows) {
+            ed->preview_scroll_row = 0;
+        } else if (rend_idx + (size_t)view_rows > ed->rendered_doc.count) {
+            ed->preview_scroll_row = ed->rendered_doc.count - (size_t)view_rows;
+        } else {
+            ed->preview_scroll_row = rend_idx;
+        }
     }
 }

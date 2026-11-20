@@ -21,6 +21,14 @@ extern "C" {
 #endif
 
 /**
+ * @brief Automatic line break (hard wrap) column limits and default.
+ */
+#define MDE_WRAP_COL_OFF     0
+#define MDE_WRAP_COL_MIN     20
+#define MDE_WRAP_COL_MAX     255
+#define MDE_WRAP_COL_DEFAULT 78
+
+/**
  * @brief Operating view modes.
  */
 typedef enum {
@@ -39,6 +47,7 @@ typedef struct {
 
     ViewMode view_mode;          /**< Current active view mode */
     bool insert_mode;            /**< Insert mode active (true, default) vs Overwrite mode (false) */
+    int wrap_col;                /**< Auto line break column (20-255, or 0 = off; default 78) */
 
     // Cursor position in buffer
     size_t cursor_row;           /**< 0-indexed line index */
@@ -149,6 +158,10 @@ void editor_kill_prev_word(Editor *ed);
 void editor_toggle_insert_mode(Editor *ed);
 void editor_toggle_checkbox(Editor *ed);
 void editor_wrap_format(Editor *ed, const char *marker);
+
+// Automatic line break settings
+bool editor_set_wrap_col(Editor *ed, int cols);
+bool editor_parse_wrap_col(const char *str, int *out_cols);
 
 // History operations
 void editor_undo(Editor *ed);

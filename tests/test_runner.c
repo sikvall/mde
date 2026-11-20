@@ -523,6 +523,163 @@ static void test_home_and_end(void) {
     editor_free(&ed);
 }
 
+static void test_auto_line_break(void) {
+    printf("--- Testing Automatic Line Break (Default 78, 20-255 or Off) ---\n");
+    Editor ed;
+    editor_init(&ed, NULL);
+
+    // Default wrap column
+    TEST_ASSERT(ed.wrap_col == 78, "Default wrap_col is 78");
+
+    // Parsing validation
+    int parsed = -1;
+    TEST_ASSERT(editor_parse_wrap_col("off", &parsed) && parsed == 0, "Parse 'off' -> 0");
+    TEST_ASSERT(editor_parse_wrap_col("OFF", &parsed) && parsed == 0, "Parse 'OFF' -> 0");
+    TEST_ASSERT(editor_parse_wrap_col("none", &parsed) && parsed == 0, "Parse 'none' -> 0");
+    TEST_ASSERT(editor_parse_wrap_col("0", &parsed) && parsed == 0, "Parse '0' -> 0");
+    TEST_ASSERT(editor_parse_wrap_col("20", &parsed) && parsed == 20, "Parse '20' -> 20");
+    TEST_ASSERT(editor_parse_wrap_col("78", &parsed) && parsed == 78, "Parse '78' -> 78");
+    TEST_ASSERT(editor_parse_wrap_col("255", &parsed) && parsed == 255, "Parse '255' -> 255");
+    TEST_ASSERT(editor_parse_wrap_col(" 100 ", &parsed) && parsed == 100, "Parse ' 100 ' -> 100");
+    TEST_ASSERT(!editor_parse_wrap_col("19", &parsed), "Reject 19 (< 20)");
+    TEST_ASSERT(!editor_parse_wrap_col("256", &parsed), "Reject 256 (> 255)");
+    TEST_ASSERT(!editor_parse_wrap_col("-10", &parsed), "Reject negative value");
+    TEST_ASSERT(!editor_parse_wrap_col("abc", &parsed), "Reject non-numeric string");
+    TEST_ASSERT(!editor_parse_wrap_col("", &parsed), "Reject empty string");
+
+    // Setter bounds validation
+    TEST_ASSERT(!editor_set_wrap_col(&ed, 19), "editor_set_wrap_col rejects 19");
+    TEST_ASSERT(!editor_set_wrap_col(&ed, 256), "editor_set_wrap_col rejects 256");
+    TEST_ASSERT(!editor_set_wrap_col(&ed, -1), "editor_set_wrap_col rejects -1");
+    TEST_ASSERT(ed.wrap_col == 78, "wrap_col unchanged after invalid sets");
+
+    // 1. Default 78-column word wrap
+    const char *sample78 = "The quick brown fox jumps over the lazy dog while writing clean Markdown text today";
+    for (size_t i = 0; sample78[i] != '\0'; ++i) {
+        editor_insert_char(&ed, &sample78[i], 1);
+    }
+    TEST_ASSERT(buffer_line_count(&ed.buffer) == 2, "Typing > 78 cols wraps to 2 lines");
+    TEST_ASSERT(utf8_visual_width(buffer_line(&ed.buffer, 0), buffer_line_len(&ed.buffer, 0)) <= 78,
+                "First line visual width <= 78");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0),
+                       "The quick brown fox jumps over the lazy dog while writing clean Markdown text") == 0,
+                "Wrapped cleanly at word boundary before 'today'");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 1), "today") == 0, "Second line contains 'today'");
+    TEST_ASSERT(ed.cursor_row == 1 && ed.cursor_col == 5, "Cursor at end of 'today' on line 1");
+    editor_free(&ed);
+
+    // 2. Custom column width = 20 (word wrap + hard break on unbroken token)
+    editor_init(&ed, NULL);
+    TEST_ASSERT(editor_set_wrap_col(&ed, 20), "Set wrap_col to 20");
+    const char *s20 = "Hello world, this foo";
+    for (size_t i = 0; s20[i] != '\0'; ++i) {
+        editor_insert_char(&ed, &s20[i], 1);
+    }
+    TEST_ASSERT(buffer_line_count(&ed.buffer) == 2, "Custom wrap 20 splits into 2 lines");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "Hello world, this") == 0, "Line 0 is 'Hello world, this'");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 1), "foo") == 0, "Line 1 is 'foo'");
+    TEST_ASSERT(ed.cursor_row == 1 && ed.cursor_col == 3, "Cursor follows wrapped word");
+
+    // Hard break for unbroken 22-char token
+    editor_smart_enter(&ed);
+    const char *unbroken = "abcdefghijklmnopqrstuv";
+    for (size_t i = 0; unbroken[i] != '\0'; ++i) {
+        editor_insert_char(&ed, &unbroken[i], 1);
+    }
+    TEST_ASSERT(buffer_line_count(&ed.buffer) == 4, "Unbroken 22-char word hard-wraps at col 20");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 2), "abcdefghijklmnopqrst") == 0, "First 20 chars on line 2");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 3), "uv") == 0, "Remaining 2 chars on line 3");
+    editor_free(&ed);
+
+    // 3. Blockquote continuation prefix preservation on wrap
+    editor_init(&ed, NULL);
+    TEST_ASSERT(editor_set_wrap_col(&ed, 20), "Set wrap_col to 20 for blockquote test");
+    const char *bq = "> Quoted sentence wraps";
+    for (size_t i = 0; bq[i] != '\0'; ++i) {
+        editor_insert_char(&ed, &bq[i], 1);
+    }
+    TEST_ASSERT(buffer_line_count(&ed.buffer) == 2, "Blockquote wrapped to 2 lines");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "> Quoted sentence") == 0, "Blockquote line 0");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 1), "> wraps") == 0, "Blockquote line 1 preserves '> ' prefix");
+    editor_free(&ed);
+
+    // 4. Wrap OFF (0) disables automatic line break
+    editor_init(&ed, NULL);
+    TEST_ASSERT(editor_set_wrap_col(&ed, MDE_WRAP_COL_OFF), "Disable wrap_col (0)");
+    for (int i = 0; i < 120; ++i) {
+        editor_insert_char(&ed, "a", 1);
+    }
+    TEST_ASSERT(buffer_line_count(&ed.buffer) == 1, "No line break when wrap is OFF (120 chars)");
+    TEST_ASSERT(buffer_line_len(&ed.buffer, 0) == 120, "All 120 chars stay on line 0");
+
+    // 5. Max boundary (255 columns)
+    TEST_ASSERT(editor_set_wrap_col(&ed, 255), "Set wrap_col to 255");
+    for (int i = 0; i < 140; ++i) {
+        editor_insert_char(&ed, "b", 1);
+    }
+    TEST_ASSERT(buffer_line_count(&ed.buffer) == 2, "Line > 255 chars wraps at 255");
+    TEST_ASSERT(buffer_line_len(&ed.buffer, 0) == 255, "Line 0 is exactly 255 chars");
+    TEST_ASSERT(buffer_line_len(&ed.buffer, 1) == 5, "Line 1 has remaining 5 chars");
+
+    editor_free(&ed);
+}
+
+static void test_resize_graceful(void) {
+    printf("--- Testing Graceful Resize & Scroll Clamping ---\n");
+    Editor ed;
+    editor_init(&ed, NULL);
+
+    // Populate 30 lines of text
+    for (int i = 0; i < 30; ++i) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "Line %02d with enough text to test horizontal scrolling on narrow panes", i + 1);
+        if (i > 0) {
+            buffer_split_line(&ed.buffer, (size_t)(i - 1), buffer_line_len(&ed.buffer, (size_t)(i - 1)), 0);
+        }
+        buffer_replace_line(&ed.buffer, (size_t)i, buf, strlen(buf), 0);
+    }
+
+    // Small viewport (10 rows, 30 cols): move cursor to bottom line end
+    ed.editor_width = 30;
+    ed.cursor_row = 29;
+    ed.cursor_col = buffer_line_len(&ed.buffer, 29);
+    editor_update_scroll(&ed, 10);
+    TEST_ASSERT(ed.scroll_row == 20, "Small 10-row viewport scrolls to row 20 for cursor at 29");
+    TEST_ASSERT(ed.scroll_col > 0, "Narrow 30-col viewport scrolls horizontally for long line");
+
+    // Grow viewport taller (40 rows > 30 total lines) and wider (120 cols)
+    ed.editor_width = 120;
+    editor_update_scroll(&ed, 40);
+    TEST_ASSERT(ed.scroll_row == 0, "Growing taller than file clamps scroll_row back to 0");
+    TEST_ASSERT(ed.scroll_col == 0, "Growing wider than line resets horizontal scroll_col to 0");
+
+    // Shrink viewport again (15 rows, 40 cols)
+    ed.editor_width = 40;
+    editor_update_scroll(&ed, 15);
+    TEST_ASSERT(ed.scroll_row == 15, "Shrinking to 15 rows keeps cursor row 29 visible");
+    TEST_ASSERT(ed.scroll_col > 0, "Shrinking to 40 cols scrolls horizontally to keep cursor visible");
+
+    // Ultra-tiny terminal hint rows check
+    TEST_ASSERT(ui_get_shortcut_hint_rows(5) == 0, "Ultra-tiny 5-row terminal hides shortcut hints");
+    TEST_ASSERT(ui_get_shortcut_hint_rows(6) == 1, "6-row terminal gets 1 shortcut hint row");
+
+    // Renderer adapts across extreme widths (narrow 12 cols to wide 200 cols)
+    RenderedDoc doc;
+    rendered_doc_init(&doc);
+    buffer_replace_line(&ed.buffer, 0, "---", 3, 0);
+    render_document(&ed.buffer, 12, &doc);
+    TEST_ASSERT(doc.count > 0 && doc.lines[0].chunk_count > 0, "Renderer handles narrow 12-col width");
+    int narrow_w = utf8_visual_width(doc.lines[0].chunks[0].text, doc.lines[0].chunks[0].text_len);
+    TEST_ASSERT(narrow_w <= 12, "Horizontal rule fits inside narrow 12-col width");
+
+    render_document(&ed.buffer, 200, &doc);
+    int wide_w = utf8_visual_width(doc.lines[0].chunks[0].text, doc.lines[0].chunks[0].text_len);
+    TEST_ASSERT(wide_w > 100 && wide_w <= 200, "Horizontal rule expands cleanly for wide 200-col width");
+
+    rendered_doc_free(&doc);
+    editor_free(&ed);
+}
+
 static void test_shortcut_hints_and_dialog(void) {
     printf("--- Testing Shortcut Hints & File Dialogue API ---\n");
 
@@ -564,6 +721,8 @@ int main(void) {
     test_cut_copy_paste();
     test_kill_line_and_word();
     test_home_and_end();
+    test_auto_line_break();
+    test_resize_graceful();
     test_shortcut_hints_and_dialog();
 
     printf("==========================================\n");
