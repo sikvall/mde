@@ -204,4 +204,38 @@ The following tasks from your requirements and project roadmap are identified fo
   - Compiles cleanly under C11 with `-Wall -Wextra -pedantic -Werror`.
   - All 418 unit tests in `bin/test_runner` passing (100.0%).
 
+### 6.5 Interactive UX & Dual-Pane Navigation Enhancements
+- [ ] **Dual-Pane Mouse Click Routing (`VIEW_SPLIT`):**
+  - When in split view mode, detect whether a mouse click occurred in the left editor pane or the right preview pane (`click_x > split_col`).
+  - Route clicks in the preview pane to synchronize editor cursor to the corresponding source line, and allow direct single-click following of Markdown hyperlinks.
+- [ ] **Live Document & Selection Statistics Modal (`Alt+D` / `M-D`):**
+  - Display an interactive popover showing comprehensive document metrics: line count, word count, total characters, characters excluding whitespace, active selection word/character counts, and estimated reading time.
+- [ ] **Bracket & Delimiter Pair Matching Navigation (`Ctrl+]` / `Alt+P`):**
+  - Quickly jump the cursor between matching pairs of parentheses `()`, brackets `[]`, braces `{}`, and Markdown formatting delimiters (`**`, `*`, `~~`, `` ` ``).
+
+### 6.6 Markdown Authoring, Typography & Diagnostic Tools
+- [ ] **Link Integrity & Dead Link Validator (`F9` / Alt+L):**
+  - Provide a diagnostic scan of all inline `[text](target)` and reference `[ref]: target` links in the current document.
+  - Verify existence of local target files on disk and validate `#anchor` fragments against heading slugs.
+  - Display missing or broken targets in a navigable modal list with instant jump to the offending line.
+- [ ] **Interactive Table of Contents (`[TOC]`) Generator & Refresher:**
+  - Command to insert or update an indented Markdown hierarchy of all document headings (H1–H6) at the cursor or inside `<!-- toc -->...<!-- /toc -->` comment delimiters.
+- [ ] **Smart Typographical Punctuation Rendering:**
+  - Render curly quotes `“”` / `‘’`, en-dash `--` (`–`), em-dash `---` (`—`), and ellipsis `...` (`…`) in the preview renderer and export backends without modifying raw text source.
+- [ ] **Fenced Code Block Syntax Highlighting:**
+  - Tokenize and colorize keywords, strings, comments, and numbers for common languages (`c`, `python`, `sh`, `json`, `markdown`, `html`) within fenced code blocks.
+
+### 6.7 Export & Template Customization
+- [ ] **Custom CSS Stylesheet Option for HTML Export:**
+  - Add support for custom external or inlined CSS stylesheets via `--css=<file>` command line argument or config file option (`export_css = <path>`).
+- [ ] **Direct PDF Export Backend:**
+  - Expand `ui_dialog_export.c` and master export dispatcher to include PDF as an export target, delegating to Pandoc with `pdflatex`, `xelatex`, or `weasyprint` engines.
+
+### 6.8 Quality Assurance, Memory Safety & Fuzzing
+- [ ] **AddressSanitizer & UndefinedBehaviorSanitizer Target (`make sanitize`):**
+  - Add a dedicated make target compiling the test runner with `-fsanitize=address,undefined -g` to verify absence of memory leaks, buffer overflows, or undefined behavior.
+- [ ] **Automated Fuzz Testing Harness (`make fuzz`):**
+  - Add a lightweight fuzz test target feeding randomized and degenerate byte sequences into `md_parse_line()` and UTF-8 utilities to guarantee crash immunity against pathological input.
+
+
 
