@@ -387,23 +387,28 @@ make clean && make && make test
   - Save custom themes to `~/.config/mde/themes/<theme_name>.conf`.
 
 #### Task 4: AddressSanitizer & UndefinedBehaviorSanitizer Target (Roadmap 6.8)
-- **Objective:** Add `make sanitize` target compiling with `-fsanitize=address,undefined -g`.
-- **Target:** Verify zero memory leaks, buffer overflows, or undefined behavior across all 490+ tests.
+- **Objective:** Add `make sanitize` target compiling with
+    `-fsanitize=address,undefined -g`.
+- **Target:** Verify zero memory leaks, buffer overflows, or undefined
+    behavior across all 490+ tests.
 
 ### 8.4 Inviolable Quality Criteria & Project Constraints
-1. **Pure C11 Standard Library:** Do not introduce external library dependencies beyond `ncursesw`.
-2. **Warning-Free Compilation:** `-Wall -Wextra -pedantic -Werror` must pass cleanly at all times.
-3. **Commit Protocol:** Always propose git commit messages in the chat and wait for user's explicit confirmation before running `git commit`. Never commit unprompted.
-4. **License Safety:** Never quote or output verbatim MIT license text in thoughts or responses.
-5. **Documentation Synchronization:** Whenever keybindings, features, or CLI options change, synchronously update:
+1. **Pure C11 Standard Library:** Do not introduce external library
+   dependencies beyond `ncursesw`.
+2. **Warning-Free Compilation:** `-Wall -Wextra -pedantic -Werror` must pass
+   cleanly at all times.
+3. **Commit Protocol:** Always propose git commit messages in the chat and
+   wait for user's explicit confirmation before running `git commit`. Never
+   commit unprompted.
+4. **Checkin Protocol:** The user is the only one who is allowed to push to
+   repo with a `git push` command.
+5. **License Safety:** Never quote or output verbatim MIT license text in
+   thoughts or responses.
+6. **Documentation Synchronization:** Whenever keybindings, features, or CLI
+   options change, synchronously update:
    - `README.md`
    - `man/mde.1`
    - `CHANGELOG.md`
    - `scripts/generate_keybindings.py`
    - `src/ui_dialog_help.c`
    - `project-description.md`
-
-
-
-
-
