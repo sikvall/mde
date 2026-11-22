@@ -5,7 +5,7 @@
 > recent upgrades, git history, and the remaining roadmap items.
 >
 > Snapshot basis: **v0.1.1** (2026-11-22), pure C11 codebase compiling warning-free with `gcc` and `ncursesw`.
-> Test runner passes **395 / 395 tests (100.0%)**.
+> Test runner passes **418 / 418 tests (100.0%)**.
 
 ---
 
@@ -60,6 +60,7 @@ mde/
 ├── Makefile               # Build, test, install, and deb packaging
 ├── README.md              # User documentation and keybindings guide
 ├── CHANGELOG.md           # Keep a Changelog document tracking releases (0.1.0, 0.1.1)
+├── LICENSE.md             # Software license
 ├── demo.md                # Interactive sample document demonstrating mde features
 ├── man/
 │   └── mde.1              # UNIX manual page
@@ -70,17 +71,28 @@ mde/
 │   ├── config.h / .c      # Configuration file loader (~/.config/mde/config or ~/.mde/config)
 │   ├── backup.h / .c      # Emacs-style backup (~) and autosave (#...#) handling
 │   ├── buffer.h / .c      # Line-based dynamic text buffer with CRLF detection & atomic saves
-│   ├── editor.h / .c      # Editor state, cursor, selection, clipboard, wrap, links, search
-│   ├── export.h / .c      # HTML5, XML, EPUB, LaTeX multi-file export & pandoc backend
+│   ├── editor.h / .c      # Core editor loop, cursor, selection, clipboard, auto-wrap
+│   ├── editor_link.c      # Hypertext navigation, relative links, and anchor resolution
+│   ├── editor_search.c    # Interactive search and replace subsystem
+│   ├── export.h / .c      # Master export dispatcher and pandoc integration
+│   ├── export_internal.h  # Shared export document structures and parsing helpers
+│   ├── export_html.c      # Built-in standalone HTML5 export backend
+│   ├── export_xml.c       # Built-in structured XML export backend
+│   ├── export_latex.c     # Built-in unified LaTeX export backend
 │   ├── markdown.h / .c    # Streaming Markdown lexer and span tokenizer
 │   ├── renderer.h / .c    # Formatted preview renderer with responsive soft-wrapping & tables
 │   ├── theme.h / .c       # 256-color & 16-color ncurses palette & token styles
-│   ├── ui.h / .c          # Screen layout, ruler, file browser, status bar, dialogs
+│   ├── ui.h / .c          # Core screen layout, ruler, gutter, status and message bar
+│   ├── ui_internal.h      # Shared UI box drawing and input helper declarations
+│   ├── ui_dialog_file.c   # Modal file browser (Open, Save As, Link)
+│   ├── ui_dialog_help.c   # Modal two-tab keyboard shortcut and Markdown help overlay
+│   ├── ui_dialog_export.c # Modal interactive export format selector menu
+│   ├── ui_dialog_outline.c # Modal document table-of-contents outline navigator
 │   ├── undo.h / .c        # Multi-level undo/redo action stacks with group IDs
 │   ├── utf8.h / .c        # Multi-byte UTF-8 length, boundary, and wcwidth visual column math
 │   └── main.c             # Event loop, CLI parsing, signal handling, key & mouse dispatch
 └── tests/
-    └── test_runner.c      # Comprehensive C11 unit test suite (395 assertions)
+    └── test_runner.c      # Comprehensive C11 unit test suite (418 assertions)
 ```
 
 ---
@@ -172,4 +184,24 @@ The following tasks from your requirements and project roadmap are identified fo
 ### 6.3 Project & Repository Cleanliness
 - [x] **LICENSE.md:** Placed the MIT License file in the repository root.
 - [x] **Untracked Workspace Artifacts:** Cleaned leftover manual test outputs and updated `.gitignore` (`*.epub`, `*.tex`, `*.aux`, `*.log`, `*.d`, `*~`, `#*#`, `local`).
+
+### 6.4 Codebase Modularization & Structural Refactoring
+- [x] **Export Subsystem Modularization (`export.c` -> 960 lines):**
+  - Extracted built-in HTML5 exporter into `src/export_html.c`.
+  - Extracted built-in structured XML exporter into `src/export_xml.c`.
+  - Extracted built-in unified LaTeX exporter into `src/export_latex.c`.
+  - Created `src/export_internal.h` declaring shared document node models and parser utilities.
+- [x] **Editor Subsystem Modularization (`editor.c` -> 1,681 lines):**
+  - Extracted hypertext link resolution, navigation history, and relative path calculation into `src/editor_link.c`.
+  - Extracted interactive substring search and replace into `src/editor_search.c`.
+- [x] **UI & Dialog Subsystem Modularization (`ui.c` -> 938 lines):**
+  - Extracted modal file browser dialogue (Open, Save As, Link) into `src/ui_dialog_file.c`.
+  - Extracted two-tab modal help screen into `src/ui_dialog_help.c`.
+  - Extracted modal export format selector into `src/ui_dialog_export.c`.
+  - Extracted modal document outline table-of-contents into `src/ui_dialog_outline.c`.
+  - Created `src/ui_internal.h` declaring shared box border drawing and UTF-8 modal input functions.
+- [x] **Zero Warning & Full Regression Verification:**
+  - Compiles cleanly under C11 with `-Wall -Wextra -pedantic -Werror`.
+  - All 418 unit tests in `bin/test_runner` passing (100.0%).
+
 
