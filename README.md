@@ -96,7 +96,7 @@ All application metadata, title, version, and build date are defined centrally i
 
 ```c
 #define MDE_APP_NAME        "mde"
-#define MDE_VERSION_STRING  "0.1.1"
+#define MDE_VERSION_STRING  "0.1.2"
 #define MDE_BUILD_DATE      __DATE__
 #define MDE_BUILD_TIME      __TIME__
 ```
@@ -124,7 +124,8 @@ Updating this single file automatically updates the CLI output (`mde -v`), the h
 | **`Ctrl+S`** | Save current file directly (opens Write Out dialogue if untitled) |
 | **`Ctrl+O`** | Write Out (Save As file dialogue to choose directory & name) |
 | **`Ctrl+R`** | Read / Open file dialogue to browse and open a file |
-| **`F5` / `Alt+X`** | Open Export Menu (**HTML**, **XML**, **EPUB**, **LaTeX**; bundles linked `.md` files) |
+| **`F5` / `Alt+X`** | Open Export Menu (**HTML**, **XML**, **EPUB**, **LaTeX**; press `M` to edit metadata; bundles linked `.md` files) |
+| **`Alt+I`** | Document Metadata editor (Title, Author, Language, Date, Publisher, ID, Rights, Cover, CSS) |
 | **`F6` / `Alt+H`** | Insert hypertext file link `[Label](relative/file.md)` via file picker |
 | **`F7` / `Alt+O`** | Follow Markdown file link or `#heading` anchor under cursor |
 | **`F8` / `Alt+-`** | Navigate back to previous linked file & cursor position |
@@ -201,7 +202,7 @@ Builds an installable Debian package at `bin/mde_<version>_<arch>.deb` (includes
 To install the built package:
 
 ```bash
-sudo dpkg -i bin/mde_0.1.1_amd64.deb
+sudo dpkg -i bin/mde_0.1.2_amd64.deb
 ```
 
 ### Install Directly

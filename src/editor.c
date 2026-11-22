@@ -2009,3 +2009,112 @@ void editor_update_scroll(Editor *ed, int view_rows) {
         }
     }
 }
+
+/**
+ * @brief Update or insert YAML front-matter metadata at the top of the document.
+ */
+bool editor_update_front_matter(Editor *ed, const EpubMetadata *meta) {
+    if (!ed || !meta) return false;
+
+    size_t body_start = 0;
+    EpubMetadata old_meta;
+    memset(&old_meta, 0, sizeof(old_meta));
+    bool has_fm = epub_parse_front_matter(&ed->buffer, &old_meta, &body_start);
+
+    // Build the new YAML front-matter lines
+    char *lines[16];
+    size_t nlines = 0;
+
+    lines[nlines++] = strdup("---");
+    if (meta->title[0]) {
+        char buf[512];
+        snprintf(buf, sizeof(buf), "title: \"%s\"", meta->title);
+        lines[nlines++] = strdup(buf);
+    }
+    if (meta->author[0]) {
+        char buf[512];
+        snprintf(buf, sizeof(buf), "author: \"%s\"", meta->author);
+        lines[nlines++] = strdup(buf);
+    }
+    if (meta->language[0]) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "language: %s", meta->language);
+        lines[nlines++] = strdup(buf);
+    }
+    if (meta->date[0]) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "date: %s", meta->date);
+        lines[nlines++] = strdup(buf);
+    }
+    if (meta->publisher[0]) {
+        char buf[512];
+        snprintf(buf, sizeof(buf), "publisher: \"%s\"", meta->publisher);
+        lines[nlines++] = strdup(buf);
+    }
+    if (meta->identifier[0]) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "identifier: %s", meta->identifier);
+        lines[nlines++] = strdup(buf);
+    }
+    if (meta->rights[0]) {
+        char buf[512];
+        snprintf(buf, sizeof(buf), "rights: \"%s\"", meta->rights);
+        lines[nlines++] = strdup(buf);
+    }
+    if (meta->description[0]) {
+        char buf[1024];
+        snprintf(buf, sizeof(buf), "description: \"%s\"", meta->description);
+        lines[nlines++] = strdup(buf);
+    }
+    if (meta->cover_path[0]) {
+        char buf[PATH_MAX + 32];
+        snprintf(buf, sizeof(buf), "cover: \"%s\"", meta->cover_path);
+        lines[nlines++] = strdup(buf);
+    }
+    if (meta->css_path[0]) {
+        char buf[PATH_MAX + 32];
+        snprintf(buf, sizeof(buf), "css: \"%s\"", meta->css_path);
+        lines[nlines++] = strdup(buf);
+    }
+    lines[nlines++] = strdup("---");
+
+    uint64_t group = buffer_next_group(&ed->buffer);
+
+    if (has_fm && body_start > 0) {
+        size_t end_row = body_start - 1;
+        for (size_t r = end_row; r > 0; --r) {
+            size_t rlen = buffer_line_len(&ed->buffer, r);
+            if (rlen > 0) buffer_delete_range(&ed->buffer, r, 0, rlen, group);
+            buffer_join_lines(&ed->buffer, r - 1, group);
+        }
+        buffer_replace_line(&ed->buffer, 0, lines[0], strlen(lines[0]), group);
+        for (size_t i = 1; i < nlines; ++i) {
+            size_t prev_row = i - 1;
+            buffer_split_line(&ed->buffer, prev_row, buffer_line_len(&ed->buffer, prev_row), group);
+            buffer_insert_string(&ed->buffer, i, 0, lines[i], strlen(lines[i]), group);
+        }
+    } else {
+        // Document has no existing front matter
+        size_t orig_lines = buffer_line_count(&ed->buffer);
+        if (orig_lines == 1 && buffer_line_len(&ed->buffer, 0) == 0) {
+            buffer_replace_line(&ed->buffer, 0, lines[0], strlen(lines[0]), group);
+            for (size_t i = 1; i < nlines; ++i) {
+                buffer_split_line(&ed->buffer, i - 1, buffer_line_len(&ed->buffer, i - 1), group);
+                buffer_insert_string(&ed->buffer, i, 0, lines[i], strlen(lines[i]), group);
+            }
+        } else {
+            buffer_split_line(&ed->buffer, 0, 0, group);
+            buffer_replace_line(&ed->buffer, 0, lines[0], strlen(lines[0]), group);
+            for (size_t i = 1; i < nlines; ++i) {
+                buffer_split_line(&ed->buffer, i - 1, buffer_line_len(&ed->buffer, i - 1), group);
+                buffer_insert_string(&ed->buffer, i, 0, lines[i], strlen(lines[i]), group);
+            }
+        }
+    }
+
+    for (size_t i = 0; i < nlines; ++i) free(lines[i]);
+
+    ed->buffer.is_dirty = true;
+    ed->rendered_dirty = true;
+    return true;
+}

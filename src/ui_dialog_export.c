@@ -229,8 +229,8 @@ bool ui_export_menu(Editor *ed) {
                 wattroff(win, COLOR_PAIR(CP_STATUS_BAR_DIRTY) | A_BOLD | A_REVERSE);
             } else {
                 const char *hints = has_pandoc
-                    ? " [Enter] Export  [1-4] Format  [Tab] Path  [L] Links  [E] Engine  [Esc] Cancel "
-                    : " [Enter] Export  [1-4] Format  [Tab] Path  [L] Links  [Esc/^C] Cancel ";
+                    ? " [Enter] Export  [1-4] Format  [Tab] Path  [L] Links  [M] Meta  [E] Engine  [Esc] Cancel "
+                    : " [Enter] Export  [1-4] Format  [Tab] Path  [L] Links  [M] Meta  [Esc/^C] Cancel ";
                 wattron(win, COLOR_PAIR(CP_MARKER) | A_DIM);
                 mvwaddnstr(win, win_h - 1, 2, hints, win_w - 4);
                 wattroff(win, COLOR_PAIR(CP_MARKER) | A_DIM);
@@ -359,6 +359,21 @@ bool ui_export_menu(Editor *ed) {
                 err_msg[0] = '\0';
             } else if (ch == 'l' || ch == 'L') {
                 include_linked = !include_linked;
+                err_msg[0] = '\0';
+            } else if (ch == 'm' || ch == 'M') {
+                delwin(win);
+                curs_set(0);
+                ui_dialog_metadata(ed);
+                ed->rendered_dirty = true;
+                clearok(stdscr, TRUE);
+                erase();
+                ui_draw(ed);
+                getmaxyx(stdscr, rows, cols);
+                calc_export_win_geom(rows, cols, &win_h, &win_w, &win_y, &win_x);
+                win = newwin(win_h, win_w, win_y, win_x);
+                if (!win) break;
+                keypad(win, TRUE);
+                wbkgd(win, COLOR_PAIR(CP_HELP_BOX));
                 err_msg[0] = '\0';
             } else if (ch == 'q' || ch == 'Q') {
                 break;

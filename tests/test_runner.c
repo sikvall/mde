@@ -46,9 +46,9 @@ static void test_version(void) {
     printf("--- Testing Version & Build Metadata ---\n");
     TEST_ASSERT(strcmp(MDE_APP_NAME, "mde") == 0, "App name is 'mde'");
     TEST_ASSERT(strcmp(MDE_APP_TITLE, "Markdown Editor") == 0, "App title is 'Markdown Editor'");
-    TEST_ASSERT(strcmp(MDE_VERSION_STRING, "0.1.1") == 0, "Version string is '0.1.1'");
-    TEST_ASSERT(MDE_VERSION_MAJOR == 0 && MDE_VERSION_MINOR == 1 && MDE_VERSION_PATCH == 1,
-                "Numeric version macros match 0.1.1");
+    TEST_ASSERT(strcmp(MDE_VERSION_STRING, "0.1.2") == 0, "Version string is '0.1.2'");
+    TEST_ASSERT(MDE_VERSION_MAJOR == 0 && MDE_VERSION_MINOR == 1 && MDE_VERSION_PATCH == 2,
+                "Numeric version macros match 0.1.2");
     TEST_ASSERT(strlen(MDE_BUILD_DATE) > 0, "Build date is non-empty");
     TEST_ASSERT(strlen(MDE_BUILD_TIME) > 0, "Build time is non-empty");
     TEST_ASSERT(strlen(MDE_AUTHOR) > 0, "Author is non-empty");
@@ -902,6 +902,83 @@ static void test_export_subsystem(void) {
         if (old_path) setenv("PATH", old_path, 1);
         remove(mock_pandoc);
     }
+
+    // 6. Complete verification of ALL export formats WITHOUT pandoc on PATH
+    const char *saved_path = getenv("PATH");
+    const char *empty_bin_dir = "/tmp/mde_test_no_pandoc";
+    mkdir(empty_bin_dir, 0755);
+    setenv("PATH", empty_bin_dir, 1);
+
+    TEST_ASSERT(!export_has_pandoc(), "export_has_pandoc() reports false when pandoc is absent from PATH");
+
+    char used_no_pan[32] = {0};
+    char err_no_pan[256] = {0};
+
+    // 6a. HTML export without pandoc
+    const char *html_no_pan = "/tmp/test_no_pandoc.html";
+    ok = export_document(&buf, EXPORT_HTML, html_no_pan, EXPORT_ENGINE_AUTO,
+                         used_no_pan, sizeof(used_no_pan), err_no_pan, sizeof(err_no_pan));
+    TEST_ASSERT(ok, "HTML export succeeds without pandoc");
+    TEST_ASSERT(strcmp(used_no_pan, "built-in") == 0, "HTML engine reported as built-in without pandoc");
+    char *h_out = read_entire_file(html_no_pan);
+    TEST_ASSERT(h_out != NULL && strstr(h_out, "<!DOCTYPE html>") != NULL, "HTML output without pandoc is valid HTML5");
+    free(h_out);
+    remove(html_no_pan);
+
+    // 6b. XML export without pandoc
+    const char *xml_no_pan = "/tmp/test_no_pandoc.xml";
+    ok = export_document(&buf, EXPORT_XML, xml_no_pan, EXPORT_ENGINE_AUTO,
+                         used_no_pan, sizeof(used_no_pan), err_no_pan, sizeof(err_no_pan));
+    TEST_ASSERT(ok, "XML export succeeds without pandoc");
+    TEST_ASSERT(strcmp(used_no_pan, "built-in") == 0, "XML engine reported as built-in without pandoc");
+    char *x_out = read_entire_file(xml_no_pan);
+    TEST_ASSERT(x_out != NULL && strstr(x_out, "<?xml") != NULL, "XML output without pandoc has XML declaration");
+    free(x_out);
+    remove(xml_no_pan);
+
+    // 6c. EPUB export without pandoc
+    const char *epub_no_pan = "/tmp/test_no_pandoc.epub";
+    ok = export_document(&buf, EXPORT_EPUB, epub_no_pan, EXPORT_ENGINE_AUTO,
+                         used_no_pan, sizeof(used_no_pan), err_no_pan, sizeof(err_no_pan));
+    TEST_ASSERT(ok, "EPUB export succeeds without pandoc");
+    TEST_ASSERT(strcmp(used_no_pan, "built-in") == 0, "EPUB engine reported as built-in without pandoc");
+    int ep_err = 0;
+    struct zip *ep_za = zip_open(epub_no_pan, ZIP_RDONLY, &ep_err);
+    TEST_ASSERT(ep_za != NULL, "EPUB output without pandoc is a valid zip archive");
+    if (ep_za) {
+        const char *mname = zip_get_name(ep_za, 0, 0);
+        TEST_ASSERT(mname && strcmp(mname, "mimetype") == 0, "First entry in EPUB without pandoc is mimetype");
+        zip_close(ep_za);
+    }
+    remove(epub_no_pan);
+
+    // 6d. LaTeX export without pandoc
+    const char *tex_no_pan = "/tmp/test_no_pandoc.tex";
+    ok = export_document(&buf, EXPORT_LATEX, tex_no_pan, EXPORT_ENGINE_AUTO,
+                         used_no_pan, sizeof(used_no_pan), err_no_pan, sizeof(err_no_pan));
+    TEST_ASSERT(ok, "LaTeX export succeeds without pandoc");
+    TEST_ASSERT(strcmp(used_no_pan, "built-in") == 0, "LaTeX engine reported as built-in without pandoc");
+    char *t_out = read_entire_file(tex_no_pan);
+    TEST_ASSERT(t_out != NULL && strstr(t_out, "\\begin{document}") != NULL, "LaTeX output without pandoc is valid");
+    free(t_out);
+    remove(tex_no_pan);
+
+    // 6e. Multi-file linked export without pandoc
+    size_t multi_linked = 0;
+    const char *multi_epub = "/tmp/test_no_pandoc_multi.epub";
+    Buffer root_test;
+    buffer_init(&root_test);
+    buffer_load(&root_test, "examples/demo.md");
+    ok = export_document_ex(&root_test, EXPORT_EPUB, multi_epub, EXPORT_ENGINE_AUTO,
+                            true, &multi_linked, used_no_pan, sizeof(used_no_pan), err_no_pan, sizeof(err_no_pan));
+    TEST_ASSERT(ok, "Multi-file EPUB export succeeds without pandoc on demo.md");
+    TEST_ASSERT(strcmp(used_no_pan, "built-in") == 0, "Multi-file EPUB engine reported as built-in without pandoc");
+    remove(multi_epub);
+    buffer_free(&root_test);
+
+    // Restore PATH
+    if (saved_path) setenv("PATH", saved_path, 1);
+    rmdir(empty_bin_dir);
 
     buffer_free(&buf);
 }
@@ -2273,6 +2350,74 @@ static void test_epub_system(void) {
         remove(cli_epub_path);
         remove(cli_md_path);
     }
+
+    // 7. Interactive Metadata editing & front-matter synchronization
+    Editor ed_meta;
+    editor_init(&ed_meta, NULL);
+    editor_paste_text(&ed_meta, "# Great Adventures\nThis is chapter body text.", 45);
+
+    EpubMetadata new_meta;
+    memset(&new_meta, 0, sizeof(new_meta));
+    snprintf(new_meta.title, sizeof(new_meta.title), "Great Adventures");
+    snprintf(new_meta.author, sizeof(new_meta.author), "Arthur Conan Doyle");
+    snprintf(new_meta.language, sizeof(new_meta.language), "en");
+    snprintf(new_meta.date, sizeof(new_meta.date), "2026-11-22");
+    snprintf(new_meta.publisher, sizeof(new_meta.publisher), "Strand Magazine");
+    snprintf(new_meta.identifier, sizeof(new_meta.identifier), "urn:isbn:9780123456789");
+    snprintf(new_meta.rights, sizeof(new_meta.rights), "Public Domain");
+    snprintf(new_meta.description, sizeof(new_meta.description), "Classic adventures.");
+    snprintf(new_meta.cover_path, sizeof(new_meta.cover_path), "cover.jpg");
+    snprintf(new_meta.css_path, sizeof(new_meta.css_path), "book.css");
+
+    bool updated = editor_update_front_matter(&ed_meta, &new_meta);
+    TEST_ASSERT(updated, "editor_update_front_matter succeeds inserting new front matter");
+    TEST_ASSERT(ed_meta.buffer.is_dirty, "Buffer marked dirty after metadata update");
+
+    EpubMetadata read_m;
+    memset(&read_m, 0, sizeof(read_m));
+    size_t bstart = 0;
+    bool has_fm = epub_parse_front_matter(&ed_meta.buffer, &read_m, &bstart);
+    TEST_ASSERT(has_fm, "Inserted front matter successfully parsed by epub_parse_front_matter");
+    TEST_ASSERT(strcmp(read_m.title, "Great Adventures") == 0, "Title preserved in front matter");
+    TEST_ASSERT(strcmp(read_m.author, "Arthur Conan Doyle") == 0, "Author preserved in front matter");
+    TEST_ASSERT(strcmp(read_m.publisher, "Strand Magazine") == 0, "Publisher preserved in front matter");
+    TEST_ASSERT(strcmp(read_m.identifier, "urn:isbn:9780123456789") == 0, "Identifier preserved in front matter");
+    TEST_ASSERT(strcmp(read_m.cover_path, "cover.jpg") == 0, "Cover path preserved in front matter");
+
+    // Test updating existing front matter
+    snprintf(new_meta.author, sizeof(new_meta.author), "Sir Arthur Conan Doyle");
+    snprintf(new_meta.title, sizeof(new_meta.title), "The Hound of the Baskervilles");
+    snprintf(new_meta.cover_path, sizeof(new_meta.cover_path), "images/hound_cover.png");
+    updated = editor_update_front_matter(&ed_meta, &new_meta);
+    TEST_ASSERT(updated, "editor_update_front_matter succeeds updating existing front matter");
+
+    memset(&read_m, 0, sizeof(read_m));
+    has_fm = epub_parse_front_matter(&ed_meta.buffer, &read_m, &bstart);
+    TEST_ASSERT(has_fm, "Updated front matter parsed successfully");
+    TEST_ASSERT(strcmp(read_m.title, "The Hound of the Baskervilles") == 0, "Updated title reflected");
+    TEST_ASSERT(strcmp(read_m.author, "Sir Arthur Conan Doyle") == 0, "Updated author reflected");
+    TEST_ASSERT(strcmp(read_m.cover_path, "images/hound_cover.png") == 0, "Updated cover picture path reflected");
+
+    // Verify EPUB export immediately uses the updated metadata
+    const char *meta_epub_out = "/tmp/test_meta_updated.epub";
+    char meta_err[256] = {0};
+    ok = epub_convert_buffer(&ed_meta.buffer, meta_epub_out, NULL, meta_err, sizeof(meta_err));
+    TEST_ASSERT(ok, "EPUB export succeeds on buffer with updated metadata");
+    int m_err = 0;
+    struct zip *m_za = zip_open(meta_epub_out, ZIP_RDONLY, &m_err);
+    TEST_ASSERT(m_za != NULL, "EPUB archive with updated metadata opens");
+    if (m_za) {
+        char *m_opf = zip_test_read_entry(m_za, "EPUB/package.opf", NULL);
+        TEST_ASSERT(m_opf != NULL && strstr(m_opf, "The Hound of the Baskervilles") != NULL,
+                    "Package OPF contains updated title");
+        TEST_ASSERT(m_opf != NULL && strstr(m_opf, "Sir Arthur Conan Doyle") != NULL,
+                    "Package OPF contains updated author");
+        free(m_opf);
+        zip_close(m_za);
+    }
+    remove(meta_epub_out);
+
+    editor_free(&ed_meta);
 }
 
 /** @brief Run all unit test suites and return 0 on 100% pass, 1 on any failure. */

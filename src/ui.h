@@ -193,6 +193,14 @@ void ui_show_help(Editor *ed);
  */
 bool ui_export_menu(Editor *ed);
 
+/**
+ * @brief Display an interactive modal dialog for viewing and editing document & EPUB metadata.
+ *
+ * @param ed Pointer to Editor instance.
+ * @return true if metadata was updated, false if cancelled.
+ */
+bool ui_dialog_metadata(Editor *ed);
+
 #ifdef __cplusplus
 }
 #endif

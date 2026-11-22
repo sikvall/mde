@@ -278,7 +278,13 @@ bool epub_parse_front_matter(const Buffer *buf, EpubMetadata *meta, size_t *out_
                 snprintf(meta->rights, sizeof(meta->rights), "%s", val);
             } else if (strcmp(key, "description") == 0 || strcmp(key, "summary") == 0) {
                 snprintf(meta->description, sizeof(meta->description), "%s", val);
-            } else if (strcmp(key, "cover") == 0) {
+            } else if (strcmp(key, "cover") == 0 ||
+                       strcmp(key, "cover-image") == 0 ||
+                       strcmp(key, "cover_image") == 0 ||
+                       strcmp(key, "coverimage") == 0 ||
+                       strcmp(key, "cover-picture") == 0 ||
+                       strcmp(key, "cover_picture") == 0 ||
+                       strcmp(key, "coverpicture") == 0) {
                 snprintf(meta->cover_path, sizeof(meta->cover_path), "%s", val);
             } else if (strcmp(key, "css") == 0 || strcmp(key, "stylesheet") == 0) {
                 snprintf(meta->css_path, sizeof(meta->css_path), "%s", val);
@@ -1119,6 +1125,11 @@ static bool zip_add_memory(zip_t *za, const char *entry_name, const void *data, 
 }
 
 static bool zip_add_disk_file(zip_t *za, const char *entry_name, const char *disk_path) {
+    if (!za || !entry_name || !disk_path || !disk_path[0]) return false;
+    struct stat st;
+    if (stat(disk_path, &st) != 0 || !S_ISREG(st.st_mode)) {
+        return false;
+    }
     zip_source_t *s = zip_source_file(za, disk_path, 0, 0);
     if (!s) return false;
     zip_int64_t idx = zip_file_add(za, entry_name, s, ZIP_FL_OVERWRITE);
@@ -1327,10 +1338,12 @@ bool export_builtin_epub(const ExportDocList *docs, const char *out_path,
         char abs_css[PATH_MAX];
         if (ctx->meta.css_path[0] == '/') {
             set_str(abs_css, sizeof(abs_css), ctx->meta.css_path);
-        } else {
+        } else if (docs->nodes[0].base_dir[0] != '\0') {
             char combined[PATH_MAX * 2];
             snprintf(combined, sizeof(combined), "%s/%s", docs->nodes[0].base_dir, ctx->meta.css_path);
             set_str(abs_css, sizeof(abs_css), combined);
+        } else {
+            set_str(abs_css, sizeof(abs_css), ctx->meta.css_path);
         }
         if (!zip_add_disk_file(za, "EPUB/stylesheet.css", abs_css)) {
             const char *def_css = get_default_epub_css();

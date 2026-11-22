@@ -36,6 +36,7 @@ static const HelpEntry s_editor_help[] = {
     { HELP_LINE_ITEM, "F6 / Alt+H", "Insert hyperlink [Label](file.md) via file picker" },
     { HELP_LINE_ITEM, "F7 / Alt+O", "Follow link or jump between footnote & definition" },
     { HELP_LINE_ITEM, "F8 / Alt+-", "Navigate back in link & footnote history" },
+    { HELP_LINE_ITEM, "Alt+I", "Document Metadata editor (Title, Author, Cover, etc.)" },
     { HELP_LINE_ITEM, "F5 / Alt+X", "Export (includes linked .md files in HTML/EPUB/LaTeX/XML)" },
     { HELP_LINE_BLANK, NULL, NULL },
     { HELP_LINE_SECTION, "VIEW MODES & DISPLAY", NULL },

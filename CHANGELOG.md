@@ -4,6 +4,16 @@ All notable changes to mde (Markdown Editor) will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.2] - 2026-11-22
+
+### Added
+- Interactive Document Metadata screen (`Alt+I` / Export Menu `[M]`) with a dedicated Cover Picture path/filename field (`meta.cover_path`) to specify and embed the book cover image in EPUB exports.
+- Optional interactive file browser trigger (`^R` / `F6`) within the Metadata screen to browse and select cover picture files directly from the filesystem.
+- Flexible YAML front-matter parsing recognizing `cover`, `cover-image`, `cover_image`, `cover-picture`, and `cover_picture` keys.
+- Atomic document front-matter updates (`editor_update_front_matter`) synchronizing metadata changes to the active buffer with dirty state tracking and undo support.
+- Standalone verification script (`scripts/verify_no_pandoc.sh`) validating all export formats (HTML5, XML/DocBook 5, EPUB 2/3, LaTeX) in pandoc-free environments.
+- Expanded test suite with comprehensive EPUB 2/3, pandoc-free export, and metadata editing verification in `tests/test_runner.c` (576 / 576 passing tests, 100% pass rate).
+
 ## [0.1.1] - 2026-11-22
 
 ### Added
@@ -35,7 +45,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Standalone CLI tool `bin/md2epub` (`src/md2epub_main.c`) with support for EPUB 2/3 target formats, chapter splitting, metadata overrides, cover image embedding, and progress reporting.
 - Standard UNIX man page for the converter (`man/md2epub.1`).
 - Compliant Open Container Format (OCF) packaging with uncompressed STORE `mimetype` at offset 0, automated chapter splitting on H1 (`# `) headings and linked files, YAML front-matter extraction, and local image asset bundling.
-- Expanded test suite with comprehensive EPUB 2/3 and native export verification in `tests/test_runner.c` (543 / 543 passing tests, 100% pass rate).
+- Interactive Document Metadata editor dialog (`Alt+I` / `M-I` and Export Menu `[M]` shortcut) supporting 10 editable metadata fields (Title, Author, Language, Date, Publisher, Identifier, Rights, Description, Cover Image, and Custom CSS) with immediate front-matter synchronization.
+- Atomic document front-matter updates (`editor_update_front_matter`) preserving document contents, marking buffers dirty, and participating in undo/redo history.
+- Standalone verification script (`scripts/verify_no_pandoc.sh`) validating all export formats (HTML5, XML/DocBook 5, EPUB 2/3, LaTeX) in pandoc-free environments.
+- Expanded test suite with comprehensive EPUB 2/3, pandoc-free export, and metadata editing verification in `tests/test_runner.c` (575 / 575 passing tests, 100% pass rate).
 
 ## [0.1.0] - 2026-11-21
 

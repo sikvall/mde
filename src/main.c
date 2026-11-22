@@ -74,6 +74,7 @@ static void print_usage(const char *prog) {
     printf("  F7 / Alt+O / ^]  Follow file or #heading link under cursor\n");
     printf("  F8 / Alt+-       Navigate back to previous linked file\n");
     printf("  F9 / Alt+T       Open Document Outline (jump to heading)\n");
+    printf("  Alt+I            Open Document & EPUB Metadata Editor\n");
     printf("  Ctrl+T           Toggle checkbox [- [ ] <-> - [x]]\n");
     printf("  Alt+B            Insert bold markers (**) or wrap selection\n");
     printf("  Enter            Smart list / task continuation\n");
@@ -498,6 +499,10 @@ static void handle_meta_key(char *search_buf, size_t search_cap, bool *last_sear
         case 'd':
         case 'D':
             ui_show_document_stats(&g_editor);
+            break;
+        case 'i':
+        case 'I':
+            ui_dialog_metadata(&g_editor);
             break;
         case 'm':
         case 'M':

@@ -1,4 +1,4 @@
-.TH MDE 1 "November 2026" "mde 0.1.1" "User Commands"
+.TH MDE 1 "November 2026" "mde 0.1.2" "User Commands"
 .SH NAME
 mde \- full-screen text-mode Markdown editor
 .SH SYNOPSIS
@@ -77,12 +77,18 @@ Read / Open interactive file dialogue to browse directories and open a file.
 .BR F5 " or " Alt+X
 Open the interactive Export Menu to export the current Markdown document to
 \fBHTML\fR (\fI.html\fR), \fBXML\fR (\fI.xml\fR), \fBEPUB\fR (\fI.epub\fR), or
-\fBLaTeX\fR (\fI.tex\fR). Recursively discovers and includes all locally linked
+\fBLaTeX\fR (\fI.tex\fR). Press \fBM\fR within the menu to view and update
+document metadata. Recursively discovers and includes all locally linked
 Markdown files (toggleable with \fBL\fR), rewriting internal links into working
 hypertext references; for \fBLaTeX\fR, all linked sources are combined into one
-single unified \fI.tex\fR document. Uses \fBpandoc\fR(1) automatically when
-available (and requires \fBpandoc\fR for EPUB), with built-in C11 converters for
-HTML5, structured XML, and LaTeX as fallbacks.
+single unified \fI.tex\fR document. Built-in native C11 converters are used for
+all formats, with \fBpandoc\fR(1) available as an optional alternative.
+.TP
+.BR Alt+I
+Open the Document Metadata modal dialogue to view and edit common book metadata
+(Title, Author, Language, Date, Publisher, Identifier, Rights, Description,
+Cover Image, and Custom CSS). Changes are automatically synchronized to the
+document's YAML front matter and included in EPUB exports.
 .TP
 .BR F6 " or " Alt+H
 Open the file picker to insert a relative Markdown hypertext link

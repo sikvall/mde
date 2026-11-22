@@ -12,6 +12,7 @@
 
 #include "buffer.h"
 #include "renderer.h"
+#include "epub.h"
 #include <stddef.h>
 #include <stdbool.h>
 #include <time.h>
@@ -495,6 +496,14 @@ void editor_update_scroll(Editor *ed, int view_rows);
 
 /** @brief Re-render the cached Markdown preview document when marked dirty. */
 void editor_refresh_rendered(Editor *ed);
+
+/**
+ * @brief Update or insert YAML front-matter metadata at the top of the document.
+ * @param ed Pointer to Editor.
+ * @param meta Pointer to updated EpubMetadata values.
+ * @return true on successful update.
+ */
+bool editor_update_front_matter(Editor *ed, const EpubMetadata *meta);
 
 #ifdef __cplusplus
 }

@@ -4,8 +4,8 @@
 > **mde**. It details what the project is, its architectural design, build system, current state,
 > recent upgrades, git history, and the remaining roadmap items.
 >
-> Snapshot basis: **v0.1.1** (2026-11-22), pure C11 codebase compiling warning-free with `gcc`, `ncursesw`, and `libzip`.
-> Test runner passes **543 / 543 tests (100.0%)**.
+> Snapshot basis: **v0.1.2** (2026-11-22), pure C11 codebase compiling warning-free with `gcc`, `ncursesw`, and `libzip`.
+> Test runner passes **576 / 576 tests (100.0%)**.
 
 ---
 
@@ -18,7 +18,7 @@ navigating, and previewing Markdown (`.md`) documents. It is written in **pure C
 - **Author / owner:** Anders Sikvall (Täpp Anders Sikvall).
 - **Remote:** `git@github.com:sikvall/mde.git` (branch `main`).
 - **License:** MIT.
-- **Version:** `0.1.1` (central source of truth: `src/version.h`).
+- **Version:** `0.1.2` (central source of truth: `src/version.h`).
 - **Platform:** Linux/Unix terminals (including WSL).
 
 ### Core Product Tenets
@@ -346,6 +346,21 @@ The following tasks from your requirements and project roadmap are identified fo
 - **Updated Project Documentation:**
   - Updated paths and directory trees in `README.md`, `project-description.md`, and `CHANGELOG.md`.
 
+### 7.8 Native EPUB Converter, Pandoc-Free Exports, and Metadata Screen
+- **Native EPUB 2/3 Engine (`src/export_epub.c`, `src/epub.h`):**
+  - Implemented compliant Open Container Format (OCF) ZIP packaging utilizing `libzip`.
+  - Added standalone CLI tool `bin/md2epub` (`src/md2epub_main.c`) and UNIX man page `man/md2epub.1`.
+  - Automated chapter splitting on H1 (`# `) headings and linked files, YAML front-matter extraction, uncompressed `mimetype` at offset 0, and local image bundling.
+- **Native Default for All Application Exports (`src/export.c`):**
+  - Updated `export_document_ex()` to use native built-in C11 converters by default for all export formats (HTML5, XML/DocBook 5, EPUB 2/3, and LaTeX).
+  - Pandoc remains available as an optional engine selectable by the user.
+- **Interactive Metadata Editor Screen (`src/ui_dialog_metadata.c`):**
+  - Modal dialog accessible via `Alt+I` / `M-I` and from the Export Menu (`F5` / `Alt+X`) via key `M`.
+  - Displays and allows in-place editing of 10 common book metadata fields: Title, Author, Language, Date, Publisher, Identifier, Rights, Description, Cover Image, and Custom CSS.
+  - Automatically updates and synchronizes YAML front matter (`editor_update_front_matter()`) in the active document buffer, marking it dirty and integrating into undo/redo history.
+- **Pandoc-Free Verification (`scripts/verify_no_pandoc.sh`):**
+  - Validation script ensuring 100% operational export for all formats with pandoc removed from `$PATH`.
+
 ---
 
 ## 8. AI Developer Handover & Continuation Guide
@@ -354,9 +369,9 @@ The following tasks from your requirements and project roadmap are identified fo
 > Read this section first when resuming development on `mde`.
 
 ### 8.1 Repository & Current Snapshot
-- **Git Branch:** `main` (commit `e694d4d`).
-- **Working Tree:** Clean, no uncommitted changes or untracked temporary files.
-- **Test Suite Status:** **490 / 490 assertions passing (100.0%)** in `bin/test_runner`.
+- **Git Branch:** `native-epub`.
+- **Working Tree:** Clean, fully tested and verified.
+- **Test Suite Status:** **576 / 576 assertions passing (100.0%)** in `bin/test_runner`.
 - **Compiler Compliance:** Compiles with zero warnings on `gcc -std=c11 -Wall -Wextra -pedantic -Werror`.
 - **Primary Headers:**
   - `src/editor.h`: Editor structure and buffer operations.
