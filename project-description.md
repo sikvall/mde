@@ -41,7 +41,7 @@ sudo make install    # Install binary and man page to $(PREFIX) (default: /usr/l
 make deb             # Package Debian .deb package -> bin/mde_<version>_<arch>.deb
 
 # Running mde
-./bin/mde demo.md             # Open file with default 78-column auto line break
+./bin/mde examples/demo.md    # Open file with default 78-column auto line break
 ./bin/mde -w 100 notes.md     # Custom 100-column auto line break
 ./bin/mde --wrap=off notes.md # Disable auto line break
 ./bin/mde -h | -v             # Usage instructions / version info
@@ -61,7 +61,9 @@ mde/
 ├── README.md              # User documentation and keybindings guide
 ├── CHANGELOG.md           # Keep a Changelog document tracking releases (0.1.0, 0.1.1)
 ├── LICENSE.md             # Software license
-├── demo.md                # Interactive sample document demonstrating mde features
+├── examples/              # Interactive sample documents demonstrating mde features
+│   ├── demo.md            # Comprehensive interactive showcase document
+│   └── advanced.md        # Multi-file navigation & linked export showcase
 ├── man/
 │   └── mde.1              # UNIX manual page
 ├── scripts/

@@ -224,7 +224,7 @@ mde -w 100 notes.md
 mde --wrap=off notes.md
 
 # Open sample demo file
-mde demo.md
+mde examples/demo.md
 
 # View help and version
 mde --help
@@ -239,7 +239,9 @@ mde --version
 mde/
 ├── Makefile            # Build system (all, test, clean, install, deb)
 ├── README.md           # Documentation
-├── demo.md             # Sample Markdown document demonstrating features
+├── examples/           # Sample Markdown documents demonstrating features
+│   ├── demo.md         # Comprehensive interactive showcase document
+│   └── advanced.md     # Multi-file navigation & linked export showcase
 ├── man/
 │   └── mde.1           # Standard UNIX man page
 ├── src/

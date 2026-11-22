@@ -27,7 +27,7 @@ Press **`F2`** or **`Alt+P`** to cycle between the three view modes:
 - Press **`F7`** or **`Alt+O`** with the cursor on the link (or single-click in the preview pane) to open it.
 
 ### B. Local File Links
-- Local document links display with a local pointer (`→`): [Open Project README](README.md) or [View Software License](LICENSE.md).
+- Local document links display with a local pointer (`→`): [Advanced Multi-File Editing](advanced.md), [Open Project README](../README.md), or [View Software License](../LICENSE.md).
 - Following a local file link switches to that file (prompting to save unsaved edits if dirty). If the file does not yet exist, a fresh buffer is initialized for it!
 - Press **`F8`** or **`Alt+-`** at any time to navigate back along your link history.
 - Press **`F6`** or **`Alt+H`** to open the file picker and insert a relative link to any file.
