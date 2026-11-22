@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <stdarg.h>
 #include <ctype.h>
 #include <unistd.h>
@@ -28,6 +29,7 @@ void editor_init(Editor *ed, const char *filename) {
 
     ed->view_mode = VIEW_SPLIT; // Default to dual-pane split view
     ed->insert_mode = true;     // Default to Insert mode (steady block cursor), press Ins for Overwrite
+    ed->wrap_mode = WRAP_MODE_SOFT; // Default to soft line wraps
     ed->wrap_col = MDE_WRAP_COL_DEFAULT; // Default automatic line break at 78 columns
     ed->rendered_dirty = true;
     ed->rendered_view_start = 0;
@@ -244,6 +246,17 @@ void editor_move_word_right(Editor *ed) {
     ed->target_visual_col = utf8_byte_to_col(line, ed->cursor_col);
 }
 
+static int editor_get_pane_content_width(const Editor *ed) {
+    if (!ed || ed->editor_width <= 0) return 80;
+    size_t total_lines = buffer_line_count(&ed->buffer);
+    int digits = 1;
+    while (total_lines >= 10) { digits++; total_lines /= 10; }
+    if (digits < 3) digits = 3;
+    int gutter_w = digits + 4;
+    int content_w = ed->editor_width - gutter_w;
+    return content_w > 0 ? content_w : 1;
+}
+
 /** @brief Move cursor up one row while preserving preferred visual column. */
 void editor_move_up(Editor *ed) {
     if (!ed) return;
@@ -252,11 +265,34 @@ void editor_move_up(Editor *ed) {
     int vrows = ed->view_rows > 0 ? ed->view_rows : (ed->screen_rows > 3 ? (ed->screen_rows - 3) : 20);
     size_t normal_max = total > (size_t)vrows ? (total - (size_t)vrows) : 0;
 
+    if (ed->wrap_mode == WRAP_MODE_SOFT && ed->view_mode != VIEW_PREVIEW) {
+        int content_w = editor_get_pane_content_width(ed);
+        const char *cur_l = buffer_line(&ed->buffer, ed->cursor_row);
+        int cur_vcol = utf8_byte_to_col(cur_l, ed->cursor_col);
+        if (cur_vcol >= content_w) {
+            int prev_vcol = cur_vcol - content_w;
+            ed->cursor_col = utf8_col_to_byte(cur_l, prev_vcol);
+            return;
+        }
+    }
+
     if (ed->view_mode == VIEW_SPLIT && ed->scroll_row > normal_max && ed->cursor_row + 1 >= total) {
         ed->scroll_row--;
     } else if (ed->cursor_row > 0) {
         ed->cursor_row--;
         const char *line = buffer_line(&ed->buffer, ed->cursor_row);
+        if (ed->wrap_mode == WRAP_MODE_SOFT && ed->view_mode != VIEW_PREVIEW) {
+            int content_w = editor_get_pane_content_width(ed);
+            size_t llen = buffer_line_len(&ed->buffer, ed->cursor_row);
+            int line_vw = utf8_visual_width(line, llen);
+            if (line_vw > content_w) {
+                int last_subline = (line_vw - 1) / content_w;
+                int target_vcol = last_subline * content_w + (ed->target_visual_col % content_w);
+                if (target_vcol > line_vw) target_vcol = line_vw;
+                ed->cursor_col = utf8_col_to_byte(line, target_vcol);
+                return;
+            }
+        }
         ed->cursor_col = utf8_col_to_byte(line, ed->target_visual_col);
     }
 }
@@ -267,10 +303,30 @@ void editor_move_down(Editor *ed) {
     editor_touch_key(ed);
     size_t total = buffer_line_count(&ed->buffer);
     if (total == 0) return;
+
+    if (ed->wrap_mode == WRAP_MODE_SOFT && ed->view_mode != VIEW_PREVIEW) {
+        int content_w = editor_get_pane_content_width(ed);
+        const char *cur_l = buffer_line(&ed->buffer, ed->cursor_row);
+        size_t cur_len = buffer_line_len(&ed->buffer, ed->cursor_row);
+        int cur_vw = utf8_visual_width(cur_l, cur_len);
+        int cur_vcol = utf8_byte_to_col(cur_l, ed->cursor_col);
+
+        if (cur_vcol + content_w <= cur_vw) {
+            int next_vcol = cur_vcol + content_w;
+            ed->cursor_col = utf8_col_to_byte(cur_l, next_vcol);
+            return;
+        }
+    }
+
     if (ed->cursor_row + 1 < total) {
         ed->cursor_row++;
         const char *line = buffer_line(&ed->buffer, ed->cursor_row);
-        ed->cursor_col = utf8_col_to_byte(line, ed->target_visual_col);
+        int target_col = ed->target_visual_col;
+        if (ed->wrap_mode == WRAP_MODE_SOFT && ed->view_mode != VIEW_PREVIEW) {
+            int content_w = editor_get_pane_content_width(ed);
+            target_col = ed->target_visual_col % content_w;
+        }
+        ed->cursor_col = utf8_col_to_byte(line, target_col);
     } else if (ed->view_mode == VIEW_SPLIT && ed->rendered_doc.count > 0) {
         int vrows = ed->view_rows > 0 ? ed->view_rows : (ed->screen_rows > 3 ? (ed->screen_rows - 3) : 20);
         if (ed->rendered_doc.count > (size_t)vrows &&
@@ -1120,7 +1176,7 @@ void editor_kill_prev_word(Editor *ed) {
  * ed->wrap_col on UTF-8 boundaries when no whitespace break point exists.
  */
 static void editor_auto_wrap_line(Editor *ed, uint64_t group) {
-    if (!ed || ed->wrap_col <= 0) return;
+    if (!ed || ed->wrap_mode != WRAP_MODE_HARD || ed->wrap_col <= 0) return;
 
     for (int iter = 0; iter < 64; ++iter) {
         size_t row = ed->cursor_row;
@@ -1445,6 +1501,84 @@ void editor_toggle_insert_mode(Editor *ed) {
     }
 }
 
+/** @brief Shift/cycle between line wrap modes: Soft -> Hard -> Off -> Soft. */
+void editor_cycle_wrap_mode(Editor *ed) {
+    if (!ed) return;
+    editor_touch_key(ed);
+    switch (ed->wrap_mode) {
+        case WRAP_MODE_SOFT:
+            ed->wrap_mode = WRAP_MODE_HARD;
+            if (ed->wrap_col <= 0) ed->wrap_col = MDE_WRAP_COL_DEFAULT;
+            editor_set_status(ed, "Line wrap: Hard (%d cols)", ed->wrap_col);
+            break;
+        case WRAP_MODE_HARD:
+            ed->wrap_mode = WRAP_MODE_OFF;
+            editor_set_status(ed, "Line wrap: Off (no wrap)");
+            break;
+        case WRAP_MODE_OFF:
+        default:
+            ed->wrap_mode = WRAP_MODE_SOFT;
+            ed->scroll_col = 0;
+            editor_set_status(ed, "Line wrap: Soft (visual)");
+            break;
+    }
+    ed->rendered_dirty = true;
+}
+
+/** @brief Set the editor line wrap mode. */
+void editor_set_wrap_mode(Editor *ed, WrapMode mode) {
+    if (!ed) return;
+    ed->wrap_mode = mode;
+    if (mode == WRAP_MODE_SOFT) ed->scroll_col = 0;
+    ed->rendered_dirty = true;
+}
+
+/** @brief Return the current editor line wrap mode. */
+WrapMode editor_get_wrap_mode(const Editor *ed) {
+    return ed ? ed->wrap_mode : WRAP_MODE_SOFT;
+}
+
+/** @brief Parse a wrap specification ("soft", "hard", "off", "none", "0", or "20"-"255"). */
+bool editor_parse_wrap_spec(const char *str, WrapMode *out_mode, int *out_cols) {
+    if (!str) return false;
+    while (*str && isspace((unsigned char)*str)) str++;
+    if (*str == '\0') return false;
+
+    const char *end = str + strlen(str);
+    while (end > str && isspace((unsigned char)*(end - 1))) end--;
+    size_t len = (size_t)(end - str);
+
+    if (len == 4 && strncasecmp(str, "soft", 4) == 0) {
+        if (out_mode) *out_mode = WRAP_MODE_SOFT;
+        return true;
+    }
+    if (len == 4 && strncasecmp(str, "hard", 4) == 0) {
+        if (out_mode) *out_mode = WRAP_MODE_HARD;
+        if (out_cols) *out_cols = MDE_WRAP_COL_DEFAULT;
+        return true;
+    }
+    if ((len == 3 && strncasecmp(str, "off", 3) == 0) ||
+        (len == 4 && strncasecmp(str, "none", 4) == 0) ||
+        (len == 1 && str[0] == '0')) {
+        if (out_mode) *out_mode = WRAP_MODE_OFF;
+        if (out_cols) *out_cols = MDE_WRAP_COL_OFF;
+        return true;
+    }
+
+    int cols = 0;
+    if (editor_parse_wrap_col(str, &cols)) {
+        if (cols == MDE_WRAP_COL_OFF) {
+            if (out_mode) *out_mode = WRAP_MODE_OFF;
+            if (out_cols) *out_cols = MDE_WRAP_COL_OFF;
+        } else {
+            if (out_mode) *out_mode = WRAP_MODE_HARD;
+            if (out_cols) *out_cols = cols;
+        }
+        return true;
+    }
+    return false;
+}
+
 /** @brief Validate and update the automatic line break column width (20-255 or 0=off). */
 bool editor_set_wrap_col(Editor *ed, int cols) {
     if (!ed) return false;
@@ -1452,12 +1586,18 @@ bool editor_set_wrap_col(Editor *ed, int cols) {
         return false;
     }
     ed->wrap_col = cols;
+    if (cols == MDE_WRAP_COL_OFF) {
+        ed->wrap_mode = WRAP_MODE_OFF;
+    } else {
+        ed->wrap_mode = WRAP_MODE_HARD;
+    }
     editor_touch_key(ed);
     if (cols == MDE_WRAP_COL_OFF) {
-        editor_set_status(ed, "Auto line break: OFF");
+        editor_set_status(ed, "Line wrap: Off");
     } else {
-        editor_set_status(ed, "Auto line break: %d columns", cols);
+        editor_set_status(ed, "Line wrap: Hard (%d columns)", cols);
     }
+    ed->rendered_dirty = true;
     return true;
 }
 
@@ -1710,6 +1850,40 @@ bool editor_reflow_paragraph(Editor *ed) {
         return false;
     }
 
+    // In WRAP_MODE_SOFT and WRAP_MODE_OFF: unflow the paragraph into a single continuous line
+    if (ed->wrap_mode == WRAP_MODE_SOFT || ed->wrap_mode == WRAP_MODE_OFF) {
+        size_t unflow_len = prefix_len + raw_len;
+        char *unflow_line = (char *)malloc(unflow_len + 1);
+        if (!unflow_line) {
+            free(joined);
+            return false;
+        }
+        memcpy(unflow_line, prefix, prefix_len);
+        memcpy(unflow_line + prefix_len, joined, raw_len);
+        unflow_line[unflow_len] = '\0';
+        free(joined);
+
+        size_t old_count = end_row - start_row + 1;
+        uint64_t group = buffer_next_group(&ed->buffer);
+
+        for (size_t r = end_row; r > start_row; --r) {
+            size_t rlen = buffer_line_len(&ed->buffer, r);
+            if (rlen > 0) buffer_delete_range(&ed->buffer, r, 0, rlen, group);
+            buffer_join_lines(&ed->buffer, r - 1, group);
+        }
+
+        buffer_replace_line(&ed->buffer, start_row, unflow_line, unflow_len, group);
+        free(unflow_line);
+
+        ed->cursor_row = start_row;
+        ed->cursor_col = unflow_len;
+        ed->target_visual_col = utf8_byte_to_col(buffer_line(&ed->buffer, ed->cursor_row), ed->cursor_col);
+        ed->mark_active = false;
+        ed->rendered_dirty = true;
+        editor_set_status(ed, "Unflowed paragraph (%zu -> 1 line)", old_count);
+        return true;
+    }
+
     int limit = ed->wrap_col > 0 ? ed->wrap_col : MDE_WRAP_COL_DEFAULT;
     int prefix_vcol = utf8_visual_width(prefix, prefix_len);
 
@@ -1946,15 +2120,19 @@ void editor_update_scroll(Editor *ed, int view_rows) {
     const char *line = buffer_line(&ed->buffer, ed->cursor_row);
     int cursor_vcol = utf8_byte_to_col(line, ed->cursor_col);
 
-    // If terminal widened enough for cursor to fit without horizontal scroll, reset scroll_col
-    if (cursor_vcol < editor_w && ed->scroll_col > 0) {
+    if (ed->wrap_mode == WRAP_MODE_SOFT) {
         ed->scroll_col = 0;
-    }
-    if (cursor_vcol < (int)ed->scroll_col) {
-        ed->scroll_col = cursor_vcol > 0 ? (size_t)cursor_vcol : 0;
-    }
-    if (cursor_vcol >= (int)ed->scroll_col + editor_w) {
-        ed->scroll_col = (size_t)(cursor_vcol - editor_w + 1);
+    } else {
+        // If terminal widened enough for cursor to fit without horizontal scroll, reset scroll_col
+        if (cursor_vcol < editor_w && ed->scroll_col > 0) {
+            ed->scroll_col = 0;
+        }
+        if (cursor_vcol < (int)ed->scroll_col) {
+            ed->scroll_col = cursor_vcol > 0 ? (size_t)cursor_vcol : 0;
+        }
+        if (cursor_vcol >= (int)ed->scroll_col + editor_w) {
+            ed->scroll_col = (size_t)(cursor_vcol - editor_w + 1);
+        }
     }
 
     // Synchronize preview scroll with editor cursor row / viewport

@@ -35,11 +35,12 @@
   - **Active Line Gutter Marker (`▶`)**: Visually indicates the currently active line in the gutter.
   - **Prominent Active Markers**: Syntax markers (`#`, `**`, `*`, `` ` ``, `~~`, `[ ]`, `[x]`, `>`) on the active line are highlighted vibrantly in bold accent color so you can clearly see and edit Markdown delimiters.
   - **Column Ruler**: A top-aligned ruler displaying ticks (`·`), 5-column markers (`+`), 10-column tens numbers, a dynamic wrap guide (`┆`) at the active line break column, and an interactive cursor column pointer (`▼`).
-- **Automatic Line Break (Default: 78 Columns)**:
-  - Automatically wraps lines at word boundaries when typing past the configured column limit, stripping break whitespace and moving the wrapped word and cursor seamlessly onto the next line.
-  - Falls back to a UTF-8 boundary hard break for unbroken tokens exceeding the column limit, and preserves leading indentation and Markdown blockquote (`> `) prefixes on continuation lines.
-  - Press **`F4` / `Alt+L`** inside the editor or pass **`-w <20-255|off>`** / **`--wrap=<20-255|off>`** on the command line to set an arbitrary wrap column between **20 and 255**, or turn it **off** (`0`, `off`, or `none`).
-  - The active setting is displayed on the status bar (`W:78` or `W:OFF`) and reflected by the wrap guide (`┆`) on the column ruler.
+- **Three Line Wrap Modes (Default: Soft Wrap)**:
+  - **Soft Line Wraps (`WRAP_MODE_SOFT`, Default)**: Responsive visual soft-wrapping in the editor pane without inserting physical newlines (`\n`) into the buffer. Lines wrap neatly at word boundaries (or UTF-8 character boundaries) with subtle gutter continuation markers (`·`), keeping cursor navigation fluid across visual sublines (`↑`/`↓`) and mouse clicks. Horizontal scrolling is disabled so lines remain completely visible.
+  - **Hard Line Wraps (`WRAP_MODE_HARD`)**: Automatically breaks lines at word boundaries by inserting physical `\n` when typing past the configured column limit (default 78), stripping break whitespace and moving the wrapped word and cursor seamlessly onto the next line while preserving indentation and Markdown blockquote (`> `) prefixes. Falls back to a UTF-8 boundary break for unbroken tokens exceeding the limit.
+  - **No Line Wraps (`WRAP_MODE_OFF`)**: Disables line wrapping; lines extend horizontally across the buffer with horizontal scrolling (`scroll_col`).
+  - Press **`F4` / `Alt+L`** inside the editor to cycle between **Soft**, **Hard (78)**, and **Off** wrap modes, or pass **`-w <soft|hard|off|20-255>`** / **`--wrap=<soft|hard|off|20-255>`** on the command line.
+  - The active setting is displayed on the status bar (`W:SOFT`, `W:78`, or `W:OFF`), and the ruler dynamic wrap guide (`┆`) is rendered in Hard wrap mode.
 - **Interactive File Dialogue (`Ctrl+R` Read / Open, `Ctrl+O` Write Out / Save As)**:
   - Browse directories and files visually with directory navigation (`..` parent, subdirectories).
   - Shows file names, directories with `<DIR>`, and file sizes formatted in B, KB, or MB.
@@ -61,7 +62,7 @@
 - **Document Outline (`F9` / `Alt+T`), Search & Replace (`Ctrl+\` / `Alt+R`) & Paragraph Reflow (`Alt+J`)**:
   - **Document Outline (`F9` / `Alt+T`)**: Opens a scrollable heading navigator listing all H1–H6 headings in the active file; press `Enter` to jump directly to any section.
   - **Search & Replace (`Ctrl+\` / `Alt+R`)**: Interactive Nano-style replacement (`Y` Replace, `N` Skip, `A` Replace All, `Esc`/`^C` Cancel) with atomic undo.
-  - **Paragraph Reflow (`Alt+J`)**: Re-wraps the current Markdown paragraph (preserving indentation and blockquote `> ` prefixes) to the configured wrap column.
+  - **Paragraph Reflow & Unflow (`Alt+J`)**: In Hard wrap mode, reflows (re-wraps) the current Markdown paragraph to the configured column limit (preserving indentation and blockquote `> ` prefixes). In Soft and Off wrap modes, "unflows" the paragraph instead, joining multi-line wrapped text into a single continuous unwrapped line (preserving indentation and blockquotes) with full atomic undo/redo.
   - **Rich Table & Link Preview**: Markdown tables render with aligned Unicode box-drawing borders (`┌─┬─┐`), and links display directional cues (`↗` external URL, `→` local file, `↓` `#anchor`).
   - **Safe Atomic Saves & Exact Undo Tracking**: File saves resolve symlinks, preserve permissions, and atomically rename temporary files into place; undoing back to the last saved state accurately clears the dirty `[*]` indicator.
 - **Nano-Compatible Control Keys & Persistent Bottom Shortcut Hint Rows**:
@@ -307,7 +308,7 @@ md2epub -q -o release/handbook.epub handbook.md
 |---|---|
 | **`-h`, `--help`** | Display command-line usage and keybindings summary |
 | **`-v`, `--version`** | Print all version and build metadata from `src/version.h` (app name, title, version string & major.minor.patch, description, build date/time, author, maintainer) |
-| **`-w <cols>`, `--wrap <cols>`, `--wrap=<cols>`** | Set automatic line break column width (`20`–`255`, or `off`/`0` to disable; default `78`) |
+| **`-w <spec>`, `--wrap <spec>`, `--wrap=<spec>`** | Set line wrapping mode (`soft`, `hard`, `off`, or `20`–`255` columns; default `soft`) |
 
 ---
 
@@ -330,7 +331,7 @@ md2epub -q -o release/handbook.epub handbook.md
 | **`M-M` / `F11` / `^]`** | Jump to matching bracket `()`, `[]`, `{}`, `<>`, or delimiter pair (`**`, `~~`, `` ` ``, ```` ``` ````; also `Alt+]`) |
 | **`F10` / `F12` / `Alt+K`** | Toggle bottom shortcut hint rows (hide / show) |
 | **`F2` / `Alt+P`** | Cycle View Modes (**Split** → **In-Place** → **Preview**) |
-| **`F4` / `Alt+L`** | Set automatic line break column (`20`–`255` or `off`; default `78`) |
+| **`F4` / `Alt+L`** | Cycle wrap modes (**Soft** → **Hard (78)** → **Off**) |
 | **`Ctrl+L`** | Refresh / redraw screen |
 | **`Ctrl+W`** | Where Is — Search forward for text |
 | **`Ctrl+Q`** | Where Was — Search backward for text |
@@ -345,7 +346,7 @@ md2epub -q -o release/handbook.epub handbook.md
 | **`Esc`** | Clear active selection mark (Cancel in prompts/dialogs) |
 | **`Alt+U`** | Undo last change |
 | **`Alt+E`** | Redo last undone change |
-| **`Alt+J`** | Reflow (re-wrap) current Markdown paragraph to wrap column |
+| **`Alt+J`** | Reflow paragraph (Hard wrap) or Unflow paragraph (Soft / Off wrap) |
 | **`Ctrl+T`** | Toggle checkbox `[ ]` <-> `[x]` on current line |
 | **`Alt+B`** | Insert Bold markers (`**...**`) or wrap selection |
 | **`Ctrl+A` / `Home`** | Jump to beginning of line |

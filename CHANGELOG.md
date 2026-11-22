@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.1.2] - 2026-11-22
 
 ### Added
+- Three-mode line wrapping system: Soft (`WRAP_MODE_SOFT`, default visual soft-wrapping), Hard (`WRAP_MODE_HARD`, automatic line breaks at configured column), and Off (`WRAP_MODE_OFF`).
+- Line wrap mode cycling via `F4` / `Alt+L` (Soft -> Hard 78 -> Off) and command-line specification (`-w` / `--wrap=<soft|hard|off|20-255>`).
+- Context-sensitive paragraph reflow / unflow (`Alt+J`): reflows text to column limit in Hard wrap mode, or unflows (joins multi-line wrapped text into a single continuous unwrapped line) in Soft and Off modes while preserving indentation and blockquotes (`> `).
+- Responsive editor pane soft-wrapping with continuation line gutter markers (`·`), visual subline cursor navigation (`↑` / `↓`), and synchronized mouse click positioning.
 - Interactive Document Metadata screen (`Alt+I` / Export Menu `[M]`) with a dedicated Cover Picture path/filename field (`meta.cover_path`) to specify and embed the book cover image in EPUB exports.
 - Optional interactive file browser trigger (`^R` / `F6`) within the Metadata screen to browse and select cover picture files directly from the filesystem.
 - Flexible YAML front-matter parsing recognizing `cover`, `cover-image`, `cover_image`, `cover-picture`, and `cover_picture` keys.

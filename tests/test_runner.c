@@ -556,11 +556,33 @@ static void test_auto_line_break(void) {
     Editor ed;
     editor_init(&ed, NULL);
 
-    // Default wrap column
+    // Default wrap mode and column
+    TEST_ASSERT(ed.wrap_mode == WRAP_MODE_SOFT, "Default wrap_mode is WRAP_MODE_SOFT");
     TEST_ASSERT(ed.wrap_col == 78, "Default wrap_col is 78");
+
+    // Cycling wrap modes: Soft -> Hard -> Off -> Soft
+    editor_cycle_wrap_mode(&ed);
+    TEST_ASSERT(ed.wrap_mode == WRAP_MODE_HARD, "Cycle -> WRAP_MODE_HARD");
+    editor_cycle_wrap_mode(&ed);
+    TEST_ASSERT(ed.wrap_mode == WRAP_MODE_OFF, "Cycle -> WRAP_MODE_OFF");
+    editor_cycle_wrap_mode(&ed);
+    TEST_ASSERT(ed.wrap_mode == WRAP_MODE_SOFT, "Cycle -> WRAP_MODE_SOFT");
+
+    // In soft wrap mode (default), typing > 78 chars does NOT insert physical newlines into buffer
+    const char *long_sample = "This is a continuous long sentence that exceeds seventy-eight columns without breaking physically into the buffer";
+    for (size_t i = 0; long_sample[i] != '\0'; ++i) {
+        editor_insert_char(&ed, &long_sample[i], 1);
+    }
+    TEST_ASSERT(buffer_line_count(&ed.buffer) == 1, "Soft wrap keeps text on 1 buffer line");
+    TEST_ASSERT(buffer_line_len(&ed.buffer, 0) == strlen(long_sample), "Buffer line length equals input length");
 
     // Parsing validation
     int parsed = -1;
+    WrapMode parsed_mode = WRAP_MODE_SOFT;
+    TEST_ASSERT(editor_parse_wrap_spec("soft", &parsed_mode, &parsed) && parsed_mode == WRAP_MODE_SOFT, "Parse 'soft' spec");
+    TEST_ASSERT(editor_parse_wrap_spec("hard", &parsed_mode, &parsed) && parsed_mode == WRAP_MODE_HARD, "Parse 'hard' spec");
+    TEST_ASSERT(editor_parse_wrap_spec("off", &parsed_mode, &parsed) && parsed_mode == WRAP_MODE_OFF, "Parse 'off' spec");
+    TEST_ASSERT(editor_parse_wrap_spec("80", &parsed_mode, &parsed) && parsed_mode == WRAP_MODE_HARD && parsed == 80, "Parse '80' spec");
     TEST_ASSERT(editor_parse_wrap_col("off", &parsed) && parsed == 0, "Parse 'off' -> 0");
     TEST_ASSERT(editor_parse_wrap_col("OFF", &parsed) && parsed == 0, "Parse 'OFF' -> 0");
     TEST_ASSERT(editor_parse_wrap_col("none", &parsed) && parsed == 0, "Parse 'none' -> 0");
@@ -581,7 +603,10 @@ static void test_auto_line_break(void) {
     TEST_ASSERT(!editor_set_wrap_col(&ed, -1), "editor_set_wrap_col rejects -1");
     TEST_ASSERT(ed.wrap_col == 78, "wrap_col unchanged after invalid sets");
 
-    // 1. Default 78-column word wrap
+    // 1. Hard 78-column word wrap
+    editor_free(&ed);
+    editor_init(&ed, NULL);
+    editor_set_wrap_mode(&ed, WRAP_MODE_HARD);
     const char *sample78 = "The quick brown fox jumps over the lazy dog while writing clean Markdown text today";
     for (size_t i = 0; sample78[i] != '\0'; ++i) {
         editor_insert_char(&ed, &sample78[i], 1);
@@ -669,6 +694,7 @@ static void test_resize_graceful(void) {
     }
 
     // Small viewport (10 rows, 30 cols): move cursor to bottom line end
+    ed.wrap_mode = WRAP_MODE_OFF;
     ed.editor_width = 30;
     ed.cursor_row = 29;
     ed.cursor_col = buffer_line_len(&ed.buffer, 29);
@@ -1494,6 +1520,54 @@ static void test_replace_reflow_and_word_nav(void) {
     editor_free(&ed);
 }
 
+/** @brief Verify paragraph unflowing in soft and off wrap modes. */
+static void test_paragraph_unflow(void) {
+    printf("--- Testing Paragraph Unflow in Soft and Off Wrap Modes ---\n");
+    Editor ed;
+    editor_init(&ed, NULL);
+    TEST_ASSERT(ed.wrap_mode == WRAP_MODE_SOFT, "Default wrap mode is WRAP_MODE_SOFT");
+
+    const char *unflow_sample =
+        "# Heading\n"
+        "This is line one\n"
+        "of a multi-line paragraph\n"
+        "that needs unflowing.\n"
+        "\n"
+        "> Quoted line 1\n"
+        "> quoted line 2.";
+    editor_paste_text(&ed, unflow_sample, strlen(unflow_sample));
+
+    // 1. Unflow in WRAP_MODE_SOFT
+    ed.cursor_row = 1; ed.cursor_col = 0;
+    TEST_ASSERT(editor_reflow_paragraph(&ed), "Unflowed paragraph in WRAP_MODE_SOFT");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 0), "# Heading") == 0, "Heading preserved");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 1),
+                       "This is line one of a multi-line paragraph that needs unflowing.") == 0,
+                "Paragraph joined into single unflowed line");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 2), "") == 0, "Blank line preserved after unflow");
+
+    // Undo restores 3 lines
+    editor_undo(&ed);
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 1), "This is line one") == 0, "Undo restored original line 1");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 2), "of a multi-line paragraph") == 0, "Undo restored line 2");
+
+    // 2. Unflow blockquote in WRAP_MODE_SOFT
+    ed.cursor_row = 5; ed.cursor_col = 2;
+    TEST_ASSERT(editor_reflow_paragraph(&ed), "Unflowed blockquote in WRAP_MODE_SOFT");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 5), "> Quoted line 1 quoted line 2.") == 0,
+                "Blockquote unflowed with '> ' prefix preserved");
+
+    // 3. Unflow in WRAP_MODE_OFF
+    editor_set_wrap_mode(&ed, WRAP_MODE_OFF);
+    ed.cursor_row = 1; ed.cursor_col = 0;
+    TEST_ASSERT(editor_reflow_paragraph(&ed), "Unflowed paragraph in WRAP_MODE_OFF");
+    TEST_ASSERT(strcmp(buffer_line(&ed.buffer, 1),
+                       "This is line one of a multi-line paragraph that needs unflowing.") == 0,
+                "Paragraph unflowed in WRAP_MODE_OFF");
+
+    editor_free(&ed);
+}
+
 /** @brief Verify aligned box-drawn tables and directional link indicators in preview renderer. */
 static void test_renderer_tables_and_links(void) {
     printf("--- Testing Preview Box Tables & Directional Link Indicators ---\n");
@@ -1974,6 +2048,15 @@ static void test_footnote_navigation_and_config_persistence(void) {
     config_load(&loaded_cfg);
     TEST_ASSERT(loaded_cfg.show_keybindings, "Config file persisted show_keybindings=true");
 
+    // Config persistence of wrap_mode
+    loaded_cfg.wrap_mode = WRAP_MODE_HARD;
+    loaded_cfg.wrap_col = 72;
+    TEST_ASSERT(config_save(&loaded_cfg), "Save config with wrap_mode=hard");
+    MdeConfig reload_cfg;
+    TEST_ASSERT(config_load(&reload_cfg), "Load config with wrap_mode");
+    TEST_ASSERT(reload_cfg.wrap_mode == WRAP_MODE_HARD, "Loaded wrap_mode is WRAP_MODE_HARD");
+    TEST_ASSERT(reload_cfg.wrap_col == 72, "Loaded wrap_col is 72");
+
     // Cleanup test config
     unlink("/tmp/mde_test_config/mde/config");
     rmdir("/tmp/mde_test_config/mde");
@@ -2447,6 +2530,7 @@ int main(void) {
     test_hypertext_linking_and_export();
     test_atomic_save_and_exact_dirty();
     test_replace_reflow_and_word_nav();
+    test_paragraph_unflow();
     test_renderer_tables_and_links();
     test_shortcut_hints_and_dialog();
     test_markdown_extensions();

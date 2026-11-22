@@ -23,10 +23,12 @@ Print usage instructions and keybindings summary, then exit.
 Print all application metadata from \fIsrc/version.h\fR (name, title, version,
 description, build date/time, author, and maintainer), then exit.
 .TP
-.BR \-w " " \fICOLS\fR ", " \-\-wrap " " \fICOLS\fR ", " \-\-wrap=\fICOLS\fR
-Set the automatic line break column width at startup.
-\fICOLS\fR may be any integer between \fB20\fR and \fB255\fR, or \fBoff\fR,
-\fBnone\fR, or \fB0\fR to disable automatic line breaking. Defaults to \fB78\fR.
+.BR \-w " " \fISPEC\fR ", " \-\-wrap " " \fISPEC\fR ", " \-\-wrap=\fISPEC\fR
+Set the line wrapping mode or column limit at startup.
+\fISPEC\fR may be \fBsoft\fR (default visual soft-wrapping without physical newlines),
+\fBhard\fR (automatic line breaking at column limit, default 78), \fBoff\fR (or \fBnone\fR /
+\fB0\fR) to disable wrapping, or an integer between \fB20\fR and \fB255\fR for hard wrapping.
+Defaults to \fBsoft\fR.
 .SH VIEW MODES
 Press \fBF2\fR or \fBAlt+P\fR to cycle between three editing modes:
 .TP
@@ -41,18 +43,36 @@ and prominent Markdown markers on the active line.
 .B Preview View
 Fullscreen formatted Markdown view with full cursor tracking, mouse navigation,
 and interactive editing.
-.SH AUTOMATIC LINE BREAK
-By default, \fBmde\fR automatically breaks lines when typing past column \fB78\fR.
-Line breaks occur at the last whitespace boundary at or before the configured
-column limit (using UTF-8 display widths via \fBwcwidth\fR(3)), moving the
-wrapped word and cursor to the next line while preserving leading indentation
-and Markdown blockquote (\fB> \fR) prefixes. Unbroken tokens longer than the
-configured limit are hard-broken on a valid UTF-8 character boundary.
+.SH LINE WRAPPING & PARAGRAPH UNFLOW
+\fBmde\fR supports three line wrap modes:
+.TP
+.B Soft Line Wraps (default)
+Long lines wrap visually at word boundaries (or UTF-8 character boundaries) in
+the editor pane without inserting physical newline characters into the buffer.
+Continuation lines display a subtle gutter dot (\fB·\fR), and cursor navigation
+fluidly navigates visual sublines with the Up and Down arrow keys and mouse
+clicks. Horizontal scrolling is disabled so all text is immediately visible.
+.TP
+.B Hard Line Wraps
+Lines are automatically broken at word boundaries by inserting a physical newline
+character when typing past the configured column limit (default \fB78\fR).
+Leading indentation and Markdown blockquote (\fB> \fR) prefixes are preserved on
+continuation lines, and unbroken tokens longer than the limit are broken on a
+valid UTF-8 character boundary.
+.TP
+.B No Line Wraps (Off)
+Disables line wrapping completely. Long lines extend horizontally across the buffer
+with horizontal viewport scrolling.
 .PP
-The active column limit is shown on the status bar (\fBW:78\fR or \fBW:OFF\fR)
-and marked with a vertical guide (\fB┆\fR) on the column ruler. Press
-\fBF4\fR or \fBAlt+L\fR at any time to change the setting to any width from
-\fB20\fR to \fB255\fR columns or turn it \fBoff\fR.
+The active wrap mode is indicated on the status bar (\fBW:SOFT\fR, \fBW:78\fR,
+or \fBW:OFF\fR). In Hard wrap mode, a vertical guide (\fB┆\fR) is rendered on
+the column ruler. Press \fBF4\fR or \fBAlt+L\fR at any time to cycle between
+\fBSoft\fR, \fBHard\fR (78 columns), and \fBOff\fR.
+.PP
+Press \fBAlt+J\fR to reflow or unflow the current paragraph: in Hard wrap mode,
+it reflows the paragraph to the column limit; in Soft and Off modes, it "unflows"
+the paragraph, joining multi-line wrapped text into a single continuous unwrapped
+line while preserving indentation and blockquote prefixes.
 .SH KEYBINDINGS
 Control and Meta (\fBAlt\fR) keybindings follow standard GNU \fBnano\fR(1) conventions:
 .TP
@@ -125,8 +145,8 @@ editing screen area (persisted in configuration).
 Cycle view modes: Split View, In-Place Rich View, Fullscreen Rendered View.
 .TP
 .BR F4 " or " Alt+L
-Set automatic line break column width (\fB20\fR\-\fB255\fR, or \fBoff\fR / \fB0\fR
-to disable; default \fB78\fR).
+Cycle line wrap modes: \fBSoft\fR (default visual wrapping) \(-> \fBHard\fR (automatic
+line breaks at column 78) \(-> \fBOff\fR (no wrapping).
 .TP
 .B Ctrl+L
 Refresh and redraw the screen.
@@ -174,8 +194,10 @@ Undo and Redo changes (grouped atomically; undoing back to the saved state
 clears the modified flag).
 .TP
 .B Alt+J
-Reflow (re-wrap) the current Markdown paragraph to the configured line break
-column, preserving indentation and blockquote prefixes.
+Reflow or unflow the current Markdown paragraph: in Hard wrap mode, reflows
+(re-wraps) the paragraph to the configured column limit; in Soft and Off modes,
+unflows the paragraph (joins wrapped lines into a single continuous line),
+preserving indentation and blockquote prefixes.
 .TP
 .B Alt+B
 Insert Markdown bold formatting markers (\fB**\fR) or wrap the active selection.

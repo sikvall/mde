@@ -44,7 +44,7 @@ static void print_usage(const char *prog) {
     printf("Options:\n");
     printf("  -h, --help         Display this help message and exit\n");
     printf("  -v, --version      Output version and build information and exit\n");
-    printf("  -w, --wrap <cols>  Set automatic line break (20-255, or off; default %d)\n\n", MDE_WRAP_COL_DEFAULT);
+    printf("  -w, --wrap <spec>  Set line wrap mode ('soft', 'hard', 'off', or 20-255; default soft)\n\n");
     printf("Keybindings (Nano-compatible):\n");
     printf("  Ctrl+G / F1      Get Help overlay (Cheat sheet & Markdown guide)\n");
     printf("  Ctrl+X           Exit editor (prompts if unsaved)\n");
@@ -58,7 +58,7 @@ static void print_usage(const char *prog) {
     printf("  Alt+6            Copy (selection or line)\n");
     printf("  Alt+A / Ctrl+6   Set or unset selection mark (also Ctrl+Space)\n");
     printf("  Alt+U / Alt+E    Undo / Redo\n");
-    printf("  Alt+J            Reflow (re-wrap) current paragraph\n");
+    printf("  Alt+J            Reflow paragraph (Hard wrap) or unflow (Soft / Off)\n");
     printf("  Ctrl+C           Display cursor location (Cancel in prompts)\n");
     printf("  Ctrl+/ / Alt+G   Go to line (and optional column)\n");
     printf("  Ctrl+Y / Ctrl+V  Previous Page / Next Page\n");
@@ -68,7 +68,7 @@ static void print_usage(const char *prog) {
     printf("  Ctrl+H / Ctrl+D  Backspace / Delete character\n");
     printf("  Ctrl+L           Refresh screen\n");
     printf("  F2 / Alt+P       Cycle View Mode (Split / In-place / Preview)\n");
-    printf("  F4 / Alt+L       Set automatic line break column (20-255 or off)\n");
+    printf("  F4 / Alt+L       Shift line wrap mode (Soft / Hard / Off)\n");
     printf("  F5 / Alt+X       Open Export Menu (HTML, XML, EPUB, LaTeX; includes linked files)\n");
     printf("  F6 / Alt+H       Insert hypertext file link [Label](file.md)\n");
     printf("  F7 / Alt+O / ^]  Follow file or #heading link under cursor\n");
@@ -188,28 +188,6 @@ static void handle_navigate_back(void) {
     editor_navigate_back(&g_editor);
 }
 
-/**
- * @brief Prompt the user to configure the automatic line break column width (20-255 or off).
- */
-static void prompt_wrap_col(void) {
-    char prompt_label[80];
-    if (g_editor.wrap_col > 0) {
-        snprintf(prompt_label, sizeof(prompt_label),
-                 "Auto line break (20-255 or off, now %d)", g_editor.wrap_col);
-    } else {
-        snprintf(prompt_label, sizeof(prompt_label),
-                 "Auto line break (20-255 or off, now OFF)");
-    }
-    char wrap_input[32];
-    if (ui_prompt(&g_editor, prompt_label, wrap_input, sizeof(wrap_input))) {
-        int new_wrap = 0;
-        if (editor_parse_wrap_col(wrap_input, &new_wrap)) {
-            editor_set_wrap_col(&g_editor, new_wrap);
-        } else {
-            editor_set_status(&g_editor, "Invalid wrap column: use 20-255 or off");
-        }
-    }
-}
 
 /**
  * @brief Prompt the user for a 1-based line number and optional column to jump to.
@@ -281,19 +259,55 @@ static void set_cursor_from_click(int click_x, int click_y, bool is_click_or_rel
                 }
             }
         } else {
-            size_t target_row = g_editor.scroll_row + (size_t)(click_y - 1);
             size_t total_lines = buffer_line_count(&g_editor.buffer);
-            if (target_row < total_lines) {
-                g_editor.cursor_row = target_row;
-                const char *l = buffer_line(&g_editor.buffer, target_row);
-                int digits = 1;
-                size_t tmp = total_lines;
-                while (tmp >= 10) { digits++; tmp /= 10; }
-                if (digits < 3) digits = 3;
-                int gutter = digits + 4;
-                int target_vcol = (click_x >= gutter) ? (click_x - gutter + (int)g_editor.scroll_col) : 0;
-                g_editor.cursor_col = utf8_col_to_byte(l, target_vcol);
-                g_editor.target_visual_col = utf8_byte_to_col(l, g_editor.cursor_col);
+            int digits = 1;
+            size_t tmp = total_lines;
+            while (tmp >= 10) { digits++; tmp /= 10; }
+            if (digits < 3) digits = 3;
+            int gutter = digits + 4;
+
+            if (g_editor.wrap_mode == WRAP_MODE_SOFT) {
+                int content_w = g_editor.editor_width - gutter;
+                if (content_w < 1) content_w = 1;
+
+                int target_y = click_y - 1;
+                int cur_y = 0;
+                size_t found_row = g_editor.scroll_row;
+                int found_subline = 0;
+                bool found = false;
+
+                for (size_t r = g_editor.scroll_row; r < total_lines; ++r) {
+                    const char *l = buffer_line(&g_editor.buffer, r);
+                    size_t llen = buffer_line_len(&g_editor.buffer, r);
+                    int vw = utf8_visual_width(l, llen);
+                    int r_vrows = (vw <= 0) ? 1 : ((vw + content_w - 1) / content_w);
+
+                    if (target_y >= cur_y && target_y < cur_y + r_vrows) {
+                        found_row = r;
+                        found_subline = target_y - cur_y;
+                        found = true;
+                        break;
+                    }
+                    cur_y += r_vrows;
+                }
+
+                if (found && found_row < total_lines) {
+                    g_editor.cursor_row = found_row;
+                    const char *l = buffer_line(&g_editor.buffer, found_row);
+                    int offset_x = (click_x >= gutter) ? (click_x - gutter) : 0;
+                    int target_vcol = found_subline * content_w + offset_x;
+                    g_editor.cursor_col = utf8_col_to_byte(l, target_vcol);
+                    g_editor.target_visual_col = utf8_byte_to_col(l, g_editor.cursor_col);
+                }
+            } else {
+                size_t target_row = g_editor.scroll_row + (size_t)(click_y - 1);
+                if (target_row < total_lines) {
+                    g_editor.cursor_row = target_row;
+                    const char *l = buffer_line(&g_editor.buffer, target_row);
+                    int target_vcol = (click_x >= gutter) ? (click_x - gutter + (int)g_editor.scroll_col) : 0;
+                    g_editor.cursor_col = utf8_col_to_byte(l, target_vcol);
+                    g_editor.target_visual_col = utf8_byte_to_col(l, g_editor.cursor_col);
+                }
             }
         }
     }
@@ -475,7 +489,7 @@ static void handle_meta_key(char *search_buf, size_t search_cap, bool *last_sear
             break;
         case 'l':
         case 'L':
-            prompt_wrap_col();
+            editor_cycle_wrap_mode(&g_editor);
             break;
         case 'b':
         case 'B':
@@ -616,7 +630,7 @@ static void handle_key_event(int ch, char *search_buf, size_t search_cap,
     } else if (ch == KEY_F(2)) {
         editor_cycle_view_mode(&g_editor);
     } else if (ch == KEY_F(4)) {
-        prompt_wrap_col();
+        editor_cycle_wrap_mode(&g_editor);
     } else if (ch == KEY_F(5)) {
         ui_export_menu(&g_editor);
     } else if (ch == KEY_F(6)) {
@@ -708,6 +722,7 @@ static void handle_key_event(int ch, char *search_buf, size_t search_cap,
 int main(int argc, char *argv[]) {
     const char *file_to_open = NULL;
     bool has_cli_wrap = false;
+    WrapMode cli_wrap_mode = WRAP_MODE_SOFT;
     int cli_wrap_col = MDE_WRAP_COL_DEFAULT;
 
     for (int i = 1; i < argc; ++i) {
@@ -719,17 +734,17 @@ int main(int argc, char *argv[]) {
             return 0;
         } else if (strcmp(argv[i], "-w") == 0 || strcmp(argv[i], "--wrap") == 0) {
             if (i + 1 >= argc) {
-                fprintf(stderr, "Error: %s requires an argument (20-255 or off)\n", argv[i]);
+                fprintf(stderr, "Error: %s requires an argument ('soft', 'hard', 'off', or 20-255)\n", argv[i]);
                 return 1;
             }
-            if (!editor_parse_wrap_col(argv[++i], &cli_wrap_col)) {
-                fprintf(stderr, "Error: invalid wrap column '%s' (expected 20-255 or off)\n", argv[i]);
+            if (!editor_parse_wrap_spec(argv[++i], &cli_wrap_mode, &cli_wrap_col)) {
+                fprintf(stderr, "Error: invalid wrap argument '%s' (expected 'soft', 'hard', 'off', or 20-255)\n", argv[i]);
                 return 1;
             }
             has_cli_wrap = true;
         } else if (strncmp(argv[i], "--wrap=", 7) == 0) {
-            if (!editor_parse_wrap_col(argv[i] + 7, &cli_wrap_col)) {
-                fprintf(stderr, "Error: invalid wrap column '%s' (expected 20-255 or off)\n", argv[i] + 7);
+            if (!editor_parse_wrap_spec(argv[i] + 7, &cli_wrap_mode, &cli_wrap_col)) {
+                fprintf(stderr, "Error: invalid wrap argument '%s' (expected 'soft', 'hard', 'off', or 20-255)\n", argv[i] + 7);
                 return 1;
             }
             has_cli_wrap = true;
@@ -746,8 +761,11 @@ int main(int argc, char *argv[]) {
     editor_init(&g_editor, file_to_open);
     MdeConfig cfg;
     if (config_load(&cfg)) {
-        if (!has_cli_wrap && cfg.wrap_col >= 0) {
-            editor_set_wrap_col(&g_editor, cfg.wrap_col);
+        if (!has_cli_wrap) {
+            editor_set_wrap_mode(&g_editor, cfg.wrap_mode);
+            if (cfg.wrap_col >= 0) {
+                g_editor.wrap_col = cfg.wrap_col;
+            }
         }
         if (cfg.view_mode >= 0 && cfg.view_mode <= 2) {
             g_editor.view_mode = (ViewMode)cfg.view_mode;
@@ -755,7 +773,8 @@ int main(int argc, char *argv[]) {
         g_editor.show_keybindings = cfg.show_keybindings;
     }
     if (has_cli_wrap) {
-        editor_set_wrap_col(&g_editor, cli_wrap_col);
+        editor_set_wrap_mode(&g_editor, cli_wrap_mode);
+        g_editor.wrap_col = cli_wrap_col;
     }
 
     char search_buf[128] = {0};

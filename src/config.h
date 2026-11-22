@@ -10,6 +10,7 @@
 #ifndef MDE_CONFIG_H
 #define MDE_CONFIG_H
 
+#include "editor.h"
 #include <stdbool.h>
 
 #ifdef __cplusplus
@@ -20,10 +21,11 @@ extern "C" {
  * @brief User configuration settings.
  */
 typedef struct {
-    int wrap_col;       /**< Soft-wrap right margin column limit */
-    int tab_size;       /**< Tab expansion visual width in spaces */
-    bool make_backup;   /**< Whether to generate Emacs-style backup files (~) */
-    int view_mode;      /**< Initial editor view mode (0=Editor, 1=Split, 2=Preview) */
+    int wrap_col;          /**< Hard-wrap right margin column limit (default 78) */
+    WrapMode wrap_mode;    /**< Line wrap mode (WRAP_MODE_SOFT, WRAP_MODE_HARD, WRAP_MODE_OFF) */
+    int tab_size;          /**< Tab expansion visual width in spaces */
+    bool make_backup;      /**< Whether to generate Emacs-style backup files (~) */
+    int view_mode;         /**< Initial editor view mode (0=Editor, 1=Split, 2=Preview) */
     bool show_keybindings; /**< Whether bottom shortcut hint rows are displayed */
 } MdeConfig;
 

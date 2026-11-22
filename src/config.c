@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <ctype.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -16,6 +17,7 @@
 void config_init_defaults(MdeConfig *cfg) {
     if (!cfg) return;
     cfg->wrap_col = 78;
+    cfg->wrap_mode = WRAP_MODE_SOFT;
     cfg->tab_size = 2;
     cfg->make_backup = true;
     cfg->view_mode = 0;
@@ -111,7 +113,15 @@ bool config_load(MdeConfig *cfg) {
         char *vend = val + strlen(val);
         while (vend > val && isspace((unsigned char)*(vend - 1))) *(--vend) = '\0';
 
-        if (strcmp(key, "wrap_col") == 0) {
+        if (strcmp(key, "wrap_mode") == 0) {
+            if (strcasecmp(val, "soft") == 0) {
+                cfg->wrap_mode = WRAP_MODE_SOFT;
+            } else if (strcasecmp(val, "hard") == 0) {
+                cfg->wrap_mode = WRAP_MODE_HARD;
+            } else if (strcasecmp(val, "off") == 0 || strcasecmp(val, "none") == 0) {
+                cfg->wrap_mode = WRAP_MODE_OFF;
+            }
+        } else if (strcmp(key, "wrap_col") == 0) {
             cfg->wrap_col = atoi(val);
         } else if (strcmp(key, "tab_size") == 0) {
             cfg->tab_size = atoi(val);
@@ -138,6 +148,10 @@ bool config_save(const MdeConfig *cfg) {
     if (!f) return false;
 
     fprintf(f, "# mde configuration\n");
+    const char *mode_str = "soft";
+    if (cfg->wrap_mode == WRAP_MODE_HARD) mode_str = "hard";
+    else if (cfg->wrap_mode == WRAP_MODE_OFF) mode_str = "off";
+    fprintf(f, "wrap_mode=%s\n", mode_str);
     fprintf(f, "wrap_col=%d\n", cfg->wrap_col);
     fprintf(f, "tab_size=%d\n", cfg->tab_size);
     fprintf(f, "make_backup=%s\n", cfg->make_backup ? "true" : "false");

@@ -107,7 +107,7 @@ static void draw_column_ruler(Editor *ed, int start_col, int width, int screen_y
             attron(COLOR_PAIR(CP_RULER_CURSOR) | A_BOLD);
             mvaddstr(screen_y, render_x + i, "▼");
             attroff(COLOR_PAIR(CP_RULER_CURSOR) | A_BOLD);
-        } else if (ed->wrap_col > 0 && col_num == ed->wrap_col) {
+        } else if (ed->wrap_mode == WRAP_MODE_HARD && ed->wrap_col > 0 && col_num == ed->wrap_col) {
             // Active automatic line break guide
             attron(COLOR_PAIR(CP_RULER_LIMIT) | A_BOLD);
             mvaddstr(screen_y, render_x + i, "┆");
@@ -166,6 +166,138 @@ static void draw_editor_pane(Editor *ed, int start_col, int width, int start_row
 
     size_t sel_s_row = 0, sel_s_col = 0, sel_e_row = 0, sel_e_col = 0;
     bool has_selection = editor_get_selection(ed, &sel_s_row, &sel_s_col, &sel_e_row, &sel_e_col);
+
+    if (ed->wrap_mode == WRAP_MODE_SOFT) {
+        int screen_y = text_start_y;
+        size_t row_idx = ed->scroll_row;
+
+        while (screen_y < text_start_y + text_height) {
+            if (width < gutter_w) {
+                for (int x = start_col; x < start_col + width; ++x) {
+                    mvaddch(screen_y, x, ' ');
+                }
+                screen_y++;
+                continue;
+            }
+
+            if (row_idx < total_lines) {
+                bool is_cur_row = (row_idx == ed->cursor_row);
+
+                // Draw gutter & line number with active line marker
+                if (is_cur_row) {
+                    attron(COLOR_PAIR(CP_GUTTER_MARKER) | A_BOLD);
+                    mvaddstr(screen_y, start_col, "▶");
+                    mvprintw(screen_y, start_col + 1, " %*zu ", num_w, row_idx + 1);
+                    attroff(COLOR_PAIR(CP_GUTTER_MARKER) | A_BOLD);
+                } else {
+                    attron(COLOR_PAIR(CP_LINE_NUM));
+                    mvprintw(screen_y, start_col, "  %*zu ", num_w, row_idx + 1);
+                    attroff(COLOR_PAIR(CP_LINE_NUM));
+                }
+
+                attron(COLOR_PAIR(CP_DIVIDER));
+                mvaddstr(screen_y, start_col + gutter_w - 2, "│ ");
+                attroff(COLOR_PAIR(CP_DIVIDER));
+
+                const char *raw = buffer_line(&ed->buffer, row_idx);
+                size_t raw_len = buffer_line_len(&ed->buffer, row_idx);
+
+                MdParsedLine pl;
+                md_parse_line(raw, raw_len, &in_code_block, code_lang, sizeof(code_lang), &pl);
+
+                int render_x = start_col + gutter_w;
+
+                for (size_t s = 0; s < pl.span_count; ++s) {
+                    MdSpan *sp = &pl.spans[s];
+                    attr_t a = theme_token_attr(sp->type, is_cur_row);
+                    attron(a);
+
+                    size_t byte_pos = sp->start;
+                    while (byte_pos < sp->end) {
+                        size_t ch_len = utf8_char_len((unsigned char)raw[byte_pos]);
+                        int ch_w = utf8_visual_width_range(raw, byte_pos, byte_pos + ch_len);
+
+                        if (render_x + ch_w > start_col + width) {
+                            while (render_x < start_col + width) {
+                                mvaddch(screen_y, render_x++, ' ');
+                            }
+                            screen_y++;
+                            if (screen_y >= text_start_y + text_height) {
+                                break;
+                            }
+                            attron(COLOR_PAIR(CP_LINE_NUM) | A_DIM);
+                            mvprintw(screen_y, start_col, "  %*s ", num_w, "·");
+                            attroff(COLOR_PAIR(CP_LINE_NUM) | A_DIM);
+                            attron(COLOR_PAIR(CP_DIVIDER));
+                            mvaddstr(screen_y, start_col + gutter_w - 2, "│ ");
+                            attroff(COLOR_PAIR(CP_DIVIDER));
+                            attron(a);
+                            render_x = start_col + gutter_w;
+                        }
+
+                        bool is_sel = false;
+                        if (has_selection) {
+                            if (row_idx > sel_s_row && row_idx < sel_e_row) {
+                                is_sel = true;
+                            } else if (sel_s_row == sel_e_row && row_idx == sel_s_row) {
+                                is_sel = (byte_pos >= sel_s_col && byte_pos < sel_e_col);
+                            } else if (row_idx == sel_s_row) {
+                                is_sel = (byte_pos >= sel_s_col);
+                            } else if (row_idx == sel_e_row) {
+                                is_sel = (byte_pos < sel_e_col);
+                            }
+                        }
+
+                        if (is_sel) {
+                            attron(A_REVERSE);
+                            mvaddnstr(screen_y, render_x, raw + byte_pos, ch_len);
+                            attroff(A_REVERSE);
+                        } else if (ed->search_active && row_idx == ed->search_match_row &&
+                            byte_pos >= ed->search_match_col &&
+                            byte_pos < ed->search_match_col + ed->search_match_len) {
+                            attron(COLOR_PAIR(CP_SEARCH_CUR) | A_BOLD);
+                            mvaddnstr(screen_y, render_x, raw + byte_pos, ch_len);
+                            attroff(COLOR_PAIR(CP_SEARCH_CUR) | A_BOLD);
+                            attron(a);
+                        } else {
+                            mvaddnstr(screen_y, render_x, raw + byte_pos, ch_len);
+                        }
+                        render_x += ch_w;
+                        byte_pos += ch_len;
+                    }
+
+                    attroff(a);
+                    if (screen_y >= text_start_y + text_height) break;
+                }
+
+                if (screen_y < text_start_y + text_height) {
+                    bool newline_selected = (has_selection && row_idx >= sel_s_row && row_idx < sel_e_row);
+                    if (newline_selected && render_x < start_col + width) {
+                        attron(A_REVERSE);
+                        mvaddch(screen_y, render_x++, ' ');
+                        attroff(A_REVERSE);
+                    }
+                    while (render_x < start_col + width) {
+                        mvaddch(screen_y, render_x++, ' ');
+                    }
+                    screen_y++;
+                }
+
+                md_parsed_line_free(&pl);
+                row_idx++;
+            } else {
+                attron(COLOR_PAIR(CP_MARKER) | A_DIM);
+                mvprintw(screen_y, start_col, "  %*s ~", num_w, "");
+                attroff(COLOR_PAIR(CP_MARKER) | A_DIM);
+
+                for (int x = start_col + num_w + 4; x < start_col + width; ++x) {
+                    mvaddch(screen_y, x, ' ');
+                }
+                screen_y++;
+            }
+        }
+        return;
+    }
 
     for (int y = 0; y < text_height; ++y) {
         size_t row_idx = ed->scroll_row + (size_t)y;
@@ -412,8 +544,10 @@ static void draw_status_bar(Editor *ed, int screen_rows, int screen_cols, int y)
         snprintf(mode_buf, sizeof(mode_buf), "%s", ed->insert_mode ? "INS" : "OVR");
     }
     char wrap_buf[16];
-    if (ed->wrap_col > 0) {
-        snprintf(wrap_buf, sizeof(wrap_buf), "W:%d", ed->wrap_col);
+    if (ed->wrap_mode == WRAP_MODE_SOFT) {
+        snprintf(wrap_buf, sizeof(wrap_buf), "W:SOFT");
+    } else if (ed->wrap_mode == WRAP_MODE_HARD) {
+        snprintf(wrap_buf, sizeof(wrap_buf), "W:%d", ed->wrap_col > 0 ? ed->wrap_col : MDE_WRAP_COL_DEFAULT);
     } else {
         snprintf(wrap_buf, sizeof(wrap_buf), "W:OFF");
     }
@@ -699,25 +833,61 @@ void ui_draw(Editor *ed) {
         if (num_w < 3) num_w = 3;
         int gutter_w = num_w + 4; // " ▶ 12 │ "
 
-        if (ed->cursor_row >= ed->scroll_row &&
-            ed->cursor_row < ed->scroll_row + (size_t)text_height) {
-            
-            const char *cur_line = buffer_line(&ed->buffer, ed->cursor_row);
-            int cursor_vcol = utf8_byte_to_col(cur_line, ed->cursor_col);
-            int cur_x = gutter_w + (cursor_vcol - (int)ed->scroll_col);
-            int cur_y = text_start_y + (int)(ed->cursor_row - ed->scroll_row);
+        if (ed->wrap_mode == WRAP_MODE_SOFT) {
+            int content_w = ed->editor_width - gutter_w;
+            if (content_w < 1) content_w = 1;
 
-            int editor_max_x = ed->editor_width;
-            if (cur_x >= gutter_w && cur_x < editor_max_x &&
-                cur_y >= text_start_y && cur_y < text_start_y + text_height) {
-                curs_set(1);
-                update_cursor_shape(ed->insert_mode);
-                wmove(stdscr, cur_y, cur_x);
+            if (ed->cursor_row >= ed->scroll_row) {
+                int screen_offset = 0;
+                for (size_t r = ed->scroll_row; r < ed->cursor_row; ++r) {
+                    const char *l = buffer_line(&ed->buffer, r);
+                    size_t llen = buffer_line_len(&ed->buffer, r);
+                    int vw = utf8_visual_width(l, llen);
+                    int r_vrows = (vw <= 0) ? 1 : ((vw + content_w - 1) / content_w);
+                    screen_offset += r_vrows;
+                    if (screen_offset >= text_height) break;
+                }
+                const char *cur_line = buffer_line(&ed->buffer, ed->cursor_row);
+                int cursor_vcol = utf8_byte_to_col(cur_line, ed->cursor_col);
+                int subline = cursor_vcol / content_w;
+                int sub_col = cursor_vcol % content_w;
+
+                int cur_y = text_start_y + screen_offset + subline;
+                int cur_x = gutter_w + sub_col;
+                int editor_max_x = ed->editor_width;
+
+                if (cur_x >= gutter_w && cur_x < editor_max_x &&
+                    cur_y >= text_start_y && cur_y < text_start_y + text_height) {
+                    curs_set(1);
+                    update_cursor_shape(ed->insert_mode);
+                    wmove(stdscr, cur_y, cur_x);
+                } else {
+                    curs_set(0);
+                }
             } else {
                 curs_set(0);
             }
         } else {
-            curs_set(0);
+            if (ed->cursor_row >= ed->scroll_row &&
+                ed->cursor_row < ed->scroll_row + (size_t)text_height) {
+                
+                const char *cur_line = buffer_line(&ed->buffer, ed->cursor_row);
+                int cursor_vcol = utf8_byte_to_col(cur_line, ed->cursor_col);
+                int cur_x = gutter_w + (cursor_vcol - (int)ed->scroll_col);
+                int cur_y = text_start_y + (int)(ed->cursor_row - ed->scroll_row);
+
+                int editor_max_x = ed->editor_width;
+                if (cur_x >= gutter_w && cur_x < editor_max_x &&
+                    cur_y >= text_start_y && cur_y < text_start_y + text_height) {
+                    curs_set(1);
+                    update_cursor_shape(ed->insert_mode);
+                    wmove(stdscr, cur_y, cur_x);
+                } else {
+                    curs_set(0);
+                }
+            } else {
+                curs_set(0);
+            }
         }
     }
 

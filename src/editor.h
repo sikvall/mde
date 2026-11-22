@@ -49,6 +49,15 @@ typedef enum {
 } ViewMode;
 
 /**
+ * @brief Line wrapping operating modes.
+ */
+typedef enum {
+    WRAP_MODE_SOFT = 0, /**< Responsive visual soft-wrapping; no physical newlines inserted (default) */
+    WRAP_MODE_HARD = 1, /**< Automatic hard line breaking on typing at wrap_col */
+    WRAP_MODE_OFF  = 2  /**< No line wrapping; lines scroll horizontally */
+} WrapMode;
+
+/**
  * @brief Master editor instance state.
  */
 typedef struct {
@@ -60,6 +69,7 @@ typedef struct {
 
     ViewMode view_mode;          /**< Current active view mode */
     bool insert_mode;            /**< Insert mode active (true, default) vs Overwrite mode (false) */
+    WrapMode wrap_mode;          /**< Line wrap mode (WRAP_MODE_SOFT, WRAP_MODE_HARD, WRAP_MODE_OFF) */
     int wrap_col;                /**< Auto line break column (20-255, or 0 = off; default 78) */
 
     // Cursor position in buffer
@@ -319,13 +329,32 @@ void editor_wrap_format(Editor *ed, const char *marker);
 /**
  * @brief Reflow (re-wrap) the contiguous Markdown paragraph around the cursor to wrap_col.
  *
- * Preserves leading indentation and Markdown blockquote (`> `) prefixes, stopping
- * at blank lines, headings, lists, horizontal rules, tables, and fenced code blocks.
+ * In WRAP_MODE_HARD, reflows the paragraph lines to wrap_col.
+ * In WRAP_MODE_SOFT and WRAP_MODE_OFF, unflows (joins) the paragraph into a single continuous line.
+ * Preserves leading indentation and Markdown blockquote (`> `) prefixes.
  *
  * @param ed Pointer to Editor.
- * @return true if the paragraph was reflowed, false if cursor is not on a reflowable paragraph.
+ * @return true if the paragraph was reflowed or unflowed, false if cursor is not on a reflowable paragraph.
  */
 bool editor_reflow_paragraph(Editor *ed);
+
+/** @brief Shift/cycle between line wrap modes: Soft -> Hard -> Off -> Soft. */
+void editor_cycle_wrap_mode(Editor *ed);
+
+/** @brief Set the editor line wrap mode. */
+void editor_set_wrap_mode(Editor *ed, WrapMode mode);
+
+/** @brief Return the current editor line wrap mode. */
+WrapMode editor_get_wrap_mode(const Editor *ed);
+
+/**
+ * @brief Parse a wrap specification ("soft", "hard", "off", "none", "0", or "20"-"255").
+ * @param str Input string.
+ * @param out_mode Output parsed WrapMode (may be NULL).
+ * @param out_cols Output parsed column width (may be NULL).
+ * @return true on valid input, false otherwise.
+ */
+bool editor_parse_wrap_spec(const char *str, WrapMode *out_mode, int *out_cols);
 
 /**
  * @brief Set automatic line break column width.

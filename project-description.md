@@ -41,9 +41,10 @@ sudo make install    # Install binary and man page to $(PREFIX) (default: /usr/l
 make deb             # Package Debian .deb package -> bin/mde_<version>_<arch>.deb
 
 # Running mde
-./bin/mde examples/demo.md    # Open file with default 78-column auto line break
-./bin/mde -w 100 notes.md     # Custom 100-column auto line break
-./bin/mde --wrap=off notes.md # Disable auto line break
+./bin/mde examples/demo.md    # Open file with default responsive soft line wrapping
+./bin/mde -w hard notes.md    # Automatic line break at 78 columns
+./bin/mde -w 100 notes.md     # Custom 100-column automatic line break
+./bin/mde --wrap=off notes.md # Disable line wrapping (horizontal scrolling)
 ./bin/mde -h | -v             # Usage instructions / version info
 ```
 
@@ -406,6 +407,24 @@ The following tasks from your requirements and project roadmap are identified fo
 - **Test Suite Expansion:**
   - Expanded unit test assertions in `tests/test_runner.c` to **576 / 576 passing tests (100.0%)**.
 
+### 7.10 Three-Mode Line Wrapping System & Context-Sensitive Paragraph Reflow/Unflow (2026-11-22)
+- **Three Wrap Modes (`WrapMode` in `src/editor.h`):**
+  - `WRAP_MODE_SOFT` (0, default): Responsive visual soft-wrapping within the editor pane without modifying buffer contents or inserting `\n`. Continuation lines display a subtle gutter dot (`·`). Fluid cursor navigation across visual sublines with Up/Down arrow keys and mouse click mapping. Disables horizontal scrolling (`scroll_col = 0`) to keep text fully visible.
+  - `WRAP_MODE_HARD` (1): Physical automatic line breaking when typing past configured column limit (`wrap_col`, default 78). Strips break whitespace, moves wrapped word and cursor to continuation line, and preserves leading indentation and Markdown blockquote (`> `) prefixes. Falls back to UTF-8 character boundary break for unbroken tokens.
+  - `WRAP_MODE_OFF` (2): Disables line wrapping; lines extend horizontally with horizontal viewport scrolling.
+- **Wrap Mode Controls & Persistence:**
+  - Cycle wrap modes via `F4` / `Alt+L` (`editor_cycle_wrap_mode()`, Soft -> Hard 78 -> Off).
+  - CLI flag support: `-w`, `--wrap`, `--wrap=` accepts `soft`, `hard`, `off`, `none`, `0`, or integers `20-255` (`editor_parse_wrap_spec()`).
+  - Configuration persistence: `wrap_mode=soft|hard|off` in `~/.config/mde/config`.
+  - Status bar indicator: `W:SOFT`, `W:78` (or `W:<col>`), and `W:OFF`.
+  - Column ruler: wrap guide marker (`┆`) rendered dynamically in Hard wrap mode.
+- **Context-Sensitive Paragraph Reflow / Unflow (`Alt+J`):**
+  - In `WRAP_MODE_HARD`: reflows the current paragraph to the configured wrap column.
+  - In `WRAP_MODE_SOFT` and `WRAP_MODE_OFF`: "unflows" the paragraph, joining multi-line wrapped text into a single continuous unwrapped line while preserving indentation and blockquote (`> `) prefixes.
+  - Completely undoable/redoable within a single atomic undo transaction group.
+- **Test Suite & Verification:**
+  - Expanded unit tests in `tests/test_runner.c` to **601 / 601 passing assertions (100.0%)** covering wrap mode cycling, typing without physical newlines in soft wrap, paragraph unflow with blockquotes and undo/redo, and wrap config persistence..
+
 ---
 
 ## 8. AI Developer Handover & Continuation Guide
@@ -416,7 +435,7 @@ The following tasks from your requirements and project roadmap are identified fo
 ### 8.1 Repository & Current Snapshot
 - **Git Branch:** `main`.
 - **Working Tree:** Clean, fully tested and verified.
-- **Test Suite Status:** **576 / 576 assertions passing (100.0%)** in `bin/test_runner` (verified with AddressSanitizer and UndefinedBehaviorSanitizer via `make sanitize`).
+- **Test Suite Status:** **601 / 601 assertions passing (100.0%)** in `bin/test_runner` (verified with AddressSanitizer and UndefinedBehaviorSanitizer via `make sanitize`).
 - **Compiler Compliance:** Compiles with zero warnings on `gcc -std=c11 -Wall -Wextra -pedantic -Werror`.
 - **Primary Headers:**
   - `src/editor.h`: Editor structure and buffer operations.
