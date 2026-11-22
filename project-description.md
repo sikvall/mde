@@ -15,7 +15,7 @@
 navigating, and previewing Markdown (`.md`) documents. It is written in **pure C11** on top of
 **`ncursesw`**, with no external runtime library dependencies (pandoc is optional for multi-format export).
 
-- **Author / owner:** Anders Sikvall (Täpp Anders Sikvall).
+- **Author / owner:** Täpp Anders Sikvall.
 - **Remote:** `git@github.com:sikvall/mde.git` (branch `main`).
 - **License:** MIT.
 - **Version:** `0.1.2` (central source of truth: `src/version.h`).
@@ -59,15 +59,18 @@ make deb             # Package Debian .deb package -> bin/mde_<version>_<arch>.d
 mde/
 ├── Makefile               # Build, test, install, and deb packaging
 ├── README.md              # User documentation and keybindings guide
-├── CHANGELOG.md           # Keep a Changelog document tracking releases (0.1.0, 0.1.1)
+├── CHANGELOG.md           # Keep a Changelog document tracking releases (0.1.0, 0.1.1, 0.1.2)
 ├── LICENSE.md             # Software license
 ├── examples/              # Interactive sample documents demonstrating mde features
 │   ├── demo.md            # Comprehensive interactive showcase document
-│   └── advanced.md        # Multi-file navigation & linked export showcase
+│   ├── advanced.md        # Multi-file navigation & linked export showcase
+│   └── book/              # Multi-chapter book showcase (main.md & chap01-03.md)
 ├── man/
-│   └── mde.1              # UNIX manual page
+│   ├── mde.1              # UNIX manual page for editor
+│   └── md2epub.1          # UNIX manual page for EPUB converter
 ├── scripts/
-│   └── generate_keybindings.py # Single-source keybinding table generator
+│   ├── generate_keybindings.py # Single-source keybinding table generator
+│   └── verify_no_pandoc.sh     # Comprehensive pandoc-free export validation script
 ├── src/
 │   ├── version.h          # Centralized version macros and app metadata
 │   ├── config.h / .c      # Configuration file loader (~/.config/mde/config or ~/.mde/config)
@@ -76,11 +79,14 @@ mde/
 │   ├── editor.h / .c      # Core editor loop, cursor, selection, clipboard, auto-wrap
 │   ├── editor_link.c      # Hypertext navigation, relative links, and anchor resolution
 │   ├── editor_search.c    # Interactive search and replace subsystem
+│   ├── epub.h             # Native EPUB2/EPUB3 converter API and options
 │   ├── export.h / .c      # Master export dispatcher and pandoc integration
 │   ├── export_internal.h  # Shared export document structures and parsing helpers
+│   ├── export_epub.c      # Native C11 EPUB 2/3 builder using libzip
 │   ├── export_html.c      # Built-in standalone HTML5 export backend
 │   ├── export_xml.c       # Built-in structured XML export backend
 │   ├── export_latex.c     # Built-in unified LaTeX export backend
+│   ├── md2epub_main.c     # Standalone CLI binary entry point
 │   ├── markdown.h / .c    # Streaming Markdown lexer and span tokenizer
 │   ├── renderer.h / .c    # Formatted preview renderer with responsive soft-wrapping & tables
 │   ├── theme.h / .c       # 256-color & 16-color ncurses palette & token styles
@@ -89,13 +95,14 @@ mde/
 │   ├── ui_dialog_file.c   # Modal file browser (Open, Save As, Link)
 │   ├── ui_dialog_help.c   # Modal two-tab keyboard shortcut and Markdown help overlay
 │   ├── ui_dialog_export.c # Modal interactive export format selector menu
+│   ├── ui_dialog_metadata.c # Modal document and book metadata editor dialog
 │   ├── ui_dialog_outline.c # Modal document table-of-contents outline navigator
 │   ├── ui_dialog_stats.c  # Modal document and selection statistics dialog
 │   ├── undo.h / .c        # Multi-level undo/redo action stacks with group IDs
 │   ├── utf8.h / .c        # Multi-byte UTF-8 length, boundary, and wcwidth visual column math
 │   └── main.c             # Event loop, CLI parsing, signal handling, key & mouse dispatch
 └── tests/
-    └── test_runner.c      # Comprehensive C11 unit test suite (462 assertions)
+    └── test_runner.c      # Comprehensive C11 unit test suite (576 assertions)
 ```
 
 ---
@@ -139,6 +146,14 @@ mde/
 - **Clean Attribute State:**
   - Uses `attrset(rc->attr)` to ensure formatting styles (such as inline code backticks) transition cleanly without residual attribute leakage into subsequent text chunks.
 - Preview cursor mapping (`renderer_get_cursor_vcol`) and line lookup (`rendered_doc_find_line`) maintain exact line synchronization between editor and preview.
+
+### 4.6 Native EPUB 2/3 Publishing Engine (`export_epub.c`, `epub.h`, `md2epub_main.c`, `ui_dialog_metadata.c`)
+- **Zero External Dependencies:** Built entirely with pure C11 and `libzip`, providing instant, fully contained e-book generation without requiring Pandoc, Python, Java, or Node.js.
+- **Strict OCF Compliance:** Conforms precisely to the Open Container Format specification: uncompressed `mimetype` (`application/epub+zip`, 20 bytes STORE) at byte offset 0, followed by `META-INF/container.xml`, `EPUB/package.opf`, chapter XHTML files, and stylesheets.
+- **Automated Chapter Splitting & TOC:** Divides single documents into discrete XHTML chapters on top-level H1 (`# `) headings and on linked file boundaries. Generates semantic HTML5 navigation (`nav.xhtml`) for EPUB 3 and XML navigation maps (`toc.ncx`) for EPUB 2.
+- **Asset Bundling:** Scans for local images (`![alt](path.png)`), copies them into `EPUB/images/`, declares appropriate media types in the OPF manifest, and rewrites image `src` paths.
+- **Interactive Metadata Editing (`ui_dialog_metadata.c`):** Detects and extracts title, author, language, date, publisher, identifier, rights, description, cover picture, and stylesheet paths. Synchronizes directly with the document buffer via `editor_update_front_matter()`.
+- **Standalone CLI Converter (`bin/md2epub`):** High-performance CLI tool supporting EPUB 2/3 target formats, metadata overrides, custom CSS, chapter splitting controls, and multi-file book compilation.
 
 ---
 
@@ -356,10 +371,25 @@ The following tasks from your requirements and project roadmap are identified fo
   - Pandoc remains available as an optional engine selectable by the user.
 - **Interactive Metadata Editor Screen (`src/ui_dialog_metadata.c`):**
   - Modal dialog accessible via `Alt+I` / `M-I` and from the Export Menu (`F5` / `Alt+X`) via key `M`.
-  - Displays and allows in-place editing of 10 common book metadata fields: Title, Author, Language, Date, Publisher, Identifier, Rights, Description, Cover Image, and Custom CSS.
+  - Displays and allows in-place editing of 10 common book metadata fields: Title, Author, Language, Date, Publisher, Identifier, Rights, Description, Cover Picture, and Custom CSS.
+  - Added dedicated interactive file browser trigger (`^R` or `F6`) within the Metadata screen to browse and select image or CSS files directly from disk.
   - Automatically updates and synchronizes YAML front matter (`editor_update_front_matter()`) in the active document buffer, marking it dirty and integrating into undo/redo history.
 - **Pandoc-Free Verification (`scripts/verify_no_pandoc.sh`):**
   - Validation script ensuring 100% operational export for all formats with pandoc removed from `$PATH`.
+
+### 7.9 Version 0.1.2 Release & Multi-File Book Showcase (`examples/book/`)
+- **Version Bump to 0.1.2:**
+  - Updated centralized version macros in `src/version.h` (`0.1.2`).
+  - Synchronously updated `README.md`, `man/mde.1`, `man/md2epub.1`, `CHANGELOG.md`, and test suites.
+- **Dedicated Cover Picture Support:**
+  - Expanded YAML front-matter parser in `src/export_epub.c` to recognize `cover`, `cover-picture`, `cover_picture`, `cover-image`, and `coverimage`.
+  - Linked Cover Picture field in `ui_dialog_metadata.c` to `meta.cover_path` and `package.opf` cover manifest items (`properties="cover-image"`).
+- **Showcase Multi-Chapter Book (`examples/book/`):**
+  - Created complete sample e-book: *The Reluctant Antenna (Or: Space Weather and Other Domestic Minor Inconveniences)*.
+  - Comprises `main.md` with complete YAML front matter and TOC, linking `chap01.md` (*The Physics of Stubborn Birches*), `chap02.md` (*Space Weather and the 14 MHz Silence*), and `chap03.md` (*The Ghost in the Morse Code*).
+  - Demonstrates bi-directional chapter navigation (`F7` / `Alt+O` and `F8` / `Alt+-`), relative intra-book cross-references, and zero-configuration EPUB 3 compiling via `md2epub`.
+- **Test Suite Expansion:**
+  - Expanded unit test assertions in `tests/test_runner.c` to **576 / 576 passing tests (100.0%)**.
 
 ---
 

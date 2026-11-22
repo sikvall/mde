@@ -51,7 +51,7 @@ static void test_version(void) {
                 "Numeric version macros match 0.1.2");
     TEST_ASSERT(strlen(MDE_BUILD_DATE) > 0, "Build date is non-empty");
     TEST_ASSERT(strlen(MDE_BUILD_TIME) > 0, "Build time is non-empty");
-    TEST_ASSERT(strlen(MDE_AUTHOR) > 0, "Author is non-empty");
+    TEST_ASSERT(strcmp(MDE_AUTHOR, "Täpp Anders Sikvall") == 0, "Author is 'Täpp Anders Sikvall'");
     TEST_ASSERT(strlen(MDE_MAINTAINER) > 0, "Maintainer is non-empty");
     TEST_ASSERT(strlen(MDE_DESCRIPTION) > 0, "Description is non-empty");
 }

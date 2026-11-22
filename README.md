@@ -105,6 +105,202 @@ Updating this single file automatically updates the CLI output (`mde -v`), the h
 
 ---
 
+## Native EPUB Conversion & Book Publishing
+
+`mde` features a native, pure C11 publishing pipeline that converts Markdown documents and linked multi-file document trees into standard, publication-grade **EPUB 3** and **EPUB 2** electronic books. It requires **no external runtimes** such as Pandoc, Python, Java, or Node.js—everything is built directly into `mde` and the accompanying `md2epub` CLI tool using `libzip`.
+
+### Key Capabilities
+
+- **Modern EPUB 3 & Legacy EPUB 2**: Produces modern EPUB 3.2 e-books featuring semantic HTML5 `<nav epub:type="toc">` navigation by default, or EPUB 2.0.1 files with XML `<navMap>` (`toc.ncx`) for older e-readers and hardware devices.
+- **Strict Open Container Format (OCF) Compliance**: The resulting `.epub` file is a valid ZIP archive containing an uncompressed `mimetype` entry stored at byte offset 0 (`ZIP_CM_STORE`), followed by `META-INF/container.xml`, `EPUB/package.opf`, chapter XHTML files, and stylesheets.
+- **Automated Chapter Splitting**: Automatically divides single large documents into clean, standalone XHTML chapter files at every top-level H1 (`# `) heading boundary.
+- **Multi-File Document & Book Bundling**: Seamlessly discovers all locally linked Markdown documents (`[Chapter 1](chap01.md)`), traverses the link graph, and packages each file into an individual chapter document (`ch001.xhtml`, `ch002.xhtml`, etc.) with internal relative links automatically rewritten into working intra-archive chapter anchors.
+- **Interactive Metadata Editing (`Alt+I`)**: Full in-editor modal dialogue to inspect and update common book metadata, synchronized directly with YAML front matter.
+- **Cover Image & Asset Bundling**: Automatically embeds cover pictures and all referenced local images (`![alt](images/photo.png)`) directly into `EPUB/images/`, declaring their MIME types and properties in `package.opf`.
+- **Typographic Stylesheet**: Ships with a built-in clean typography CSS designed for high legibility on e-ink readers and mobile screens, or accepts a custom CSS file.
+
+---
+
+### In-Editor Export Workflow (`F5` / `Alt+X`)
+
+You can export any Markdown buffer directly from the editor:
+
+1. Press **`F5`** (or **`Alt+X`**) to open the interactive **Export Menu**.
+2. Press **`3`** to select **EPUB (`.epub`)**.
+3. **Options within the menu**:
+   - **`L`**: Toggle recursive linked-file inclusion (`ON` / `OFF`).
+   - **`E`**: Toggle export engine between **Built-in** (native C11) and **Pandoc**.
+   - **`M`**: Jump directly into the **Document Metadata** screen to edit author, title, cover image, and identifiers before exporting.
+   - **`Tab`**: Edit the destination `.epub` file path.
+4. Press **`Enter`** to generate the e-book.
+
+---
+
+### Document Metadata Screen (`Alt+I`)
+
+Press **`Alt+I`** (or **`M`** inside the Export Menu) to open the interactive Metadata Editor.
+
+| Field | Description | Default Fallback |
+|---|---|---|
+| **Title** | The book's title | First H1 heading in file, or filename stem |
+| **Author** | Author or creator name | Current login user (`$USER`) |
+| **Language** | BCP 47 language code (e.g., `en`, `sv`, `de`, `fr`) | `en` |
+| **Date** | Publication date in `YYYY-MM-DD` or ISO 8601 | Today's date |
+| **Publisher** | Publishing entity or imprint | *(optional)* |
+| **Identifier** | Publication ID (UUID URN, ISBN, or URI) | Auto-generated UUID URN |
+| **Rights** | Copyright notice or license terms | *(optional)* |
+| **Description** | Book abstract, summary, or blurb | *(optional)* |
+| **Cover Picture** | Path/filename to book cover image | *(optional; press `^R` or `F6` to browse)* |
+| **Custom CSS** | Path to custom stylesheet override | *(optional; defaults to built-in typography)* |
+
+#### Metadata Screen Shortcuts
+- **`Tab` / `↓`**: Move to next field.
+- **`Shift+Tab` / `↑`**: Move to previous field.
+- **`^R` / `F6`**: Open the interactive file browser to browse directories and pick a cover picture or CSS file.
+- **`^U`**: Clear active input field.
+- **`Ctrl+S`** or select **`[ Save to Document ]`**: Atomically updates or inserts YAML front matter at the top of your document and marks the buffer modified.
+- **`Esc`** or select **`[ Cancel ]`**: Discard edits and close modal.
+
+---
+
+### Multi-File Book Authoring
+
+`mde` makes authoring multi-chapter books effortless. Rather than managing one massive monolithic file, you can organize your book as a set of modular Markdown documents.
+
+#### Recommended Directory Layout
+
+Look at the included showcase book in `examples/book/`:
+
+```
+examples/book/
+├── main.md        # Master book file: front matter, introduction & table of contents
+├── chap01.md      # Chapter 1: The Physics of Stubborn Birches
+├── chap02.md      # Chapter 2: Space Weather and the 14 MHz Silence
+├── chap03.md      # Chapter 3: The Ghost in the Morse Code
+└── cover.jpg      # Optional cover picture
+```
+
+#### The Master File (`main.md`)
+
+The root document contains your book's metadata front matter and links to individual chapter files:
+
+```markdown
+---
+title: "The Reluctant Antenna"
+author: "Täpp Anders Sikvall"
+language: en
+date: 2026-11-22
+publisher: "Fika & Wire Press"
+identifier: "urn:uuid:sm5uei-antenna-saga-2026"
+rights: "CC BY-SA 4.0"
+cover: "cover.jpg"
+---
+
+# The Reluctant Antenna
+
+## Table of Contents
+
+1. [Chapter 1: The Physics of Stubborn Birches](chap01.md)
+2. [Chapter 2: Space Weather and the 14 MHz Silence](chap02.md)
+3. [Chapter 3: The Ghost in the Morse Code](chap03.md)
+```
+
+#### Navigating Between Chapters
+- While writing or reading in `mde`, position your cursor on `[Chapter 1](chap01.md)` and press **`F7`** (or **`Alt+O`**) to follow the link and open the chapter immediately.
+- Press **`F8`** (or **`Alt+-`**) to jump back to your previous location in `main.md`.
+
+#### Compiling the Book
+When you export `main.md` to EPUB via **`F5`** or via `md2epub`:
+1. `mde` parses `main.md` and reads the YAML front matter.
+2. It detects the links to `chap01.md`, `chap02.md`, and `chap03.md`.
+3. It recursively compiles each file into its own clean XHTML document (`ch001.xhtml` through `ch004.xhtml`).
+4. Internal Markdown links between chapters (`[← Back](chap01.md)`) are automatically converted into relative intra-e-book anchors (`ch002.xhtml`).
+5. A comprehensive Table of Contents is generated for the e-reader's navigation pane.
+
+---
+
+### YAML Front-Matter Reference
+
+You can configure all book properties directly in your Markdown file using a YAML block delimited by `---` at line 0:
+
+```yaml
+---
+title: "The Reluctant Antenna"
+author: "Täpp Anders Sikvall"
+language: en
+date: 2026-11-22
+publisher: "Fika & Wire Press"
+identifier: "urn:isbn:9780123456789"
+rights: "CC BY-SA 4.0"
+description: "A short, dryly humorous chronicle of wire antennas and solar tantrums."
+cover: "images/cover.png"
+css: "styles/custom.css"
+---
+```
+
+Recognized keys (case-insensitive):
+- **`title`**: Book title.
+- **`author`** / **`creator`**: Author name.
+- **`language`** / **`lang`**: Language code (default: `en`).
+- **`date`**: Publication date.
+- **`publisher`**: Publisher or organization.
+- **`identifier`** / **`id`** / **`isbn`** / **`uuid`**: Unique book identifier.
+- **`rights`** / **`copyright`**: Copyright / licensing statement.
+- **`description`** / **`summary`**: Short abstract or blurb.
+- **`cover`** / **`cover-picture`** / **`cover_picture`** / **`cover-image`**: Path to cover picture.
+- **`css`** / **`stylesheet`**: Path to custom CSS file.
+
+---
+
+### Standalone CLI Converter: `md2epub`
+
+In addition to the interactive editor, `mde` builds a high-performance command-line binary `bin/md2epub`.
+
+```bash
+md2epub [OPTIONS] input.md [output.epub]
+```
+
+#### CLI Options Reference
+
+| Option | Long Option | Description |
+|---|---|---|
+| `-o <file>` | `--output <file>` | Destination `.epub` path (defaults to `<input_stem>.epub`) |
+| `-3` | `--epub3` | Generate modern EPUB 3 e-book (default) |
+| `-2` | `--epub2` | Generate legacy EPUB 2.0.1 e-book with NCX navigation |
+| `-t <str>` | `--title <str>` | Override book title |
+| `-a <str>` | `--author <str>` | Override author name |
+| `-l <code>`| `--lang <code>` | Override BCP 47 language code (`en`, `sv`, etc.) |
+| | `--date <str>` | Set publication date (`YYYY-MM-DD`) |
+| | `--publisher <str>`| Set publisher name |
+| | `--identifier <str>`| Set publication ID (ISBN, UUID, etc.) |
+| | `--rights <str>` | Set copyright or license statement |
+| | `--description <str>`| Set abstract or summary |
+| | `--cover <file>` | Embed image file as the book cover |
+| `-c <file>`| `--css <file>` | Use custom stylesheet instead of built-in CSS |
+| | `--no-split` | Do not split chapters on H1 headings |
+| | `--no-linked` | Do not follow or bundle locally linked `.md` files |
+| `-q` | `--quiet` | Suppress progress output |
+| `-v` | `--version` | Display version and build information |
+| `-h` | `--help` | Display options summary |
+
+#### Usage Examples
+
+```bash
+# Convert a single document to EPUB 3
+md2epub notes.md
+
+# Compile a multi-file book with cover picture
+md2epub examples/book/main.md -o /tmp/The_Reluctant_Antenna.epub
+
+# Build an EPUB 2 e-book for older e-readers with custom metadata
+md2epub -2 --cover cover.jpg --title "My Novel" --author "Jane Doe" manuscript.md
+
+# Custom output with quiet mode for build scripts
+md2epub -q -o release/handbook.epub handbook.md
+```
+
+---
+
 ## Command-Line Options
 
 | Option | Description |
@@ -176,6 +372,7 @@ Updating this single file automatically updates the CLI output (`mde -v`), the h
 - A C11-compliant compiler (`gcc` or `clang`)
 - `make`
 - `ncursesw` development headers (`libncursesw5-dev` on Debian/Ubuntu, `ncurses-devel` on Fedora/RHEL, `ncurses` on Arch/macOS)
+- `libzip` development headers (`libzip-dev` on Debian/Ubuntu, `libzip-devel` on Fedora/RHEL, `libzip` on Arch/macOS)
 
 ### Compile
 
@@ -245,7 +442,8 @@ mde/
 ├── README.md           # Documentation
 ├── examples/           # Sample Markdown documents demonstrating features
 │   ├── demo.md         # Comprehensive interactive showcase document
-│   └── advanced.md     # Multi-file navigation & linked export showcase
+│   ├── advanced.md     # Multi-file navigation & linked export showcase
+│   └── book/           # Multi-file book showcase (main.md & chap01-03.md)
 ├── man/
 │   ├── mde.1           # Standard UNIX man page for editor
 │   └── md2epub.1       # UNIX man page for EPUB converter
@@ -264,11 +462,12 @@ mde/
 │   ├── renderer.h / .c # Formatted preview renderer with synchronized line mapping
 │   ├── theme.h / .c    # 256-color & 16-color ncurses palette & token styles
 │   ├── ui.h / .c       # Screen layout, column ruler, file dialog & status bar
+│   ├── ui_dialog_metadata.c # Interactive document & book metadata editor modal
 │   ├── undo.h / .c     # Multi-level undo & redo action stacks
 │   ├── utf8.h / .c     # UTF-8 boundary checks, visual column conversions (wcwidth)
 │   └── main.c          # Event loop, CLI parsing, signals, key & mouse dispatch
 └── tests/
-    └── test_runner.c   # Comprehensive C11 unit test suite (541 tests)
+    └── test_runner.c   # Comprehensive C11 unit test suite (576 tests)
 ```
 
 ---

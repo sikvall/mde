@@ -208,6 +208,54 @@ Indent or unindent the current line by 2 spaces.
 .B Ins
 Toggle between Insert mode (steady block cursor) and Overwrite mode (steady
 underscore cursor). The cursor never flashes.
+.SH EPUB CONVERSION & E-BOOK PUBLISHING
+\fBmde\fR includes a complete, native C11 e-book publishing engine powered by
+\fBlibzip\fR, capable of generating modern \fBEPUB 3\fR and legacy \fBEPUB 2\fR
+publications without requiring \fBpandoc\fR or external runtimes.
+.SS Exporting from the Editor
+Press \fBF5\fR (or \fBAlt+X\fR) to open the interactive Export Menu. Select
+\fBEPUB\fR to compile the current document. If the document links to other local
+Markdown files (\fI[Chapter](chap.md)\fR), \fBmde\fR automatically discovers and
+bundles the entire document graph into discrete XHTML chapters (toggleable with
+\fBL\fR).
+.SS Metadata Editing & Synchronization
+Press \fBAlt+I\fR (or \fBM\fR inside the Export Menu) to open the interactive
+Document Metadata screen. This modal allows viewing and editing 10 common book
+metadata fields:
+.IP \(bu 2
+\fBTitle\fR and \fBAuthor\fR
+.IP \(bu 2
+\fBLanguage\fR (BCP 47 code, e.g. \fIen\fR or \fIsv\fR)
+.IP \(bu 2
+\fBDate\fR (ISO format \fIYYYY-MM-DD\fR)
+.IP \(bu 2
+\fBPublisher\fR, \fBIdentifier\fR (ISBN or UUID URN), and \fBRights\fR
+.IP \(bu 2
+\fBDescription\fR (abstract / summary)
+.IP \(bu 2
+\fBCover Picture\fR (path to cover image; press \fB^R\fR or \fBF6\fR to browse files)
+.IP \(bu 2
+\fBCustom CSS\fR (path to custom stylesheet)
+.PP
+Saving from the metadata screen automatically synchronizes the fields into the
+document's YAML front matter at the top of the buffer.
+.SS Chapter Splitting & Navigation
+Input documents are automatically split into distinct chapters at each top-level
+H1 heading (\fB#\fR) and at linked file boundaries. A multi-level table of contents
+is automatically generated for both EPUB 3 (\fIEPUB/nav.xhtml\fR) and EPUB 2
+(\fIEPUB/toc.ncx\fR).
+.SS Asset Bundling & OCF Standards
+Referenced local images (\fI![alt](images/pic.png)\fR) are automatically copied and
+bundled into the archive's \fIEPUB/images/\fR directory with matching MIME types
+declared in \fIEPUB/package.opf\fR. The archive strictly follows the Open Container
+Format (OCF) standard, writing an uncompressed \fImimetype\fR file at offset 0.
+.SS Standalone CLI Tool
+The EPUB publishing engine is also available as a standalone command-line tool,
+\fBmd2epub\fR(1), suitable for scripts, automated build pipelines, and terminal use:
+.PP
+.RS
+.B md2epub book.md \-o book.epub
+.RE
 .SH EXAMPLES
 .TP
 Open or create a Markdown document with default 78-column automatic line break:
@@ -218,7 +266,13 @@ Edit with a custom 100-column automatic line break:
 .TP
 Disable automatic line breaking:
 .B mde --wrap=off notes.md
+.TP
+Export a multi-chapter book to EPUB directly from the shell:
+.B md2epub examples/book/main.md \-o mybook.epub
+.SH SEE ALSO
+.BR md2epub (1),
+.BR zip (1)
 .SH AUTHORS
-Written by Anders.
+Written by Täpp Anders Sikvall.
 .SH COPYRIGHT
 MIT License.

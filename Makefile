@@ -92,7 +92,7 @@ deb: $(TARGET) $(MD2EPUB_TARGET)
 	@echo "Source: https://github.com/sikvall/mde" >> $(DEB_STAGING)/usr/share/doc/mde/copyright
 	@echo "" >> $(DEB_STAGING)/usr/share/doc/mde/copyright
 	@echo "Files: *" >> $(DEB_STAGING)/usr/share/doc/mde/copyright
-	@echo "Copyright: 2026 Anders" >> $(DEB_STAGING)/usr/share/doc/mde/copyright
+	@echo "Copyright: 2026 Täpp Anders Sikvall" >> $(DEB_STAGING)/usr/share/doc/mde/copyright
 	@echo "License: MIT" >> $(DEB_STAGING)/usr/share/doc/mde/copyright
 	# Debian control file
 	@echo "Package: mde" > $(DEB_STAGING)/DEBIAN/control
@@ -100,7 +100,7 @@ deb: $(TARGET) $(MD2EPUB_TARGET)
 	@echo "Section: editors" >> $(DEB_STAGING)/DEBIAN/control
 	@echo "Priority: optional" >> $(DEB_STAGING)/DEBIAN/control
 	@echo "Architecture: $(DEB_ARCH)" >> $(DEB_STAGING)/DEBIAN/control
-	@echo "Maintainer: Anders <anders@localhost>" >> $(DEB_STAGING)/DEBIAN/control
+	@echo "Maintainer: Täpp Anders Sikvall <anders@sikvall.se>" >> $(DEB_STAGING)/DEBIAN/control
 	@echo "Depends: libc6, libncursesw6 (>= 6), libzip4 (>= 1.0)" >> $(DEB_STAGING)/DEBIAN/control
 	@echo "Suggests: pandoc" >> $(DEB_STAGING)/DEBIAN/control
 	@echo "Description: Full-screen text-mode Markdown editor with native EPUB exporter" >> $(DEB_STAGING)/DEBIAN/control

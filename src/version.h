@@ -24,8 +24,8 @@
 #define MDE_BUILD_TIME      __TIME__
 #endif
 
-#define MDE_AUTHOR          "Anders"
-#define MDE_MAINTAINER      "Anders <anders@sikvall.se>"
+#define MDE_AUTHOR          "Täpp Anders Sikvall"
+#define MDE_MAINTAINER      "Täpp Anders Sikvall <anders@sikvall.se>"
 #define MDE_DESCRIPTION     "Full-screen text-mode Markdown editor"
 
 #endif // MDE_VERSION_H
