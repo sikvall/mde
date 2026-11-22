@@ -84,6 +84,36 @@ void ui_search_and_replace(Editor *ed, char *search_buf, size_t search_cap);
 bool ui_show_outline(Editor *ed);
 
 /**
+ * @brief Document and selection metrics container.
+ */
+typedef struct {
+    size_t total_lines;           /**< Total number of lines in buffer */
+    size_t total_words;           /**< Total words in buffer */
+    size_t total_chars;           /**< Total bytes/characters including newlines */
+    size_t total_chars_no_spaces; /**< Characters excluding whitespace */
+    bool has_selection;           /**< True if an active selection exists */
+    size_t sel_lines;             /**< Number of lines spanned by selection */
+    size_t sel_words;             /**< Words inside selection */
+    size_t sel_chars;             /**< Total characters in selection */
+    size_t sel_chars_no_spaces;   /**< Non-whitespace characters in selection */
+    int read_time_min;            /**< Estimated reading minutes (200 wpm) */
+    int read_time_sec;            /**< Estimated reading seconds remainder */
+} DocumentStats;
+
+/**
+ * @brief Compute document and selection metrics.
+ */
+void compute_document_stats(const Editor *ed, DocumentStats *stats);
+
+/**
+ * @brief Display an interactive modal popover showing document and selection statistics.
+ *
+ * @param ed Pointer to the Editor instance.
+ * @return true if displayed successfully.
+ */
+bool ui_show_document_stats(Editor *ed);
+
+/**
  * @brief Prompt to save or discard unsaved changes before an action (quit or switch file).
  *
  * @param ed Pointer to the Editor instance.

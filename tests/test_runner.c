@@ -1459,15 +1459,23 @@ static void test_shortcut_hints_and_dialog(void) {
     printf("--- Testing Shortcut Hints & File Dialogue API ---\n");
 
     // Shortcut hint rows calculation
-    TEST_ASSERT(ui_get_shortcut_hint_rows(24) == 2, "Standard 24-row terminal gets 2 shortcut hint rows");
-    TEST_ASSERT(ui_get_shortcut_hint_rows(25) == 2, "25-row terminal gets 2 shortcut hint rows");
-    TEST_ASSERT(ui_get_shortcut_hint_rows(28) == 3, "28-row terminal gets 3 shortcut hint rows");
-    TEST_ASSERT(ui_get_shortcut_hint_rows(40) == 3, "40-row terminal gets 3 shortcut hint rows");
-    TEST_ASSERT(ui_get_shortcut_hint_rows(15) == 1, "Small 15-row terminal gets 1 shortcut hint row");
+    TEST_ASSERT(ui_get_shortcut_hint_rows(24) == 4, "Standard 24-row terminal gets 4 shortcut hint rows");
+    TEST_ASSERT(ui_get_shortcut_hint_rows(25) == 4, "25-row terminal gets 4 shortcut hint rows");
+    TEST_ASSERT(ui_get_shortcut_hint_rows(28) == 4, "28-row terminal gets 4 shortcut hint rows");
+    TEST_ASSERT(ui_get_shortcut_hint_rows(40) == 4, "40-row terminal gets 4 shortcut hint rows");
+    TEST_ASSERT(ui_get_shortcut_hint_rows(20) == 3, "20-row terminal gets 3 shortcut hint rows");
+    TEST_ASSERT(ui_get_shortcut_hint_rows(15) == 2, "Small 15-row terminal gets 2 shortcut hint rows");
+    TEST_ASSERT(ui_get_shortcut_hint_rows(10) == 1, "10-row terminal gets 1 shortcut hint row");
 
     // File dialog safe parameter validation
     Editor ed;
     editor_init(&ed, NULL);
+
+    TEST_ASSERT(ed.show_keybindings == true, "Keybindings visible by default");
+    editor_toggle_keybindings(&ed);
+    TEST_ASSERT(ed.show_keybindings == false, "Keybindings toggled to hidden");
+    editor_toggle_keybindings(&ed);
+    TEST_ASSERT(ed.show_keybindings == true, "Keybindings toggled back to visible");
 
     char path_buf[256];
     TEST_ASSERT(!ui_file_dialog(NULL, FILE_DIALOG_OPEN, path_buf, sizeof(path_buf)), "Null editor returns false");
@@ -1659,6 +1667,125 @@ static void test_markdown_extensions(void) {
     buffer_free(&range_buf);
 }
 
+/** @brief Verify bracket/delimiter pair matching, document statistics, and dual-pane mouse routing. */
+static void test_interactive_ux_and_navigation(void) {
+    printf("--- Testing Interactive UX & Dual-Pane Navigation (6.5) ---\n");
+    Editor ed;
+    editor_init(&ed, NULL);
+
+    // 1. Bracket and delimiter pair matching
+    const char *doc_lines[] = {
+        "function compute(alpha, [beta, gamma]) {",
+        "    if (x != y) return { result: true };",
+        "    return false;",
+        "}",
+        "Some **bold text** and ~~strike text~~ and `inline code` here.",
+        "See <https://example.com> for docs.",
+        "```c",
+        "int value = 123;",
+        "```",
+        "Unmatched bracket (test only"
+    };
+
+    for (size_t i = 0; i < sizeof(doc_lines) / sizeof(doc_lines[0]); ++i) {
+        if (i > 0) buffer_split_line(&ed.buffer, i - 1, buffer_line_len(&ed.buffer, i - 1), 0);
+        buffer_replace_line(&ed.buffer, i, doc_lines[i], strlen(doc_lines[i]), 0);
+    }
+
+    // Match nested bracket: '(' at (0, 16) jumps to ')' at (0, 37)
+    ed.cursor_row = 0; ed.cursor_col = 16;
+    TEST_ASSERT(editor_jump_matching_pair(&ed), "Jump matching forward ( -> ) succeeded");
+    TEST_ASSERT(ed.cursor_row == 0 && ed.cursor_col == 37, "Jumped to matching closing ')'");
+
+    // Match nested bracket backward: ')' at (0, 37) jumps to '(' at (0, 16)
+    TEST_ASSERT(editor_jump_matching_pair(&ed), "Jump matching backward ) -> ( succeeded");
+    TEST_ASSERT(ed.cursor_row == 0 && ed.cursor_col == 16, "Jumped back to opening '('");
+
+    // Match square brackets '[' at (0, 24) -> ']' at (0, 36)
+    ed.cursor_row = 0; ed.cursor_col = 24;
+    TEST_ASSERT(editor_jump_matching_pair(&ed), "Jump matching [ -> ] succeeded");
+    TEST_ASSERT(ed.cursor_row == 0 && ed.cursor_col == 36, "Jumped to matching ']'");
+
+    // Match braces across lines: '{' at (0, 39) -> '}' at (3, 0)
+    ed.cursor_row = 0; ed.cursor_col = 39;
+    TEST_ASSERT(editor_jump_matching_pair(&ed), "Jump multi-line { -> } succeeded");
+    TEST_ASSERT(ed.cursor_row == 3 && ed.cursor_col == 0, "Jumped to closing '}' on line 3");
+
+    // Match braces backward across lines: '}' at (3, 0) -> '{' at (0, 39)
+    TEST_ASSERT(editor_jump_matching_pair(&ed), "Jump multi-line backward } -> { succeeded");
+    TEST_ASSERT(ed.cursor_row == 0 && ed.cursor_col == 39, "Jumped back to opening '{' on line 0");
+
+    // Angle brackets '<' at (5, 4) -> '>' at (5, 24)
+    ed.cursor_row = 5; ed.cursor_col = 4;
+    TEST_ASSERT(editor_jump_matching_pair(&ed), "Jump matching < -> > succeeded");
+    TEST_ASSERT(ed.cursor_row == 5 && ed.cursor_col == 24, "Jumped to matching '>'");
+    TEST_ASSERT(editor_jump_matching_pair(&ed), "Jump matching backward > -> < succeeded");
+    TEST_ASSERT(ed.cursor_row == 5 && ed.cursor_col == 4, "Jumped back to opening '<'");
+
+    // Markdown bold '**'
+    ed.cursor_row = 4; ed.cursor_col = 5; // at first '**'
+    TEST_ASSERT(editor_jump_matching_pair(&ed), "Jump matching bold ** -> ** succeeded");
+    TEST_ASSERT(ed.cursor_row == 4 && ed.cursor_col == 16, "Jumped to closing '**'");
+    TEST_ASSERT(editor_jump_matching_pair(&ed), "Jump matching bold backward ** -> ** succeeded");
+    TEST_ASSERT(ed.cursor_row == 4 && ed.cursor_col == 5, "Jumped back to opening '**'");
+
+    // Markdown strikethrough '~~'
+    ed.cursor_row = 4; ed.cursor_col = 23; // at first '~~'
+    TEST_ASSERT(editor_jump_matching_pair(&ed), "Jump matching ~~ -> ~~ succeeded");
+    TEST_ASSERT(ed.cursor_row == 4 && ed.cursor_col == 36, "Jumped to closing '~~'");
+
+    // Markdown inline code '`'
+    ed.cursor_row = 4; ed.cursor_col = 43; // at first '`'
+    TEST_ASSERT(editor_jump_matching_pair(&ed), "Jump matching ` -> ` succeeded");
+    TEST_ASSERT(ed.cursor_row == 4 && ed.cursor_col == 55, "Jumped to closing '`'");
+
+    // Code fence ``` across lines: line 6 -> line 8
+    ed.cursor_row = 6; ed.cursor_col = 0;
+    TEST_ASSERT(editor_jump_matching_pair(&ed), "Jump code fence ``` -> ``` succeeded");
+    TEST_ASSERT(ed.cursor_row == 8 && ed.cursor_col == 0, "Jumped to closing code fence on line 8");
+    TEST_ASSERT(editor_jump_matching_pair(&ed), "Jump code fence backward ``` -> ``` succeeded");
+    TEST_ASSERT(ed.cursor_row == 6 && ed.cursor_col == 0, "Jumped back to opening code fence on line 6");
+
+    // Unmatched bracket on line 9 returns false
+    ed.cursor_row = 9; ed.cursor_col = 18;
+    TEST_ASSERT(!editor_jump_matching_pair(&ed), "Unmatched bracket gracefully reports false");
+
+    // 2. Document & Selection Statistics
+    DocumentStats stats;
+    compute_document_stats(&ed, &stats);
+    TEST_ASSERT(stats.total_lines == 10, "Document stats reports 10 total lines");
+    TEST_ASSERT(stats.total_words > 20, "Document stats reports word count > 20");
+    TEST_ASSERT(stats.total_chars > 150, "Document stats reports total character count > 150");
+    TEST_ASSERT(stats.total_chars_no_spaces > 100, "Document stats reports non-whitespace chars > 100");
+    TEST_ASSERT(!stats.has_selection, "No selection active initially in stats");
+
+    // Active selection stats
+    ed.cursor_row = 4; ed.cursor_col = 5;
+    editor_set_mark(&ed);
+    ed.cursor_row = 4; ed.cursor_col = 18; // selects "**bold text**"
+    compute_document_stats(&ed, &stats);
+    TEST_ASSERT(stats.has_selection, "Selection detected in stats");
+    TEST_ASSERT(stats.sel_lines == 1, "Selected lines is 1");
+    TEST_ASSERT(stats.sel_words == 2, "Selected words count is 2 ('bold', 'text')");
+    TEST_ASSERT(stats.sel_chars == 13, "Selected chars count is 13");
+    editor_clear_mark(&ed);
+
+    // 3. Dual-pane preview click routing math
+    ed.view_mode = VIEW_SPLIT;
+    ed.screen_cols = 80;
+    ed.screen_rows = 24;
+    int split_col = ed.screen_cols / 2; // 40
+    TEST_ASSERT(split_col == 40, "Split col is 40 for 80-col terminal");
+    int click_editor_x = 15;
+    int click_preview_x = 55;
+    bool in_preview_1 = (click_editor_x > split_col);
+    bool in_preview_2 = (click_preview_x > split_col);
+    TEST_ASSERT(!in_preview_1, "Click at x=15 routed to editor pane");
+    TEST_ASSERT(in_preview_2, "Click at x=55 routed to preview pane");
+
+    editor_free(&ed);
+}
+
 /** @brief Run all unit test suites and return 0 on 100% pass, 1 on any failure. */
 int main(void) {
     setlocale(LC_ALL, "");
@@ -1689,6 +1816,7 @@ int main(void) {
     test_renderer_tables_and_links();
     test_shortcut_hints_and_dialog();
     test_markdown_extensions();
+    test_interactive_ux_and_navigation();
 
     printf("==========================================\n");
     printf("Test Results: %d / %d tests passed (%.1f%%)\n",

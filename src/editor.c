@@ -45,6 +45,7 @@ void editor_init(Editor *ed, const char *filename) {
     ed->mark_col = 0;
     ed->clipboard = NULL;
     ed->clipboard_len = 0;
+    ed->show_keybindings = true;
     editor_touch_key(ed);
 
     if (filename && filename[0]) {
@@ -100,6 +101,17 @@ void editor_cycle_view_mode(Editor *ed) {
         case VIEW_PREVIEW:
             editor_set_status(ed, "View: Fullscreen Rendered Reader");
             break;
+    }
+}
+
+/** @brief Toggle visibility of bottom shortcut hint rows (F10 / F12 / Alt+K). */
+void editor_toggle_keybindings(Editor *ed) {
+    if (!ed) return;
+    ed->show_keybindings = !ed->show_keybindings;
+    if (ed->show_keybindings) {
+        editor_set_status(ed, "Keybindings shown (press F10 to hide)");
+    } else {
+        editor_set_status(ed, "Keybindings hidden (press F10 to show)");
     }
 }
 
@@ -337,6 +349,240 @@ void editor_report_position(Editor *ed) {
                       cur_vcol, max_vcol,
                       buffer_word_count(&ed->buffer),
                       buffer_char_count(&ed->buffer));
+}
+
+/**
+ * @brief Jump cursor between matching pairs of brackets () [] {} <> or Markdown delimiters.
+ */
+bool editor_jump_matching_pair(Editor *ed) {
+    if (!ed) return false;
+    editor_touch_key(ed);
+
+    size_t total_lines = buffer_line_count(&ed->buffer);
+    if (total_lines == 0 || ed->cursor_row >= total_lines) return false;
+
+    const char *line = buffer_line(&ed->buffer, ed->cursor_row);
+    size_t line_len = buffer_line_len(&ed->buffer, ed->cursor_row);
+    size_t col = ed->cursor_col;
+
+    // If cursor is past line end or on non-delimiter, scan forward on current line for nearest delimiter
+    if (col >= line_len || (!strchr("()[]{}`*~<>_", line[col]))) {
+        size_t scan = col;
+        while (scan < line_len && !strchr("()[]{}`*~<>_", line[scan])) {
+            scan++;
+        }
+        if (scan < line_len) {
+            col = scan;
+        } else {
+            editor_set_status(ed, "No matching bracket or delimiter found");
+            return false;
+        }
+    }
+
+    char c = line[col];
+
+    // 1. Markdown bold '**'
+    if (c == '*' && col + 1 < line_len && line[col + 1] == '*') {
+        size_t fwd = col + 2;
+        while (fwd + 1 < line_len && !(line[fwd] == '*' && line[fwd + 1] == '*')) {
+            fwd++;
+        }
+        if (fwd + 1 < line_len) {
+            ed->cursor_col = fwd;
+            ed->target_visual_col = utf8_byte_to_col(line, fwd);
+            editor_set_status(ed, "Jumped to matching '**'");
+            return true;
+        }
+        if (col >= 2) {
+            size_t bwd = col - 2;
+            while (1) {
+                if (line[bwd] == '*' && line[bwd + 1] == '*') {
+                    ed->cursor_col = bwd;
+                    ed->target_visual_col = utf8_byte_to_col(line, bwd);
+                    editor_set_status(ed, "Jumped to matching '**'");
+                    return true;
+                }
+                if (bwd == 0) break;
+                bwd--;
+            }
+        }
+    }
+
+    // 2. Markdown strikethrough '~~'
+    if (c == '~' && col + 1 < line_len && line[col + 1] == '~') {
+        size_t fwd = col + 2;
+        while (fwd + 1 < line_len && !(line[fwd] == '~' && line[fwd + 1] == '~')) {
+            fwd++;
+        }
+        if (fwd + 1 < line_len) {
+            ed->cursor_col = fwd;
+            ed->target_visual_col = utf8_byte_to_col(line, fwd);
+            editor_set_status(ed, "Jumped to matching '~~'");
+            return true;
+        }
+        if (col >= 2) {
+            size_t bwd = col - 2;
+            while (1) {
+                if (line[bwd] == '~' && line[bwd + 1] == '~') {
+                    ed->cursor_col = bwd;
+                    ed->target_visual_col = utf8_byte_to_col(line, bwd);
+                    editor_set_status(ed, "Jumped to matching '~~'");
+                    return true;
+                }
+                if (bwd == 0) break;
+                bwd--;
+            }
+        }
+    }
+
+    // 3. Markdown code block fence ```
+    if (c == '`' && col + 2 < line_len && line[col + 1] == '`' && line[col + 2] == '`') {
+        for (size_t r = ed->cursor_row + 1; r < total_lines; ++r) {
+            const char *fl = buffer_line(&ed->buffer, r);
+            size_t fl_len = buffer_line_len(&ed->buffer, r);
+            size_t k = 0;
+            while (k < fl_len && isspace((unsigned char)fl[k])) k++;
+            if (k + 2 < fl_len && fl[k] == '`' && fl[k + 1] == '`' && fl[k + 2] == '`') {
+                ed->cursor_row = r;
+                ed->cursor_col = k;
+                ed->target_visual_col = utf8_byte_to_col(fl, k);
+                editor_set_status(ed, "Jumped to closing code fence (line %zu)", r + 1);
+                return true;
+            }
+        }
+        if (ed->cursor_row > 0) {
+            for (size_t r = ed->cursor_row - 1; ; --r) {
+                const char *fl = buffer_line(&ed->buffer, r);
+                size_t fl_len = buffer_line_len(&ed->buffer, r);
+                size_t k = 0;
+                while (k < fl_len && isspace((unsigned char)fl[k])) k++;
+                if (k + 2 < fl_len && fl[k] == '`' && fl[k + 1] == '`' && fl[k + 2] == '`') {
+                    ed->cursor_row = r;
+                    ed->cursor_col = k;
+                    ed->target_visual_col = utf8_byte_to_col(fl, k);
+                    editor_set_status(ed, "Jumped to opening code fence (line %zu)", r + 1);
+                    return true;
+                }
+                if (r == 0) break;
+            }
+        }
+    }
+
+    // 4. Markdown inline code '`'
+    if (c == '`') {
+        size_t fwd = col + 1;
+        while (fwd < line_len && line[fwd] != '`') fwd++;
+        if (fwd < line_len) {
+            ed->cursor_col = fwd;
+            ed->target_visual_col = utf8_byte_to_col(line, fwd);
+            editor_set_status(ed, "Jumped to matching '`'");
+            return true;
+        }
+        if (col > 0) {
+            size_t bwd = col - 1;
+            while (bwd > 0 && line[bwd] != '`') bwd--;
+            if (line[bwd] == '`') {
+                ed->cursor_col = bwd;
+                ed->target_visual_col = utf8_byte_to_col(line, bwd);
+                editor_set_status(ed, "Jumped to matching '`'");
+                return true;
+            }
+        }
+    }
+
+    // 5. Standard brackets () [] {} <> with nesting across lines
+    const char *open_brackets = "([{<";
+    const char *close_brackets = ")]}>";
+    const char *open_pos = strchr(open_brackets, c);
+    const char *close_pos = strchr(close_brackets, c);
+
+    if (open_pos) {
+        char target_char = close_brackets[open_pos - open_brackets];
+        char open_char = c;
+        int depth = 1;
+
+        for (size_t r = ed->cursor_row; r < total_lines; ++r) {
+            const char *l = buffer_line(&ed->buffer, r);
+            size_t len = buffer_line_len(&ed->buffer, r);
+            size_t start_b = (r == ed->cursor_row) ? (col + 1) : 0;
+
+            for (size_t b = start_b; b < len; ++b) {
+                if (l[b] == open_char) {
+                    depth++;
+                } else if (l[b] == target_char) {
+                    depth--;
+                    if (depth == 0) {
+                        ed->cursor_row = r;
+                        ed->cursor_col = b;
+                        ed->target_visual_col = utf8_byte_to_col(l, b);
+                        editor_set_status(ed, "Jumped to matching '%c'", target_char);
+                        return true;
+                    }
+                }
+            }
+        }
+        editor_set_status(ed, "No matching '%c' found", target_char);
+        return false;
+    }
+
+    if (close_pos) {
+        char target_char = open_brackets[close_pos - close_brackets];
+        char close_char = c;
+        int depth = 1;
+
+        for (size_t r = ed->cursor_row; ; --r) {
+            const char *l = buffer_line(&ed->buffer, r);
+            size_t len = buffer_line_len(&ed->buffer, r);
+            if (len > 0) {
+                size_t start_b = (r == ed->cursor_row) ? (col > 0 ? col - 1 : 0) : (len - 1);
+                if (r < ed->cursor_row || col > 0) {
+                    for (size_t b = start_b; ; --b) {
+                        if (l[b] == close_char) {
+                            depth++;
+                        } else if (l[b] == target_char) {
+                            depth--;
+                            if (depth == 0) {
+                                ed->cursor_row = r;
+                                ed->cursor_col = b;
+                                ed->target_visual_col = utf8_byte_to_col(l, b);
+                                editor_set_status(ed, "Jumped to matching '%c'", target_char);
+                                return true;
+                            }
+                        }
+                        if (b == 0) break;
+                    }
+                }
+            }
+            if (r == 0) break;
+        }
+        editor_set_status(ed, "No matching '%c' found", target_char);
+        return false;
+    }
+
+    // 6. Markdown single '*' or '_' (italic)
+    if (c == '*' || c == '_') {
+        size_t fwd = col + 1;
+        while (fwd < line_len && line[fwd] != c) fwd++;
+        if (fwd < line_len) {
+            ed->cursor_col = fwd;
+            ed->target_visual_col = utf8_byte_to_col(line, fwd);
+            editor_set_status(ed, "Jumped to matching '%c'", c);
+            return true;
+        }
+        if (col > 0) {
+            size_t bwd = col - 1;
+            while (bwd > 0 && line[bwd] != c) bwd--;
+            if (line[bwd] == c) {
+                ed->cursor_col = bwd;
+                ed->target_visual_col = utf8_byte_to_col(line, bwd);
+                editor_set_status(ed, "Jumped to matching '%c'", c);
+                return true;
+            }
+        }
+    }
+
+    editor_set_status(ed, "No matching delimiter found");
+    return false;
 }
 
 /** @brief Set the selection mark anchor at the current cursor position. */

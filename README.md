@@ -125,9 +125,12 @@ Updating this single file automatically updates the CLI output (`mde -v`), the h
 | **`Ctrl+R`** | Read / Open file dialogue to browse and open a file |
 | **`F5` / `Alt+X`** | Open Export Menu (**HTML**, **XML**, **EPUB**, **LaTeX**; bundles linked `.md` files) |
 | **`F6` / `Alt+H`** | Insert hypertext file link `[Label](relative/file.md)` via file picker |
-| **`F7` / `Alt+O` / `Ctrl+]`** | Follow Markdown file link or `#heading` anchor under cursor |
+| **`F7` / `Alt+O`** | Follow Markdown file link or `#heading` anchor under cursor |
 | **`F8` / `Alt+-`** | Navigate back to previous linked file & cursor position |
 | **`F9` / `Alt+T`** | Open Document Outline modal to jump to any H1–H6 heading |
+| **`Alt+D`** | Live document and selection statistics modal (words, chars, reading time) |
+| **`Ctrl+]` / `Alt+]`** | Jump to matching bracket `()`, `[]`, `{}`, `<>`, or delimiter pair (`**`, `~~`, `` ` ``, ```` ``` ````) |
+| **`F10` / `F12` / `Alt+K`** | Toggle bottom shortcut hint rows (hide / show) |
 | **`F2` / `Alt+P`** | Cycle View Modes (**Split** → **In-Place** → **Preview**) |
 | **`F4` / `Alt+L`** | Set automatic line break column (`20`–`255` or `off`; default `78`) |
 | **`Ctrl+L`** | Refresh / redraw screen |

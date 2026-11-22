@@ -89,7 +89,7 @@ Open the file picker to insert a relative Markdown hypertext link
 (\fB[Label](file.md)\fR) at the cursor, wrapping the active selection or
 deriving the label from the target file's H1 heading.
 .TP
-.BR F7 " / " Alt+O " / " Ctrl+]
+.BR F7 " or " Alt+O
 Follow a local Markdown file link or \fB#heading\fR anchor under the cursor
 (prompts to save unsaved changes before loading a different file, creates a new
 buffer if the target file does not yet exist) and pushes the current location
@@ -102,6 +102,18 @@ position.
 .BR F9 " or " Alt+T
 Open the Document Outline modal listing all Markdown headings (H1\-H6) to jump
 directly to any section.
+.TP
+.B Alt+D
+Display live document and active selection statistics (lines, words, total
+characters, non-whitespace characters, and estimated reading time).
+.TP
+.BR Ctrl+] " or " Alt+]
+Jump to matching bracket \fB()\fR, \fB[]\fR, \fB{}\fR, \fB<>\fR, or Markdown
+delimiter pair (\fB**\fR, \fB~~\fR, \fB`\fR, \fB```\fR, \fB*\fR/\fB_\fR).
+.TP
+.BR F10 " / " F12 " / " Alt+K
+Toggle visibility of the bottom shortcut hint rows (hide/show) to maximize
+editing screen area.
 .TP
 .BR F2 " or " Alt+P
 Cycle view modes: Split View, In-Place Rich View, Fullscreen Rendered View.

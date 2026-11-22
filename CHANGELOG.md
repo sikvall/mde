@@ -18,6 +18,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Single-source keybindings documentation generator (`scripts/generate_keybindings.py`).
 - MIT License (`LICENSE.md`).
 - Comprehensive Doxygen documentation across all C source and header files.
+- Dual-pane mouse click routing in `VIEW_SPLIT` to synchronize editor cursor and single-click follow Markdown links.
+- Live document and selection statistics modal dialog (`Alt+D` / `M-D`).
+- Bracket and Markdown delimiter pair matching navigation (`Ctrl+]` / `Alt+]`).
+- 4th bottom shortcut hint row with 6 additional keybindings.
+- Function key toggle (`F10` / `F12` / `Alt+K`) to hide or show bottom shortcut hints to maximize editor screen area.
+- Persistent `show_keybindings` configuration option in `~/.config/mde/config`.
 
 ## [0.1.0] - 2026-11-21
 

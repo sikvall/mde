@@ -106,6 +106,7 @@ typedef struct {
 
     bool quit_requested;         /**< Termination flag */
     bool backup_made;            /**< True if ~ backup was created this session */
+    bool show_keybindings;       /**< Whether bottom shortcut hint rows are visible */
 } Editor;
 
 /**
@@ -133,6 +134,12 @@ void editor_set_status(Editor *ed, const char *fmt, ...);
  * @param ed Pointer to Editor structure.
  */
 void editor_cycle_view_mode(Editor *ed);
+
+/**
+ * @brief Toggle visibility of bottom shortcut hint rows (F10 / F12 / Alt+K).
+ * @param ed Pointer to Editor instance.
+ */
+void editor_toggle_keybindings(Editor *ed);
 
 /* =========================================================================
  * Cursor Movement & Position Reporting
@@ -184,6 +191,17 @@ void editor_goto_line(Editor *ed, size_t line_1based, size_t col_1based);
 
 /** @brief Post current line/column/percentage/word/char statistics to the status bar. */
 void editor_report_position(Editor *ed);
+
+/**
+ * @brief Jump cursor between matching pairs of brackets () [] {} <> or Markdown delimiters.
+ *
+ * Scans forward/backward across lines for balanced nested pairs, or within the current
+ * line/paragraph for Markdown symmetric formatting markers (**, *, ~~, `).
+ *
+ * @param ed Pointer to Editor instance.
+ * @return true if a matching delimiter was found and jumped to, false otherwise.
+ */
+bool editor_jump_matching_pair(Editor *ed);
 
 /* =========================================================================
  * Typing & Editing Mutations

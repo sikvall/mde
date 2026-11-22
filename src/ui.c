@@ -464,10 +464,20 @@ static const ShortcutHint s_hints_r3[] = {
     { "F5", "Export" }
 };
 
+static const ShortcutHint s_hints_r4[] = {
+    { "F9", "Outline" },
+    { "M-D", "Stats" },
+    { "^]", "Jump" },
+    { "F7", "Follow" },
+    { "M-J", "Reflow" },
+    { "F10", "Hints" }
+};
+
 /** @brief Compute the number of bottom shortcut hint rows appropriate for screen_rows. */
 int ui_get_shortcut_hint_rows(int screen_rows) {
-    if (screen_rows >= 28) return 3;
-    if (screen_rows >= 16) return 2;
+    if (screen_rows >= 24) return 4;
+    if (screen_rows >= 18) return 3;
+    if (screen_rows >= 12) return 2;
     if (screen_rows >= 6) return 1;
     return 0;
 }
@@ -475,7 +485,8 @@ int ui_get_shortcut_hint_rows(int screen_rows) {
 /** @brief Render the bottom Nano-style shortcut hint rows with reverse-video key badges. */
 static void draw_shortcut_hints(int screen_cols, int start_y, int num_rows) {
     if (num_rows <= 0 || screen_cols <= 2) return;
-    const ShortcutHint *all_rows[3] = { s_hints_r1, s_hints_r2, s_hints_r3 };
+    if (num_rows > 4) num_rows = 4;
+    const ShortcutHint *all_rows[4] = { s_hints_r1, s_hints_r2, s_hints_r3, s_hints_r4 };
 
     for (int r = 0; r < num_rows; ++r) {
         int y = start_y + r;
@@ -553,7 +564,7 @@ void ui_draw(Editor *ed) {
         return;
     }
 
-    int num_hint_rows = ui_get_shortcut_hint_rows(rows);
+    int num_hint_rows = (ed && ed->show_keybindings) ? ui_get_shortcut_hint_rows(rows) : 0;
     int status_bar_y = rows - num_hint_rows - 1;
     int body_height = status_bar_y;
     if (body_height < 1) body_height = 1;
@@ -617,7 +628,9 @@ void ui_draw(Editor *ed) {
     }
 
     draw_status_bar(ed, rows, cols, status_bar_y);
-    draw_shortcut_hints(cols, status_bar_y + 1, num_hint_rows);
+    if (num_hint_rows > 0) {
+        draw_shortcut_hints(cols, status_bar_y + 1, num_hint_rows);
+    }
 
     // Position terminal hardware cursor directly on screen
     int text_start_y = 1; // Row 0 is column ruler or preview header

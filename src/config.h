@@ -24,6 +24,7 @@ typedef struct {
     int tab_size;       /**< Tab expansion visual width in spaces */
     bool make_backup;   /**< Whether to generate Emacs-style backup files (~) */
     int view_mode;      /**< Initial editor view mode (0=Editor, 1=Split, 2=Preview) */
+    bool show_keybindings; /**< Whether bottom shortcut hint rows are displayed */
 } MdeConfig;
 
 /**

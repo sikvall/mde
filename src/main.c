@@ -247,21 +247,34 @@ static void prompt_goto_line(void) {
  * @param click_x Screen horizontal coordinate.
  * @param click_y Screen vertical coordinate.
  */
-static void set_cursor_from_click(int click_x, int click_y) {
-    int num_hints = ui_get_shortcut_hint_rows(g_editor.screen_rows);
+static void set_cursor_from_click(int click_x, int click_y, bool is_click_or_release) {
+    int num_hints = g_editor.show_keybindings ? ui_get_shortcut_hint_rows(g_editor.screen_rows) : 0;
     int text_max_y = g_editor.screen_rows - num_hints - 1;
 
     if (click_y >= 1 && click_y < text_max_y) {
-        if (g_editor.view_mode == VIEW_PREVIEW) {
+        int split_col = g_editor.screen_cols / 2;
+        bool in_preview = (g_editor.view_mode == VIEW_PREVIEW) ||
+                          (g_editor.view_mode == VIEW_SPLIT && click_x > split_col);
+
+        if (in_preview) {
             size_t rend_idx = g_editor.preview_scroll_row + (size_t)(click_y - 1);
             if (rend_idx < g_editor.rendered_doc.count) {
                 size_t target_row = g_editor.rendered_doc.lines[rend_idx].source_row;
                 if (target_row < buffer_line_count(&g_editor.buffer)) {
                     g_editor.cursor_row = target_row;
                     const char *l = buffer_line(&g_editor.buffer, target_row);
-                    int target_vcol = click_x >= 2 ? (click_x - 2) : 0;
+                    int offset_x = (g_editor.view_mode == VIEW_SPLIT) ? (split_col + 1) : 0;
+                    int target_vcol = click_x >= offset_x + 2 ? (click_x - offset_x - 2) : 0;
                     g_editor.cursor_col = utf8_col_to_byte(l, target_vcol);
                     g_editor.target_visual_col = utf8_byte_to_col(l, g_editor.cursor_col);
+
+                    if (is_click_or_release && !editor_has_selection(&g_editor)) {
+                        char link_target[PATH_MAX];
+                        char anchor[128];
+                        if (editor_extract_link_at_cursor(&g_editor, link_target, sizeof(link_target), anchor, sizeof(anchor))) {
+                            handle_follow_link();
+                        }
+                    }
                 }
             }
         } else {
@@ -297,10 +310,15 @@ static void handle_mouse_event(void) {
         editor_move_down(&g_editor);
         editor_move_down(&g_editor);
     } else if (mevent.bstate & BUTTON1_PRESSED) {
-        set_cursor_from_click(mevent.x, mevent.y);
-        editor_set_mark(&g_editor);
+        set_cursor_from_click(mevent.x, mevent.y, false);
+        int split_col = g_editor.screen_cols / 2;
+        bool in_preview = (g_editor.view_mode == VIEW_PREVIEW) ||
+                          (g_editor.view_mode == VIEW_SPLIT && mevent.x > split_col);
+        if (!in_preview) {
+            editor_set_mark(&g_editor);
+        }
     } else if (mevent.bstate & (BUTTON1_RELEASED | BUTTON1_CLICKED)) {
-        set_cursor_from_click(mevent.x, mevent.y);
+        set_cursor_from_click(mevent.x, mevent.y, true);
         if (editor_has_selection(&g_editor)) {
             editor_copy(&g_editor);
         }
@@ -312,7 +330,7 @@ static void handle_mouse_event(void) {
         | BUTTON3_PRESSED
 #endif
     )) {
-        set_cursor_from_click(mevent.x, mevent.y);
+        set_cursor_from_click(mevent.x, mevent.y, false);
         editor_paste(&g_editor);
     }
 }
@@ -423,6 +441,20 @@ static void handle_meta_key(char *search_buf, size_t search_cap, bool *last_sear
         case '-':
             handle_navigate_back();
             break;
+        case 'd':
+        case 'D':
+            ui_show_document_stats(&g_editor);
+            break;
+        case ']':
+            editor_jump_matching_pair(&g_editor);
+            break;
+        case 'k':
+        case 'K':
+            editor_toggle_keybindings(&g_editor);
+            g_editor.rendered_dirty = true;
+            clearok(stdscr, TRUE);
+            erase();
+            break;
         default:
             break;
     }
@@ -523,12 +555,19 @@ static void handle_key_event(int ch, char *search_buf, size_t search_cap,
         ui_export_menu(&g_editor);
     } else if (ch == KEY_F(6)) {
         handle_insert_file_link();
-    } else if (ch == KEY_F(7) || ch == CTRL_KEY(']')) {
+    } else if (ch == KEY_F(7)) {
         handle_follow_link();
+    } else if (ch == CTRL_KEY(']')) {
+        editor_jump_matching_pair(&g_editor);
     } else if (ch == KEY_F(8)) {
         handle_navigate_back();
     } else if (ch == KEY_F(9)) {
         ui_show_outline(&g_editor);
+    } else if (ch == KEY_F(10) || ch == KEY_F(12)) {
+        editor_toggle_keybindings(&g_editor);
+        g_editor.rendered_dirty = true;
+        clearok(stdscr, TRUE);
+        erase();
     } else if (ch == KEY_LEFT || ch == CTRL_KEY('b')) {
         editor_move_left(&g_editor);
     } else if (ch == KEY_RIGHT || ch == CTRL_KEY('f')) {
@@ -643,7 +682,9 @@ int main(int argc, char *argv[]) {
         if (cfg.view_mode >= 0 && cfg.view_mode <= 2) {
             g_editor.view_mode = (ViewMode)cfg.view_mode;
         }
-    } else if (has_cli_wrap) {
+        g_editor.show_keybindings = cfg.show_keybindings;
+    }
+    if (has_cli_wrap) {
         editor_set_wrap_col(&g_editor, cli_wrap_col);
     }
 

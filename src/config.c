@@ -19,6 +19,7 @@ void config_init_defaults(MdeConfig *cfg) {
     cfg->tab_size = 2;
     cfg->make_backup = true;
     cfg->view_mode = 0;
+    cfg->show_keybindings = true;
 }
 
 /**
@@ -103,6 +104,8 @@ bool config_load(MdeConfig *cfg) {
             cfg->make_backup = (strcmp(val, "true") == 0 || strcmp(val, "1") == 0);
         } else if (strcmp(key, "view_mode") == 0) {
             cfg->view_mode = atoi(val);
+        } else if (strcmp(key, "show_keybindings") == 0) {
+            cfg->show_keybindings = (strcmp(val, "true") == 0 || strcmp(val, "1") == 0);
         }
     }
 
@@ -124,6 +127,7 @@ bool config_save(const MdeConfig *cfg) {
     fprintf(f, "tab_size=%d\n", cfg->tab_size);
     fprintf(f, "make_backup=%s\n", cfg->make_backup ? "true" : "false");
     fprintf(f, "view_mode=%d\n", cfg->view_mode);
+    fprintf(f, "show_keybindings=%s\n", cfg->show_keybindings ? "true" : "false");
 
     fclose(f);
     return true;

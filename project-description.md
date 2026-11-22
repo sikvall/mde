@@ -5,7 +5,7 @@
 > recent upgrades, git history, and the remaining roadmap items.
 >
 > Snapshot basis: **v0.1.1** (2026-11-22), pure C11 codebase compiling warning-free with `gcc` and `ncursesw`.
-> Test runner passes **418 / 418 tests (100.0%)**.
+> Test runner passes **462 / 462 tests (100.0%)**.
 
 ---
 
@@ -88,11 +88,12 @@ mde/
 │   ├── ui_dialog_help.c   # Modal two-tab keyboard shortcut and Markdown help overlay
 │   ├── ui_dialog_export.c # Modal interactive export format selector menu
 │   ├── ui_dialog_outline.c # Modal document table-of-contents outline navigator
+│   ├── ui_dialog_stats.c  # Modal document and selection statistics dialog
 │   ├── undo.h / .c        # Multi-level undo/redo action stacks with group IDs
 │   ├── utf8.h / .c        # Multi-byte UTF-8 length, boundary, and wcwidth visual column math
 │   └── main.c             # Event loop, CLI parsing, signal handling, key & mouse dispatch
 └── tests/
-    └── test_runner.c      # Comprehensive C11 unit test suite (418 assertions)
+    └── test_runner.c      # Comprehensive C11 unit test suite (462 assertions)
 ```
 
 ---
@@ -150,6 +151,8 @@ mde/
 7. **Responsive Preview Soft-Wrapping:** Preview dynamically follows window width, wrapping long lines cleanly with proper continuation margins for lists and quotes.
 8. **Markdown Extensions:** Added footnotes (`[^ref]` and `[^ref]:`), nested lists with bullet cycling (`•`, `◦`, `▪`), reference links (`[text][ref]` and definitions `[ref]: url`), bare URL autolinking, and table column alignment (`:---`, `:---:`, `---:`).
 9. **Doxygen Documentation:** Fully documented all public and internal interfaces across `src/*.h` and `src/*.c` adhering to standard Doxygen format.
+10. **Interactive UX & Navigation (6.5):** Dual-pane mouse routing in `VIEW_SPLIT`, live document & selection statistics popover (`Alt+D`), multi-line bracket and delimiter pair matching (`Ctrl+]` / `Alt+]`).
+11. **Expanded Shortcut Hints & F-Key Toggle:** 4th row of bottom shortcut hints (`F9 Outline`, `M-D Stats`, `^] Jump`, `F7 Follow`, `M-J Reflow`, `F10 Hints`) and dedicated toggle key (`F10` / `F12` / `Alt+K`) to hide/show the bottom bar and maximize editing space.
 
 ---
 
@@ -205,13 +208,17 @@ The following tasks from your requirements and project roadmap are identified fo
   - All 418 unit tests in `bin/test_runner` passing (100.0%).
 
 ### 6.5 Interactive UX & Dual-Pane Navigation Enhancements
-- [ ] **Dual-Pane Mouse Click Routing (`VIEW_SPLIT`):**
+- [x] **Dual-Pane Mouse Click Routing (`VIEW_SPLIT`):**
   - When in split view mode, detect whether a mouse click occurred in the left editor pane or the right preview pane (`click_x > split_col`).
   - Route clicks in the preview pane to synchronize editor cursor to the corresponding source line, and allow direct single-click following of Markdown hyperlinks.
-- [ ] **Live Document & Selection Statistics Modal (`Alt+D` / `M-D`):**
+- [x] **Live Document & Selection Statistics Modal (`Alt+D` / `M-D`):**
   - Display an interactive popover showing comprehensive document metrics: line count, word count, total characters, characters excluding whitespace, active selection word/character counts, and estimated reading time.
-- [ ] **Bracket & Delimiter Pair Matching Navigation (`Ctrl+]` / `Alt+P`):**
-  - Quickly jump the cursor between matching pairs of parentheses `()`, brackets `[]`, braces `{}`, and Markdown formatting delimiters (`**`, `*`, `~~`, `` ` ``).
+- [x] **Bracket & Delimiter Pair Matching Navigation (`Ctrl+]` / `Alt+]`):**
+  - Quickly jump the cursor between matching pairs of parentheses `()`, brackets `[]`, braces `{}`, angle brackets `<>`, and Markdown formatting delimiters (`**`, `~~`, `` ` ``, ```` ``` ````, `*`/`_`).
+- [x] **Expanded 4th Shortcut Hint Row & F-Key Toggle (`F10` / `F12` / `Alt+K`):**
+  - Added a 4th row of Nano-style bottom shortcut hints (`F9 Outline`, `M-D Stats`, `^] Jump`, `F7 Follow`, `M-J Reflow`, `F10 Hints`).
+  - Added dedicated function key toggle (`F10` / `F12`) to instantly hide/show bottom shortcut hints and maximize editable screen area.
+  - Added persistent configuration setting `show_keybindings = true/false` in `~/.config/mde/config`.
 
 ### 6.6 Markdown Authoring, Typography & Diagnostic Tools
 - [ ] **Link Integrity & Dead Link Validator (`F9` / Alt+L):**
@@ -236,6 +243,58 @@ The following tasks from your requirements and project roadmap are identified fo
   - Add a dedicated make target compiling the test runner with `-fsanitize=address,undefined -g` to verify absence of memory leaks, buffer overflows, or undefined behavior.
 - [ ] **Automated Fuzz Testing Harness (`make fuzz`):**
   - Add a lightweight fuzz test target feeding randomized and degenerate byte sequences into `md_parse_line()` and UTF-8 utilities to guarantee crash immunity against pathological input.
+
+### 6.9 Color Themes & Interactive Theme Customization
+- [ ] **Expanded Built-in Color Themes:**
+  - Introduce a curated collection of built-in dark and light themes (e.g., Default/Monokai, Solarized Dark, Solarized Light, Nord, Dracula, Gruvbox, and High-Contrast / Accessible).
+  - Add interactive theme selection menu and persistent configuration option (`theme = <name>` in `~/.config/mde/config`).
+  - Graceful palette adaptation between 256-color and standard 16-color terminal modes.
+- [ ] **Interactive User Theme Editor:**
+  - Interactive visual theme editor modal allowing users to inspect and customize color assignments and text attributes (bold, dim, underline, reverse) for all UI chrome (status bar, ruler, gutter, borders) and Markdown syntax elements (H1–H6, bold, italic, code, links, blockquotes).
+  - Live side-by-side Markdown snippet preview showing instant visual feedback while editing color palettes.
+  - Export and import custom user themes to `~/.config/mde/themes/<theme_name>.conf`.
+
+---
+
+## 7. Recent Session Decisions & Conversation Highlights (2026-11-22)
+
+### 7.1 Interactive UX & Navigation (Roadmap 6.5) Implementation Details
+- **Dual-Pane Mouse Click Routing (`VIEW_SPLIT`):**
+  - Clicks with `click_x > split_col` in split view are routed directly to the preview pane.
+  - The clicked preview visual row is converted to the corresponding buffer line via `g_editor.rendered_doc.lines[rend_idx].source_row`.
+  - Single-clicking directly on a Markdown link in the preview pane invokes `handle_follow_link()`, providing instant hypertext navigation without requiring keyboard cursor repositioning.
+- **Live Document & Selection Statistics Modal (`Alt+D` / `M-D`):**
+  - Implemented in `src/ui_dialog_stats.c` and declared in `src/ui.h`.
+  - Computes buffer totals (lines, word count, character count with and without whitespace, estimated reading time at 200 words/min) as well as active selection counts if a mark is set.
+- **Bracket & Delimiter Pair Matching Navigation (`Ctrl+]` / `Alt+]`):**
+  - Implemented in `src/editor.c` (`editor_jump_matching_pair`).
+  - Supports multi-line nested jumping for standard brackets `()`, `[]`, `{}`, `<>`, as well as Markdown formatting spans (`**`, `~~`, inline code `` ` ``, code fences ```` ``` ````, and italic `*`/`_`).
+
+### 7.2 Bottom Shortcut Hint Bar Expansion & Toggle Controls
+- **4th Shortcut Hint Row:**
+  - Expanded `ShortcutHint` rendering in `src/ui.c` to 4 rows (`s_hints_r1` through `s_hints_r4`) displaying 24 keybindings in total.
+  - Row 4 adds: `F9 Outline`, `M-D Stats`, `^] Jump`, `F7 Follow`, `M-J Reflow`, and `F10 Hints`.
+  - Responsive thresholds in `ui_get_shortcut_hint_rows()`: 4 rows (≥ 24 screen lines), 3 rows (≥ 18 lines), 2 rows (≥ 12 lines), 1 row (≥ 6 lines), 0 rows (< 6 lines).
+- **Function Key Toggle (`F10` / `F12` / `Alt+K`):**
+  - Implemented `editor_toggle_keybindings(Editor *ed)` to let users hide/show the bottom shortcut bar at will.
+  - When hidden, the status bar moves to the bottom screen row (`rows - 1`) and the editor/preview panes expand to occupy the entire terminal height, gaining 4 full rows of editable screen area.
+  - Mouse coordinate boundary checks dynamically adjust `text_max_y` when hints are hidden.
+  - User preference persists via `show_keybindings = true/false` in `~/.config/mde/config`.
+
+### 7.3 Keybindings Inventory & Architecture Audit
+- **Bottom Field Coverage:** 24 keybindings are surfaced on the bottom screen badges.
+- **Non-Surfaced Keybindings (24 distinct actions):**
+  - *Markdown & Tool Actions (7):* `F6 / Alt+H` (Insert file link), `F8 / Alt+-` (Link history back), `F4 / Alt+L` (Wrap column), `Ctrl+\ / Alt+R` (Search & Replace), `F3 / Alt+W` (Repeat search forward), `Alt+Q` (Repeat search backward), `Ctrl+Q` (Search backward prompt).
+  - *Document & Line Navigation (7):* `Ctrl+A / Home`, `Ctrl+E / End`, `Ctrl+← / Ctrl+→` (word jump), `Ctrl+Y / PgUp`, `Ctrl+V / PgDn`, `Alt+\` (doc start), `Alt+/` (doc end).
+  - *Editing & Formatting (7):* `Tab / Alt+}` (Indent), `Shift+Tab / Alt+{` (Unindent), `Enter` (Smart continuation for lists/tasks/quotes), `Ins` (Insert/Overwrite cursor toggle), `Esc` (Clear selection mark / Cancel dialog), `Ctrl+D / Del`, `Ctrl+L` (Redraw screen).
+  - *Alternative Aliases (10):* `F1` (`^G`), `Alt+P` (`F2`), `Alt+X` (`F5`), `Alt+O` (`F7`), `Alt+T` (`F9`), `Alt+G` (`^/`), `Alt+]` (`^]`), `F12 / Alt+K` (`F10`), `Ctrl+Space / Ctrl+6` (`Alt+A`).
+
+### 7.4 Verification & Quality Assurance
+- **Full Test Suite:** 462 / 462 assertions passing (100.0%) in `bin/test_runner`.
+- **Compiler Compliance:** Compiles warning-free with `gcc -std=c11 -Wall -Wextra -pedantic -Werror`.
+- **Documentation Parity:** Kept in sync across `README.md`, `CHANGELOG.md`, `man/mde.1`, `scripts/generate_keybindings.py`, `ui_dialog_help.c`, and `project-description.md`.
+
+
 
 
 
