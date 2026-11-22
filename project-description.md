@@ -320,6 +320,89 @@ The following tasks from your requirements and project roadmap are identified fo
   - **Jump matching delimiter:** Bound `Alt+M` (`M-M` for Match) and `F11` (alongside `Ctrl+]` / `Alt+]`). Updated bottom badge from `^]` to `M-M Jump` so international users (where `]` requires AltGr) have an easily accessible single-layer shortcut.
   - **Go to Line:** Updated bottom badge from `^/` to `M-G Go Line` (GNU Nano standard `M-G` which does not require Shift/AltGr). Also bound `Alt+:` and added CSI escape sequence parsers for terminal `Ctrl+/`.
 
+### 7.7 Showcase Examples Organization (`examples/` Directory)
+- **Directory Migration:**
+  - Moved root `demo.md` to `examples/demo.md`.
+  - Updated relative hypertext links (`../README.md`, `../LICENSE.md`) and added cross-reference to `advanced.md`.
+- **Added `examples/advanced.md`:**
+  - Secondary showcase document demonstrating multi-file authoring, relative chapter jumping, link history back-navigation (`F8` / `Alt+-`), and recursive linked export bundling (`F5` / `Alt+X`).
+- **Updated Project Documentation:**
+  - Updated paths and directory trees in `README.md`, `project-description.md`, and `CHANGELOG.md`.
+
+---
+
+## 8. AI Developer Handover & Continuation Guide
+
+> **Notice for any AI assistant or developer picking up this codebase:**
+> Read this section first when resuming development on `mde`.
+
+### 8.1 Repository & Current Snapshot
+- **Git Branch:** `main` (commit `e694d4d`).
+- **Working Tree:** Clean, no uncommitted changes or untracked temporary files.
+- **Test Suite Status:** **490 / 490 assertions passing (100.0%)** in `bin/test_runner`.
+- **Compiler Compliance:** Compiles with zero warnings on `gcc -std=c11 -Wall -Wextra -pedantic -Werror`.
+- **Primary Headers:**
+  - `src/editor.h`: Editor structure and buffer operations.
+  - `src/markdown.h`: Lexer, AST spans, inline and block parsers.
+  - `src/renderer.h`: Formatted dual-pane preview renderer.
+  - `src/theme.h`: Terminal color themes and attributes.
+  - `src/ui.h` & `src/ui_internal.h`: Screen layout, status bar, and modular dialogs.
+  - `src/config.h`: Persistent configuration in `~/.config/mde/config` (or `$XDG_CONFIG_HOME`).
+
+### 8.2 Build & Verification Workflow
+Always run the full build and test suite after making edits:
+```bash
+make clean && make && make test
+```
+- Ensure zero warnings emitted under `-Wall -Wextra -pedantic -Werror`.
+- Ensure 100% test pass rate across all suites.
+- If adding new features, add corresponding unit tests in `tests/test_runner.c`.
+
+### 8.3 Recommended Next Tasks (in Priority Order)
+
+#### Task 1: Link Integrity & Dead Link Validator (Roadmap 6.6)
+- **Objective:** Provide an in-editor diagnostic scan of all links in the document.
+- **Shortcut:** `F9` (or `Alt+L` / menu command).
+- **Behavior:**
+  - Scan all inline links `[text](target)` and reference links `[ref]: target`.
+  - For local targets (`file.md`, `../doc.md`), check disk existence via `stat()`.
+  - For `#anchor` fragments, verify that a corresponding heading slug exists in the target buffer.
+  - Display broken/missing links in a navigable modal popup listing line numbers and errors.
+  - Pressing `Enter` on an entry jumps the cursor directly to the offending link.
+
+#### Task 2: Interactive Table of Contents (`[TOC]`) Generator (Roadmap 6.6)
+- **Objective:** Automatically insert or refresh an indented list of document headings.
+- **Behavior:**
+  - Scan the active buffer for H1–H6 headings.
+  - Generate an indented Markdown list with anchor links: `  - [Heading Title](#heading-slug)`.
+  - If cursor is placed on a line with `[TOC]`, replace it with the generated hierarchy.
+  - If document contains `<!-- toc -->...<!-- /toc -->`, update the contents between the delimiters in-place without touching surrounding text.
+
+#### Task 3: Color Themes & Interactive User Theme Editor (Roadmap 6.9)
+- **Objective:** Expand built-in themes and allow users to create/edit custom themes.
+- **Themes to add:** Solarized Dark, Solarized Light, Nord, Dracula, Gruvbox, High-Contrast.
+- **Theme Editor:**
+  - Modal dialogue inspecting and adjusting color pairs and text attributes (bold, dim, reverse).
+  - Side-by-side snippet preview showing instant visual feedback.
+  - Save custom themes to `~/.config/mde/themes/<theme_name>.conf`.
+
+#### Task 4: AddressSanitizer & UndefinedBehaviorSanitizer Target (Roadmap 6.8)
+- **Objective:** Add `make sanitize` target compiling with `-fsanitize=address,undefined -g`.
+- **Target:** Verify zero memory leaks, buffer overflows, or undefined behavior across all 490+ tests.
+
+### 8.4 Inviolable Quality Criteria & Project Constraints
+1. **Pure C11 Standard Library:** Do not introduce external library dependencies beyond `ncursesw`.
+2. **Warning-Free Compilation:** `-Wall -Wextra -pedantic -Werror` must pass cleanly at all times.
+3. **Commit Protocol:** Always propose git commit messages in the chat and wait for user's explicit confirmation before running `git commit`. Never commit unprompted.
+4. **License Safety:** Never quote or output verbatim MIT license text in thoughts or responses.
+5. **Documentation Synchronization:** Whenever keybindings, features, or CLI options change, synchronously update:
+   - `README.md`
+   - `man/mde.1`
+   - `CHANGELOG.md`
+   - `scripts/generate_keybindings.py`
+   - `src/ui_dialog_help.c`
+   - `project-description.md`
+
 
 
 
