@@ -6,5 +6,7 @@ obj/
 *.log
 *.d
 *~
-#*#
+\#*#
 local
+*.deb
+dst

@@ -153,8 +153,7 @@ static FileItem *load_directory_items(const char *dir_path, size_t *out_count) {
             items = new_items;
         }
 
-        strncpy(items[*out_count].name, ent->d_name, sizeof(items[*out_count].name) - 1);
-        items[*out_count].name[sizeof(items[*out_count].name) - 1] = '\0';
+        snprintf(items[*out_count].name, sizeof(items[*out_count].name), "%s", ent->d_name);
         items[*out_count].is_dir = is_dir;
         items[*out_count].size = size;
         (*out_count)++;
@@ -603,8 +602,7 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
                 if (count > 0 && selected_idx < (int)count) {
                     if (items[selected_idx].is_dir) {
                         char sub[256];
-                        strncpy(sub, items[selected_idx].name, sizeof(sub) - 1);
-                        sub[sizeof(sub) - 1] = '\0';
+                        snprintf(sub, sizeof(sub), "%s", items[selected_idx].name);
                         free(items);
                         navigate_into_sub(current_dir, sizeof(current_dir), sub);
                         items = load_directory_items(current_dir, &count);
@@ -619,8 +617,7 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
                             break;
                         } else {
                             // In Save As mode, selecting a file updates input_buf and focuses input
-                            strncpy(input_buf, items[selected_idx].name, sizeof(input_buf) - 1);
-                            input_buf[sizeof(input_buf) - 1] = '\0';
+                            snprintf(input_buf, sizeof(input_buf), "%s", items[selected_idx].name);
                             focus = FOCUS_INPUT;
                         }
                     }

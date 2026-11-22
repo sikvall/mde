@@ -37,7 +37,7 @@ MD2EPUB_OBJS := $(OBJ_DIR)/md2epub_main.o $(OBJ_DIR)/export_epub.o $(OBJ_DIR)/ex
 # Filter out main files when linking test runner
 LIB_OBJS := $(filter-out $(OBJ_DIR)/main.o $(OBJ_DIR)/md2epub_main.o, $(OBJS))
 
-.PHONY: all clean test install deb
+.PHONY: all clean test sanitize install deb
 
 all: $(TARGET) $(MD2EPUB_TARGET)
 
@@ -45,7 +45,7 @@ $(TARGET): $(MDE_OBJS) | $(BIN_DIR)
 	$(CC) $(MDE_OBJS) $(LDFLAGS) -o $@
 
 $(MD2EPUB_TARGET): $(MD2EPUB_OBJS) | $(BIN_DIR)
-	$(CC) $(MD2EPUB_OBJS) -lzip -o $@
+	$(CC) $(MD2EPUB_OBJS) $(LDFLAGS) -o $@
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -53,9 +53,12 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
 $(BIN_DIR) $(OBJ_DIR):
 	mkdir -p $@
 
-test: $(LIB_OBJS) tests/test_runner.c | $(BIN_DIR)
+test: $(MD2EPUB_TARGET) $(LIB_OBJS) tests/test_runner.c | $(BIN_DIR)
 	$(CC) $(CFLAGS) tests/test_runner.c $(LIB_OBJS) $(LDFLAGS) -o $(BIN_DIR)/test_runner
 	./$(BIN_DIR)/test_runner
+
+sanitize: clean
+	$(MAKE) all test CFLAGS="$(CFLAGS) -fsanitize=address,undefined -g" LDFLAGS="$(LDFLAGS) -fsanitize=address,undefined"
 
 clean:
 	rm -rf $(OBJ_DIR) $(BIN_DIR)

@@ -273,8 +273,9 @@ The following tasks from your requirements and project roadmap are identified fo
   - Expand `ui_dialog_export.c` and master export dispatcher to include PDF as an export target, delegating to Pandoc with `pdflatex`, `xelatex`, or `weasyprint` engines.
 
 ### 6.8 Quality Assurance, Memory Safety & Fuzzing
-- [ ] **AddressSanitizer & UndefinedBehaviorSanitizer Target (`make sanitize`):**
-  - Add a dedicated make target compiling the test runner with `-fsanitize=address,undefined -g` to verify absence of memory leaks, buffer overflows, or undefined behavior.
+- [x] **AddressSanitizer & UndefinedBehaviorSanitizer Target (`make sanitize`):**
+  - Added dedicated make target compiling with `-fsanitize=address,undefined -g`.
+  - Verified zero memory leaks, buffer overflows, or undefined behavior across all 576 unit tests.
 - [ ] **Automated Fuzz Testing Harness (`make fuzz`):**
   - Add a lightweight fuzz test target feeding randomized and degenerate byte sequences into `md_parse_line()` and UTF-8 utilities to guarantee crash immunity against pathological input.
 
@@ -287,6 +288,20 @@ The following tasks from your requirements and project roadmap are identified fo
   - Interactive visual theme editor modal allowing users to inspect and customize color assignments and text attributes (bold, dim, underline, reverse) for all UI chrome (status bar, ruler, gutter, borders) and Markdown syntax elements (H1–H6, bold, italic, code, links, blockquotes).
   - Live side-by-side Markdown snippet preview showing instant visual feedback while editing color palettes.
   - Export and import custom user themes to `~/.config/mde/themes/<theme_name>.conf`.
+
+### 6.10 Audit Findings & Identified Hardening Opportunities
+- [x] **Gitignore Comment Escaping (`.gitignore`):**
+  - In gitignore syntax, `#` at column 0 is treated as a comment line. Escaped `#*#` to `\#*#` and added `*.deb` and `dst` so Emacs-style recovery files (`#filename#`) and package outputs are properly ignored.
+- [x] **String Fortification Warnings (`src/ui_dialog_file.c`):**
+  - Replaced `strncpy()` with bounded `snprintf()` for directory item names and user input buffers, eliminating compiler warnings under `-Wstringop-truncation` and fortified toolchains.
+- [ ] **YAML Front-Matter Special Character Quoting (`src/editor.c`):**
+  - In `editor_update_front_matter()`, sanitize fields containing internal quotation marks (`"`) or colons by escaping quotes (`\"`) or wrapping in single quotes to guarantee valid YAML syntax.
+- [ ] **UTF-8 Byte Order Mark (BOM) Ingestion (`src/export_epub.c`, `src/buffer.c`):**
+  - Windows editors frequently prepend a 3-byte BOM (`0xEF, 0xBB, 0xBF`). Update `buffer_load()` and `epub_parse_front_matter()` to skip leading BOM sequences so front matter `---` and H1 headings on line 0 are parsed correctly.
+- [ ] **Transliteration in Heading Slugs (`src/export.c`):**
+  - `slugify_heading()` currently drops non-ASCII characters via `isalnum()`, causing Swedish (`å`, `ä`, `ö`) or accented titles to produce empty or truncated anchor slugs. Add transliteration mapping and a fallback slug generator (`h-1`, `section-1`).
+- [ ] **EPUB 3 Landmark Navigation Elements (`src/export_epub.c`):**
+  - Add standard `<nav epub:type="landmarks">` in `nav.xhtml` identifying the cover page and body content for EPUB 3 accessibility standards.
 
 ---
 
@@ -399,12 +414,14 @@ The following tasks from your requirements and project roadmap are identified fo
 > Read this section first when resuming development on `mde`.
 
 ### 8.1 Repository & Current Snapshot
-- **Git Branch:** `native-epub`.
+- **Git Branch:** `main`.
 - **Working Tree:** Clean, fully tested and verified.
-- **Test Suite Status:** **576 / 576 assertions passing (100.0%)** in `bin/test_runner`.
+- **Test Suite Status:** **576 / 576 assertions passing (100.0%)** in `bin/test_runner` (verified with AddressSanitizer and UndefinedBehaviorSanitizer via `make sanitize`).
 - **Compiler Compliance:** Compiles with zero warnings on `gcc -std=c11 -Wall -Wextra -pedantic -Werror`.
 - **Primary Headers:**
   - `src/editor.h`: Editor structure and buffer operations.
+  - `src/epub.h`: Native EPUB 2/3 builder interface and options.
+  - `src/export.h` & `src/export_internal.h`: Master export dispatcher and document structures.
   - `src/markdown.h`: Lexer, AST spans, inline and block parsers.
   - `src/renderer.h`: Formatted dual-pane preview renderer.
   - `src/theme.h`: Terminal color themes and attributes.
@@ -415,6 +432,8 @@ The following tasks from your requirements and project roadmap are identified fo
 Always run the full build and test suite after making edits:
 ```bash
 make clean && make && make test
+make sanitize        # Build and execute test suite under ASan and UBSan
+./scripts/verify_no_pandoc.sh  # Verify all exports succeed without pandoc
 ```
 - Ensure zero warnings emitted under `-Wall -Wextra -pedantic -Werror`.
 - Ensure 100% test pass rate across all suites.
@@ -448,11 +467,11 @@ make clean && make && make test
   - Side-by-side snippet preview showing instant visual feedback.
   - Save custom themes to `~/.config/mde/themes/<theme_name>.conf`.
 
-#### Task 4: AddressSanitizer & UndefinedBehaviorSanitizer Target (Roadmap 6.8)
-- **Objective:** Add `make sanitize` target compiling with
-    `-fsanitize=address,undefined -g`.
-- **Target:** Verify zero memory leaks, buffer overflows, or undefined
-    behavior across all 490+ tests.
+#### Task 4: YAML Front-Matter Quoting & UTF-8 BOM Ingestion (Roadmap 6.10)
+- **Objective:** Prevent malformed front matter when fields contain embedded quotes, and handle UTF-8 files saved with a Byte Order Mark.
+- **Behavior:**
+  - In `editor_update_front_matter()`, escape embedded double quotes (`\"`) or sanitize strings to preserve YAML validity.
+  - In `buffer_load()` and `epub_parse_front_matter()`, detect and skip a leading UTF-8 BOM (`0xEF, 0xBB, 0xBF`) on line 0 so opening `---` and H1 headings match reliably.
 
 ### 8.4 Inviolable Quality Criteria & Project Constraints
 1. **Pure C11 Standard Library:** Do not introduce external library
