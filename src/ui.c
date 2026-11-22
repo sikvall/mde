@@ -156,6 +156,7 @@ static void draw_editor_pane(Editor *ed, int start_col, int width, int start_row
     bool in_code_block = false;
     char code_lang[32] = {0};
     for (size_t r = 0; r < ed->scroll_row; ++r) {
+        if (r >= total_lines) break;
         const char *l = buffer_line(&ed->buffer, r);
         size_t len = buffer_line_len(&ed->buffer, r);
         MdParsedLine pl;
@@ -303,15 +304,30 @@ static void draw_preview_pane(Editor *ed, int start_col, int width, int start_ro
     if (text_height <= 0) return;
     size_t total_rendered = ed->rendered_doc.count;
 
+    size_t cur_rend_idx = (size_t)-1;
+    int cur_vcol = -1;
+    if (ed->view_mode == VIEW_SPLIT && total_rendered > 0 && ed->cursor_row < buffer_line_count(&ed->buffer)) {
+        cur_rend_idx = rendered_doc_find_line(&ed->rendered_doc, ed->cursor_row);
+        cur_vcol = renderer_get_cursor_vcol(&ed->buffer, &ed->rendered_doc, ed->cursor_row, ed->cursor_col);
+    }
+
     for (int y = 0; y < text_height; ++y) {
         size_t rend_idx = ed->preview_scroll_row + (size_t)y;
         int screen_y = text_start_y + y;
         int render_x = start_col;
+        bool is_cursor_line = (rend_idx == cur_rend_idx);
 
-        // Left margin padding (respecting narrow panes)
+        // Left margin padding: in VIEW_SPLIT, highlight active cursor line with pointer marker
         int pad = width >= 2 ? 2 : width;
-        for (int p = 0; p < pad; ++p) {
-            mvaddch(screen_y, render_x++, ' ');
+        if (is_cursor_line && pad >= 2) {
+            attron(COLOR_PAIR(CP_GUTTER_MARKER) | A_BOLD);
+            mvaddstr(screen_y, render_x, "▶ ");
+            attroff(COLOR_PAIR(CP_GUTTER_MARKER) | A_BOLD);
+            render_x += 2;
+        } else {
+            for (int p = 0; p < pad; ++p) {
+                mvaddch(screen_y, render_x++, ' ');
+            }
         }
 
         if (rend_idx < total_rendered) {
@@ -328,7 +344,18 @@ static void draw_preview_pane(Editor *ed, int start_col, int width, int start_ro
                     int ch_w = utf8_visual_width_range(rc->text, byte_pos, byte_pos + ch_len);
 
                     if (render_x + ch_w <= start_col + width) {
-                        mvaddnstr(screen_y, render_x, rc->text + byte_pos, ch_len);
+                        int current_rel_col = render_x - (start_col + pad);
+                        bool is_cursor_cell = (is_cursor_line && cur_vcol >= 0 &&
+                                               current_rel_col <= cur_vcol &&
+                                               current_rel_col + ch_w > cur_vcol);
+                        if (is_cursor_cell) {
+                            attron(A_REVERSE | A_BOLD);
+                            mvaddnstr(screen_y, render_x, rc->text + byte_pos, ch_len);
+                            attroff(A_REVERSE | A_BOLD);
+                            attrset(rc->attr);
+                        } else {
+                            mvaddnstr(screen_y, render_x, rc->text + byte_pos, ch_len);
+                        }
                         render_x += ch_w;
                     }
                     byte_pos += ch_len;
@@ -337,9 +364,16 @@ static void draw_preview_pane(Editor *ed, int start_col, int width, int start_ro
             attrset(COLOR_PAIR(CP_DEFAULT));
         }
 
-        // Clear rest of line in preview pane
+        // Clear rest of line in preview pane; if cursor is at or beyond end of line, show cursor badge
+        int cur_screen_x = (is_cursor_line && cur_vcol >= 0) ? (start_col + pad + cur_vcol) : -1;
         while (render_x < start_col + width) {
-            mvaddch(screen_y, render_x++, ' ');
+            if (render_x == cur_screen_x) {
+                attron(A_REVERSE | A_BOLD | COLOR_PAIR(CP_STATUS_BAR_ACCENT));
+                mvaddch(screen_y, render_x++, ' ');
+                attroff(A_REVERSE | A_BOLD | COLOR_PAIR(CP_STATUS_BAR_ACCENT));
+            } else {
+                mvaddch(screen_y, render_x++, ' ');
+            }
         }
     }
 }
@@ -451,7 +485,7 @@ static const ShortcutHint s_hints_r2[] = {
     { "^R", "Read File" },
     { "^S", "Save" },
     { "^U", "Paste" },
-    { "^/", "Go Line" },
+    { "M-G", "Go Line" },
     { "F2", "View" }
 };
 
@@ -467,7 +501,7 @@ static const ShortcutHint s_hints_r3[] = {
 static const ShortcutHint s_hints_r4[] = {
     { "F9", "Outline" },
     { "M-D", "Stats" },
-    { "^]", "Jump" },
+    { "M-M", "Jump" },
     { "F7", "Follow" },
     { "M-J", "Reflow" },
     { "F10", "Hints" }

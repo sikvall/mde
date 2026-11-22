@@ -24,6 +24,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - 4th bottom shortcut hint row with 6 additional keybindings.
 - Function key toggle (`F10` / `F12` / `Alt+K`) to hide or show bottom shortcut hints to maximize editor screen area.
 - Persistent `show_keybindings` configuration option in `~/.config/mde/config`.
+- `Ctrl+Home` (`C-Home`) and `Ctrl+End` (`C-End`) shortcuts to navigate directly to the top (line 0, col 0) and bottom (last line, end of text) of the document.
+- Synchronized preview cursor indicator (`▶ ` margin pointer and cell highlight) in `VIEW_SPLIT` tracking editor cursor position.
+- Split view preview overscroll support allowing navigation beyond the last line of the code pane until the preview pane reaches the bottom.
+- Automatic persistence of `show_keybindings` in user configuration when toggled via `F10` / `F12` / `Alt+K`.
+- Bi-directional footnote hypertext navigation via `Alt+O` / `F7` (jumping between `[^note]` and `[^note]:`, jumping to first reference if multiple exist, with history back on `F8` / `Alt+-`).
+- Ergonomic keybindings for Jump (`Alt+M` / `M-M`, `F11`) and Go to Line (`Alt+G` / `M-G`, `Alt+:`), with updated bottom badges for accessibility across international keyboard layouts.
 
 ## [0.1.0] - 2026-11-21
 

@@ -13,6 +13,7 @@
 #include <locale.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <limits.h>
 
 #include "../src/version.h"
 #include "../src/utf8.h"
@@ -23,6 +24,7 @@
 #include "../src/editor.h"
 #include "../src/export.h"
 #include "../src/ui.h"
+#include "../src/config.h"
 
 static int g_tests_run = 0;
 static int g_tests_passed = 0;
@@ -1786,6 +1788,166 @@ static void test_interactive_ux_and_navigation(void) {
     editor_free(&ed);
 }
 
+/** @brief Verify C-Home / C-End navigation and split view overscroll & preview sync. */
+static void test_doc_navigation_and_preview_sync(void) {
+    printf("--- Testing Doc Navigation & Split Preview Sync ---\n");
+
+    Editor ed;
+    editor_init(&ed, NULL);
+
+    buffer_replace_line(&ed.buffer, 0, "# Header", 8, 0);
+    buffer_split_line(&ed.buffer, 0, 8, 0);
+    buffer_replace_line(&ed.buffer, 1, "First paragraph text with extra words that soft wrap onto multiple lines in preview.", 85, 0);
+    buffer_split_line(&ed.buffer, 1, 85, 0);
+    buffer_replace_line(&ed.buffer, 2, "Second paragraph line.", 22, 0);
+    buffer_split_line(&ed.buffer, 2, 22, 0);
+    buffer_replace_line(&ed.buffer, 3, "Third line here.", 16, 0);
+    buffer_split_line(&ed.buffer, 3, 16, 0);
+    buffer_replace_line(&ed.buffer, 4, "Final row of document.", 22, 0);
+
+    // C-Home (editor_move_doc_start) and C-End (editor_move_doc_end)
+    ed.cursor_row = 2; ed.cursor_col = 5;
+    editor_move_doc_end(&ed);
+    TEST_ASSERT(ed.cursor_row == 4 && ed.cursor_col == 22, "C-End jumps to last row and column");
+
+    editor_move_doc_start(&ed);
+    TEST_ASSERT(ed.cursor_row == 0 && ed.cursor_col == 0, "C-Home jumps to row 0, col 0");
+
+    // Split View Overscroll & Bottom Alignment
+    ed.view_mode = VIEW_SPLIT;
+    ed.screen_rows = 10;
+    ed.screen_cols = 80;
+    ed.preview_width = 25; // narrow preview causes long text to wrap into many lines
+    ed.editor_width = 40;
+
+    render_document(&ed.buffer, ed.preview_width, &ed.rendered_doc);
+    TEST_ASSERT(ed.rendered_doc.count > buffer_line_count(&ed.buffer), "Preview has more lines than code buffer due to wrapping/headers");
+
+    size_t preview_total = ed.rendered_doc.count;
+    int view_rows = 4; // small viewport to trigger scrolling
+    editor_update_scroll(&ed, view_rows);
+    TEST_ASSERT(ed.preview_scroll_row == 0, "Initial preview scroll is 0");
+
+    editor_move_doc_end(&ed);
+    editor_update_scroll(&ed, view_rows);
+    TEST_ASSERT(ed.cursor_row == 4, "Cursor at last row of buffer");
+
+    // Scroll down beyond last row until preview panel reaches bottom
+    size_t max_p_scroll = preview_total > (size_t)view_rows ? (preview_total - (size_t)view_rows) : 0;
+    for (int i = 0; i < 30; ++i) {
+        editor_move_down(&ed);
+        editor_update_scroll(&ed, view_rows);
+    }
+
+    TEST_ASSERT(ed.preview_scroll_row == max_p_scroll, "Preview panel reached the very bottom");
+    TEST_ASSERT(ed.scroll_row > 0, "Editor pane overscrolled beyond last row to allow bottom preview");
+
+    // Scroll back up
+    for (int i = 0; i < 30; ++i) {
+        editor_move_up(&ed);
+        editor_update_scroll(&ed, view_rows);
+    }
+    TEST_ASSERT(ed.scroll_row == 0, "Editor pane scrolled back to 0");
+    TEST_ASSERT(ed.preview_scroll_row == 0, "Preview pane scrolled back to 0");
+
+    editor_free(&ed);
+}
+
+static void test_footnote_navigation_and_config_persistence(void) {
+    printf("--- Testing Footnote Navigation & Config Persistence ---\n");
+
+    // Set isolated XDG_CONFIG_HOME for testing config persistence in sandbox
+    const char *old_xdg = getenv("XDG_CONFIG_HOME");
+    char orig_xdg[PATH_MAX] = {0};
+    if (old_xdg) {
+        strncpy(orig_xdg, old_xdg, sizeof(orig_xdg) - 1);
+    }
+    setenv("XDG_CONFIG_HOME", "/tmp/mde_test_config", 1);
+    unlink("/tmp/mde_test_config/mde/config");
+
+    Editor ed;
+    editor_init(&ed, NULL);
+
+    // 1. Config persistence of keybindings toggle
+    ed.show_keybindings = true;
+    editor_toggle_keybindings(&ed);
+    TEST_ASSERT(!ed.show_keybindings, "Keybindings toggled to hidden in editor");
+
+    MdeConfig loaded_cfg;
+    bool loaded = config_load(&loaded_cfg);
+    TEST_ASSERT(loaded, "Config file loaded successfully after toggle");
+    TEST_ASSERT(!loaded_cfg.show_keybindings, "Config file persisted show_keybindings=false");
+
+    editor_toggle_keybindings(&ed);
+    TEST_ASSERT(ed.show_keybindings, "Keybindings toggled back to shown in editor");
+    config_load(&loaded_cfg);
+    TEST_ASSERT(loaded_cfg.show_keybindings, "Config file persisted show_keybindings=true");
+
+    // Cleanup test config
+    unlink("/tmp/mde_test_config/mde/config");
+    rmdir("/tmp/mde_test_config/mde");
+    rmdir("/tmp/mde_test_config");
+    if (orig_xdg[0]) {
+        setenv("XDG_CONFIG_HOME", orig_xdg, 1);
+    } else {
+        unsetenv("XDG_CONFIG_HOME");
+    }
+
+    // 2. Footnote jumping (reference -> definition, and definition -> first reference)
+    buffer_replace_line(&ed.buffer, 0, "First paragraph with footnote [^note1] reference.", 48, 0);
+    buffer_split_line(&ed.buffer, 0, 48, 0);
+    buffer_replace_line(&ed.buffer, 1, "Second paragraph also citing [^note1] again.", 45, 0);
+    buffer_split_line(&ed.buffer, 1, 45, 0);
+    buffer_replace_line(&ed.buffer, 2, "Third paragraph citing another [^note2] footnote.", 49, 0);
+    buffer_split_line(&ed.buffer, 2, 49, 0);
+    buffer_replace_line(&ed.buffer, 3, "Middle body text without any footnotes.", 39, 0);
+    buffer_split_line(&ed.buffer, 3, 39, 0);
+    buffer_replace_line(&ed.buffer, 4, "[^note1]: Explanation for the first footnote.", 45, 0);
+    buffer_split_line(&ed.buffer, 4, 45, 0);
+    buffer_replace_line(&ed.buffer, 5, "[^note2]: Explanation for the second footnote.", 46, 0);
+
+    // Position on first reference [^note1] (starts at col 30)
+    ed.cursor_row = 0;
+    ed.cursor_col = 32;
+    TEST_ASSERT(editor_is_footnote_at_cursor(&ed), "Detected footnote ref [^note1] at cursor");
+
+    bool followed = editor_follow_link(&ed);
+    TEST_ASSERT(followed, "Follow link handled footnote jump");
+    TEST_ASSERT(ed.cursor_row == 4, "Jumped from reference [^note1] to definition on line 4");
+
+    // Cursor is now on definition line 4 ([^note1]: ...). Jumping from definition must jump to FIRST reference
+    TEST_ASSERT(editor_is_footnote_at_cursor(&ed), "Detected footnote definition [^note1]: on line 4");
+    followed = editor_follow_link(&ed);
+    TEST_ASSERT(followed, "Follow link handled jump from definition");
+    TEST_ASSERT(ed.cursor_row == 0, "Jumped from definition [^note1]: back to the FIRST reference on line 0");
+
+    // History back (F8 / Alt+-) returns to definition
+    bool backed = editor_navigate_back(&ed);
+    TEST_ASSERT(backed, "Navigate back succeeded within same file");
+    TEST_ASSERT(ed.cursor_row == 4, "Navigated back to definition on line 4");
+
+    // Jumping from second reference [^note1] on line 1 jumps to line 4
+    ed.cursor_row = 1;
+    ed.cursor_col = 31;
+    followed = editor_follow_link(&ed);
+    TEST_ASSERT(followed, "Follow link on second reference succeeded");
+    TEST_ASSERT(ed.cursor_row == 4, "Jumped from second reference to definition on line 4");
+
+    // Jumping from second footnote [^note2] on line 2 jumps to line 5
+    ed.cursor_row = 2;
+    ed.cursor_col = 33;
+    followed = editor_follow_link(&ed);
+    TEST_ASSERT(followed, "Follow link on [^note2] succeeded");
+    TEST_ASSERT(ed.cursor_row == 5, "Jumped from [^note2] to definition on line 5");
+
+    // Jumping back from [^note2]: jumps to line 2
+    followed = editor_follow_link(&ed);
+    TEST_ASSERT(followed, "Follow link on [^note2]: succeeded");
+    TEST_ASSERT(ed.cursor_row == 2, "Jumped from [^note2]: back to reference on line 2");
+
+    editor_free(&ed);
+}
+
 /** @brief Run all unit test suites and return 0 on 100% pass, 1 on any failure. */
 int main(void) {
     setlocale(LC_ALL, "");
@@ -1817,6 +1979,8 @@ int main(void) {
     test_shortcut_hints_and_dialog();
     test_markdown_extensions();
     test_interactive_ux_and_navigation();
+    test_doc_navigation_and_preview_sync();
+    test_footnote_navigation_and_config_persistence();
 
     printf("==========================================\n");
     printf("Test Results: %d / %d tests passed (%.1f%%)\n",

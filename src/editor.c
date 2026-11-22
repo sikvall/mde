@@ -7,6 +7,7 @@
 #define _POSIX_C_SOURCE 200809L
 #define _XOPEN_SOURCE 700
 #include "editor.h"
+#include "config.h"
 #include "utf8.h"
 #include "markdown.h"
 #include <stdio.h>
@@ -37,6 +38,7 @@ void editor_init(Editor *ed, const char *filename) {
     ed->scroll_row = 0;
     ed->scroll_col = 0;
     ed->preview_scroll_row = 0;
+    ed->view_rows = 24;
     ed->quit_requested = false;
     ed->backup_made = false;
     ed->search_active = false;
@@ -113,6 +115,14 @@ void editor_toggle_keybindings(Editor *ed) {
     } else {
         editor_set_status(ed, "Keybindings hidden (press F10 to show)");
     }
+
+    // Persist user preference to ~/.config/mde/config
+    MdeConfig cfg;
+    if (!config_load(&cfg)) {
+        config_init_defaults(&cfg);
+    }
+    cfg.show_keybindings = ed->show_keybindings;
+    config_save(&cfg);
 }
 
 /** @brief Rebuild the cached RenderedDoc preview whenever marked dirty. */
@@ -237,7 +247,14 @@ void editor_move_word_right(Editor *ed) {
 /** @brief Move cursor up one row while preserving preferred visual column. */
 void editor_move_up(Editor *ed) {
     if (!ed) return;
-    if (ed->cursor_row > 0) {
+    editor_touch_key(ed);
+    size_t total = buffer_line_count(&ed->buffer);
+    int vrows = ed->view_rows > 0 ? ed->view_rows : (ed->screen_rows > 3 ? (ed->screen_rows - 3) : 20);
+    size_t normal_max = total > (size_t)vrows ? (total - (size_t)vrows) : 0;
+
+    if (ed->view_mode == VIEW_SPLIT && ed->scroll_row > normal_max && ed->cursor_row + 1 >= total) {
+        ed->scroll_row--;
+    } else if (ed->cursor_row > 0) {
         ed->cursor_row--;
         const char *line = buffer_line(&ed->buffer, ed->cursor_row);
         ed->cursor_col = utf8_col_to_byte(line, ed->target_visual_col);
@@ -247,10 +264,19 @@ void editor_move_up(Editor *ed) {
 /** @brief Move cursor down one row while preserving preferred visual column. */
 void editor_move_down(Editor *ed) {
     if (!ed) return;
-    if (ed->cursor_row + 1 < buffer_line_count(&ed->buffer)) {
+    editor_touch_key(ed);
+    size_t total = buffer_line_count(&ed->buffer);
+    if (total == 0) return;
+    if (ed->cursor_row + 1 < total) {
         ed->cursor_row++;
         const char *line = buffer_line(&ed->buffer, ed->cursor_row);
         ed->cursor_col = utf8_col_to_byte(line, ed->target_visual_col);
+    } else if (ed->view_mode == VIEW_SPLIT && ed->rendered_doc.count > 0) {
+        int vrows = ed->view_rows > 0 ? ed->view_rows : (ed->screen_rows > 3 ? (ed->screen_rows - 3) : 20);
+        if (ed->rendered_doc.count > (size_t)vrows &&
+            ed->preview_scroll_row + (size_t)vrows < ed->rendered_doc.count) {
+            ed->scroll_row++;
+        }
     }
 }
 
@@ -274,9 +300,22 @@ void editor_move_end(Editor *ed) {
 /** @brief Move cursor up by one viewport page. */
 void editor_move_page_up(Editor *ed) {
     if (!ed) return;
+    editor_touch_key(ed);
     size_t step = ed->screen_rows > 3 ? (size_t)(ed->screen_rows - 3) : 10;
-    if (ed->cursor_row > step) ed->cursor_row -= step;
-    else ed->cursor_row = 0;
+    size_t total = buffer_line_count(&ed->buffer);
+    int view_rows = ed->screen_rows > 3 ? (ed->screen_rows - 3) : 20;
+    size_t normal_max = total > (size_t)view_rows ? (total - (size_t)view_rows) : 0;
+
+    if (ed->view_mode == VIEW_SPLIT && ed->scroll_row > normal_max) {
+        if (ed->scroll_row > normal_max + step) {
+            ed->scroll_row -= step;
+        } else {
+            ed->scroll_row = normal_max;
+        }
+    } else {
+        if (ed->cursor_row > step) ed->cursor_row -= step;
+        else ed->cursor_row = 0;
+    }
     const char *line = buffer_line(&ed->buffer, ed->cursor_row);
     ed->cursor_col = utf8_col_to_byte(line, ed->target_visual_col);
 }
@@ -284,10 +323,23 @@ void editor_move_page_up(Editor *ed) {
 /** @brief Move cursor down by one viewport page. */
 void editor_move_page_down(Editor *ed) {
     if (!ed) return;
+    editor_touch_key(ed);
     size_t step = ed->screen_rows > 3 ? (size_t)(ed->screen_rows - 3) : 10;
-    size_t max_row = buffer_line_count(&ed->buffer) - 1;
-    ed->cursor_row += step;
-    if (ed->cursor_row > max_row) ed->cursor_row = max_row;
+    size_t total = buffer_line_count(&ed->buffer);
+    size_t max_row = total > 0 ? total - 1 : 0;
+    if (ed->cursor_row + step <= max_row) {
+        ed->cursor_row += step;
+    } else if (ed->cursor_row < max_row) {
+        ed->cursor_row = max_row;
+    } else if (ed->view_mode == VIEW_SPLIT && ed->rendered_doc.count > 0) {
+        int view_rows = ed->screen_rows > 3 ? (ed->screen_rows - 3) : 20;
+        if (ed->rendered_doc.count > (size_t)view_rows) {
+            size_t max_p_scroll = ed->rendered_doc.count - (size_t)view_rows;
+            if (ed->preview_scroll_row < max_p_scroll) {
+                ed->scroll_row += step;
+            }
+        }
+    }
     const char *line = buffer_line(&ed->buffer, ed->cursor_row);
     ed->cursor_col = utf8_col_to_byte(line, ed->target_visual_col);
 }
@@ -1849,18 +1901,31 @@ bool editor_cursor_is_visible(const Editor *ed) {
 /** @brief Clamp and synchronize editor vertical/horizontal scroll and preview scroll offsets. */
 void editor_update_scroll(Editor *ed, int view_rows) {
     if (!ed || view_rows <= 0) return;
+    ed->view_rows = view_rows;
 
     size_t total_lines = buffer_line_count(&ed->buffer);
+    size_t normal_max = total_lines > (size_t)view_rows ? (total_lines - (size_t)view_rows) : 0;
+    size_t max_scroll = normal_max;
+
+    if (ed->view_mode == VIEW_SPLIT && ed->rendered_doc.count > (size_t)view_rows) {
+        size_t max_p_scroll = ed->rendered_doc.count - (size_t)view_rows;
+        size_t rend_at_normal_max = rendered_doc_find_line(&ed->rendered_doc, normal_max);
+        if (max_p_scroll > rend_at_normal_max) {
+            max_scroll = normal_max + (max_p_scroll - rend_at_normal_max);
+        }
+    }
 
     // Clamp scroll_row when terminal grows taller so content fills the viewport
-    if (total_lines <= (size_t)view_rows) {
+    if (total_lines <= (size_t)view_rows && ed->view_mode != VIEW_SPLIT) {
         ed->scroll_row = 0;
-    } else if (ed->scroll_row + (size_t)view_rows > total_lines) {
-        ed->scroll_row = total_lines - (size_t)view_rows;
+    } else if (ed->scroll_row > max_scroll) {
+        ed->scroll_row = max_scroll;
     }
 
     if (ed->cursor_row < ed->scroll_row) {
-        ed->scroll_row = ed->cursor_row;
+        if (ed->view_mode != VIEW_SPLIT || ed->cursor_row + 1 < total_lines) {
+            ed->scroll_row = ed->cursor_row;
+        }
     }
     if (ed->cursor_row >= ed->scroll_row + (size_t)view_rows) {
         ed->scroll_row = ed->cursor_row - (size_t)view_rows + 1;
@@ -1907,13 +1972,32 @@ void editor_update_scroll(Editor *ed, int view_rows) {
             ed->preview_scroll_row = rend_idx - (size_t)view_rows + 1;
         }
     } else if (ed->view_mode == VIEW_SPLIT && ed->rendered_doc.count > 0) {
-        size_t rend_idx = rendered_doc_find_line(&ed->rendered_doc, ed->scroll_row);
         if (ed->rendered_doc.count <= (size_t)view_rows) {
             ed->preview_scroll_row = 0;
-        } else if (rend_idx + (size_t)view_rows > ed->rendered_doc.count) {
-            ed->preview_scroll_row = ed->rendered_doc.count - (size_t)view_rows;
         } else {
+            size_t max_p_scroll = ed->rendered_doc.count - (size_t)view_rows;
+            size_t rend_idx = rendered_doc_find_line(&ed->rendered_doc, ed->scroll_row);
+
+            if (ed->scroll_row > normal_max) {
+                size_t overscroll = ed->scroll_row - normal_max;
+                rend_idx += overscroll;
+            }
+
+            if (rend_idx > max_p_scroll) {
+                rend_idx = max_p_scroll;
+            }
             ed->preview_scroll_row = rend_idx;
+
+            size_t cur_rend = rendered_doc_find_line(&ed->rendered_doc, ed->cursor_row);
+            if (cur_rend < ed->preview_scroll_row) {
+                ed->preview_scroll_row = cur_rend;
+            }
+            if (cur_rend >= ed->preview_scroll_row + (size_t)view_rows) {
+                ed->preview_scroll_row = cur_rend - (size_t)view_rows + 1;
+            }
+            if (ed->preview_scroll_row > max_p_scroll) {
+                ed->preview_scroll_row = max_p_scroll;
+            }
         }
     }
 

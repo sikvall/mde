@@ -47,8 +47,8 @@
   - Arrow keys (`↑`/`↓`/`PgUp`/`PgDn`), `Backspace` to navigate up a directory, `Enter` to open or save, and `Esc` or `Ctrl+C` to cancel.
 - **Hypertext File Linking & Navigation (`F6` / `Alt+H`, `F7` / `Alt+O`, `F8` / `Alt+-`)**:
   - **Insert File Link (`F6` / `Alt+H`)**: Opens an interactive file picker to choose an existing file (or type a new target filename), automatically computes a portable relative path, derives a label from the selection or the target's H1 heading, and inserts `[Label](relative/path.md)`.
-  - **Follow Links (`F7` / `Alt+O` / `Ctrl+]`)**: Jump directly into any local Markdown link `[Label](file.md)` or `#heading` anchor under the cursor (or on the active line). If the current buffer has unsaved changes and a different file is about to be loaded, `mde` prompts to save or discard changes first. If the target file does not yet exist, `mde` opens a new buffer at that path so you can immediately write it.
-  - **Link History Back (`F8` / `Alt+-`)**: Return to previously visited linked documents with your exact cursor line and column restored. Prompts to save if the current buffer has unsaved edits.
+  - **Follow Links & Footnotes (`F7` / `Alt+O`)**: Jump directly into any local Markdown link `[Label](file.md)`, `#heading` anchor, or footnote reference/definition under the cursor (or on the active line). Pressing `F7` / `Alt+O` on a footnote reference `[^note]` jumps to its definition; pressing it on a definition `[^note]:` jumps back to the first reference in the text.
+  - **Link & Footnote History Back (`F8` / `Alt+-`)**: Return to previously visited linked documents or footnote jump points with your exact cursor line and column restored. Prompts to save if a different file is loaded and the current buffer has unsaved edits.
 - **Multi-File Linked Export Menu (`F5` / `Alt+X`) — HTML, XML, EPUB, LaTeX**:
   - Export the current Markdown buffer directly to **HTML5** (`.html`), **XML / DocBook 5** (`.xml`), **EPUB 3** (`.epub`), or **LaTeX** (`.tex`).
   - **Automatic Linked-File Bundling**: Recursively discovers all locally linked Markdown files (with cycle protection) and includes them in the export (toggleable with `L` inside the Export Menu):
@@ -129,7 +129,7 @@ Updating this single file automatically updates the CLI output (`mde -v`), the h
 | **`F8` / `Alt+-`** | Navigate back to previous linked file & cursor position |
 | **`F9` / `Alt+T`** | Open Document Outline modal to jump to any H1–H6 heading |
 | **`Alt+D`** | Live document and selection statistics modal (words, chars, reading time) |
-| **`Ctrl+]` / `Alt+]`** | Jump to matching bracket `()`, `[]`, `{}`, `<>`, or delimiter pair (`**`, `~~`, `` ` ``, ```` ``` ````) |
+| **`M-M` / `F11` / `^]`** | Jump to matching bracket `()`, `[]`, `{}`, `<>`, or delimiter pair (`**`, `~~`, `` ` ``, ```` ``` ````; also `Alt+]`) |
 | **`F10` / `F12` / `Alt+K`** | Toggle bottom shortcut hint rows (hide / show) |
 | **`F2` / `Alt+P`** | Cycle View Modes (**Split** → **In-Place** → **Preview**) |
 | **`F4` / `Alt+L`** | Set automatic line break column (`20`–`255` or `off`; default `78`) |
@@ -138,7 +138,7 @@ Updating this single file automatically updates the CLI output (`mde -v`), the h
 | **`Ctrl+Q`** | Where Was — Search backward for text |
 | **`Ctrl+\` / `Alt+R`** | Search and Replace (Yes / No / All) |
 | **`Alt+W` / `F3`** | Repeat search forward (`Alt+Q` repeats backward) |
-| **`Ctrl+/` / `Alt+G`** | Go to line number (and optional column) |
+| **`M-G` / `Alt+G` / `^_`** | Go to line number (and optional column; also `Ctrl+/`) |
 | **`Ctrl+C`** | Display current cursor location (also cancels prompts/dialogs) |
 | **`Alt+A` / `Ctrl+6` / `Ctrl+Space`** | Set or unset selection mark anchor (move cursor to select) |
 | **`Ctrl+K`** | Cut active selection, or cut entire current line if no mark is set |
@@ -155,7 +155,8 @@ Updating this single file automatically updates the CLI output (`mde -v`), the h
 | **`Ctrl+←` / `Ctrl+→`** | Jump backward / forward by one word |
 | **`Ctrl+Y` / `PgUp`** | Previous Page (scroll viewport up) |
 | **`Ctrl+V` / `PgDn`** | Next Page (scroll viewport down) |
-| **`Alt+\` / `Alt+/`** | Jump to first / last line of document |
+| **`Ctrl+Home` / `Alt+\`** | Jump to first line of document |
+| **`Ctrl+End` / `Alt+/`** | Jump to last line of document |
 | **`Ctrl+B` / `F` / `P` / `N`** | Move cursor Left / Right / Up / Down (or Arrow keys) |
 | **`Ctrl+H` / `Backspace`** | Delete character before cursor |
 | **`Ctrl+D` / `Del`** | Delete character under cursor |

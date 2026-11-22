@@ -5,7 +5,7 @@
 > recent upgrades, git history, and the remaining roadmap items.
 >
 > Snapshot basis: **v0.1.1** (2026-11-22), pure C11 codebase compiling warning-free with `gcc` and `ncursesw`.
-> Test runner passes **462 / 462 tests (100.0%)**.
+> Test runner passes **490 / 490 tests (100.0%)**.
 
 ---
 
@@ -290,9 +290,33 @@ The following tasks from your requirements and project roadmap are identified fo
   - *Alternative Aliases (10):* `F1` (`^G`), `Alt+P` (`F2`), `Alt+X` (`F5`), `Alt+O` (`F7`), `Alt+T` (`F9`), `Alt+G` (`^/`), `Alt+]` (`^]`), `F12 / Alt+K` (`F10`), `Ctrl+Space / Ctrl+6` (`Alt+A`).
 
 ### 7.4 Verification & Quality Assurance
-- **Full Test Suite:** 462 / 462 assertions passing (100.0%) in `bin/test_runner`.
+- **Full Test Suite:** 490 / 490 assertions passing (100.0%) in `bin/test_runner`.
 - **Compiler Compliance:** Compiles warning-free with `gcc -std=c11 -Wall -Wextra -pedantic -Werror`.
 - **Documentation Parity:** Kept in sync across `README.md`, `CHANGELOG.md`, `man/mde.1`, `scripts/generate_keybindings.py`, `ui_dialog_help.c`, and `project-description.md`.
+
+### 7.5 Document Navigation & Dual-Pane Preview Cursor Synchronization (2026-11-22)
+- **Top / Bottom Document Navigation (`Ctrl+Home` / `Ctrl+End`):**
+  - Bound `Ctrl+Home` (escape sequence `\033[1;5H` / `\033[7;5~` or curses `kHOM5`/`kHOM3`) to `editor_move_doc_start()` jumping to line 0, column 0.
+  - Bound `Ctrl+End` (escape sequence `\033[1;5F` / `\033[8;5~` or curses `kEND5`/`kEND3`) to `editor_move_doc_end()` jumping to the last line and final character column.
+- **Synchronized Preview Cursor Indicator (`VIEW_SPLIT`):**
+  - In split view mode, the right-hand preview pane renders a visual cursor pointer (`▶ `) in the left margin on the rendered line matching the editor's active source line.
+  - The exact character/cell at the matching visual column is highlighted with `A_REVERSE | A_BOLD`, giving users an immediate visual cue of where their cursor is positioned in the rendered document.
+- **Split-View Preview Overscroll Beyond Last Line:**
+  - In `VIEW_SPLIT`, rendered Markdown documents are frequently taller than raw source text due to heading margins, table formatting, and responsive wrapping.
+  - Allowed `scroll_row` in the editor pane to scroll beyond the last buffer line (displaying standard empty line markers `~`) until the preview pane has fully scrolled to its bottom (`preview_scroll_row + view_rows >= rendered_doc.count`).
+  - Scrolling up seamlessly scrolls the code pane back into view.
+
+### 7.6 Footnote Hypertext Navigation, Config Persistence & Keyboard Ergonomics (2026-11-22)
+- **Configuration Persistence for Keybindings Toggle:**
+  - `editor_toggle_keybindings()` automatically persists the user's preference to `~/.config/mde/config` (or `$XDG_CONFIG_HOME/mde/config`).
+  - Next editor launch honors `show_keybindings` setting automatically.
+- **Footnote Bi-Directional Hypertext Jumping (`Alt+O` / `F7`):**
+  - Pressing `Alt+O` / `F7` on a footnote reference `[^note]` jumps the cursor directly to its definition `[^note]:`.
+  - Pressing `Alt+O` / `F7` on a footnote definition line `[^note]:` scans from the top of the buffer and jumps back to the *first* reference in the text (when multiple references cite the same footnote).
+  - Pushes jump history onto the navigation stack so `F8` / `Alt+-` returns to the exact previous location within the same buffer without disk reloads.
+- **Keyboard Ergonomics for International Layouts:**
+  - **Jump matching delimiter:** Bound `Alt+M` (`M-M` for Match) and `F11` (alongside `Ctrl+]` / `Alt+]`). Updated bottom badge from `^]` to `M-M Jump` so international users (where `]` requires AltGr) have an easily accessible single-layer shortcut.
+  - **Go to Line:** Updated bottom badge from `^/` to `M-G Go Line` (GNU Nano standard `M-G` which does not require Shift/AltGr). Also bound `Alt+:` and added CSI escape sequence parsers for terminal `Ctrl+/`.
 
 
 

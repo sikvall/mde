@@ -488,7 +488,7 @@ bool editor_insert_file_link(Editor *ed, const char *target_path) {
 
 /** @brief Push the current file path and cursor position onto the link navigation history stack. */
 static void push_link_history(Editor *ed) {
-    if (!ed || !ed->buffer.file_path || !ed->buffer.file_path[0]) return;
+    if (!ed) return;
 
     if (ed->link_history_count >= MDE_LINK_HISTORY_MAX) {
         free(ed->link_history[0].file_path);
@@ -497,8 +497,11 @@ static void push_link_history(Editor *ed) {
         ed->link_history_count = MDE_LINK_HISTORY_MAX - 1;
     }
 
-    char norm[PATH_MAX];
-    normalize_abs_path(ed->buffer.file_path, norm, sizeof(norm));
+    const char *fpath = (ed->buffer.file_path && ed->buffer.file_path[0]) ? ed->buffer.file_path : "";
+    char norm[PATH_MAX] = {0};
+    if (fpath[0]) {
+        normalize_abs_path(fpath, norm, sizeof(norm));
+    }
     ed->link_history[ed->link_history_count].file_path = strdup(norm);
     ed->link_history[ed->link_history_count].cursor_row = ed->cursor_row;
     ed->link_history[ed->link_history_count].cursor_col = ed->cursor_col;
@@ -541,15 +544,211 @@ bool editor_link_will_switch_file(const Editor *ed, char *out_resolved, size_t c
     return true;
 }
 
+/** @brief Check whether the cursor is on or adjacent to a footnote reference or definition. */
+bool editor_is_footnote_at_cursor(const Editor *ed) {
+    if (!ed) return false;
+    size_t cur_row = ed->cursor_row;
+    if (cur_row >= buffer_line_count(&ed->buffer)) return false;
+
+    const char *line = buffer_line(&ed->buffer, cur_row);
+    size_t line_len = buffer_line_len(&ed->buffer, cur_row);
+    if (!line || line_len == 0) return false;
+
+    // Check for footnote definition: optional whitespace, then "[^...]:"
+    size_t indent = 0;
+    while (indent < line_len && (line[indent] == ' ' || line[indent] == '\t')) indent++;
+    if (indent + 3 < line_len && line[indent] == '[' && line[indent + 1] == '^') {
+        const char *cb = memchr(line + indent + 2, ']', line_len - (indent + 2));
+        if (cb && (size_t)(cb - line) + 1 < line_len && cb[1] == ':') {
+            return true;
+        }
+    }
+
+    // Check for footnote reference: "[^...]"
+    const char *p = line;
+    while ((p = strstr(p, "[^")) != NULL) {
+        const char *cb = memchr(p + 2, ']', line_len - (size_t)(p + 2 - line));
+        if (cb) {
+            size_t cb_idx = (size_t)(cb - line);
+            if (cb_idx + 1 < line_len && line[cb_idx + 1] == ':') {
+                p = cb + 2;
+                continue;
+            }
+            size_t match_col = (size_t)(p - line);
+            if (ed->cursor_col >= match_col && ed->cursor_col <= cb_idx + 1) {
+                return true;
+            }
+            p = cb + 1;
+        } else {
+            p += 2;
+        }
+    }
+    return false;
+}
+
+/** @brief Follow footnote: jump from reference to definition, or definition to first reference. */
+bool editor_follow_footnote(Editor *ed) {
+    if (!ed) return false;
+    size_t cur_row = ed->cursor_row;
+    if (cur_row >= buffer_line_count(&ed->buffer)) return false;
+
+    const char *line = buffer_line(&ed->buffer, cur_row);
+    size_t line_len = buffer_line_len(&ed->buffer, cur_row);
+    if (!line || line_len == 0) return false;
+
+    // Case 1: Active line is a footnote definition: optional whitespace + "[^<label>]:"
+    size_t indent = 0;
+    while (indent < line_len && (line[indent] == ' ' || line[indent] == '\t')) indent++;
+    if (indent + 3 < line_len && line[indent] == '[' && line[indent + 1] == '^') {
+        const char *cb = memchr(line + indent + 2, ']', line_len - (indent + 2));
+        if (cb && (size_t)(cb - line) + 1 < line_len && cb[1] == ':') {
+            size_t label_len = (size_t)(cb - (line + indent + 2));
+            if (label_len > 0 && label_len < 128) {
+                char label[128];
+                memcpy(label, line + indent + 2, label_len);
+                label[label_len] = '\0';
+
+                // Search document from top for the FIRST reference [^<label>] (not followed by ':')
+                char target_ref[140];
+                snprintf(target_ref, sizeof(target_ref), "[^%s]", label);
+                size_t target_ref_len = strlen(target_ref);
+
+                size_t total_lines = buffer_line_count(&ed->buffer);
+                for (size_t r = 0; r < total_lines; ++r) {
+                    const char *l = buffer_line(&ed->buffer, r);
+                    size_t llen = buffer_line_len(&ed->buffer, r);
+                    if (!l || llen < target_ref_len) continue;
+
+                    const char *pos = l;
+                    while ((pos = strstr(pos, target_ref)) != NULL) {
+                        size_t match_col = (size_t)(pos - l);
+                        // Make sure it is not followed by ':' (which would be a definition)
+                        if (match_col + target_ref_len < llen && pos[target_ref_len] == ':') {
+                            pos += target_ref_len;
+                            continue;
+                        }
+
+                        // Found first reference!
+                        push_link_history(ed);
+                        ed->cursor_row = r;
+                        ed->cursor_col = match_col;
+                        const char *dest_line = buffer_line(&ed->buffer, r);
+                        ed->target_visual_col = utf8_byte_to_col(dest_line, match_col);
+                        ed->mark_active = false;
+                        ed->rendered_dirty = true;
+                        editor_update_scroll(ed, ed->view_rows > 0 ? ed->view_rows : 24);
+                        editor_set_status(ed, "Jumped to footnote reference [^%s] (F8/M-- to go back)", label);
+                        return true;
+                    }
+                }
+
+                editor_set_status(ed, "Footnote reference [^%s] not found", label);
+                return true;
+            }
+        }
+    }
+
+    // Case 2: Footnote reference on current line: "[^<label>]"
+    const char *best_ref = NULL;
+    size_t best_len = 0;
+
+    const char *first_ref = NULL;
+    size_t first_len = 0;
+
+    const char *p = line;
+    while ((p = strstr(p, "[^")) != NULL) {
+        size_t match_col = (size_t)(p - line);
+        const char *cb = memchr(p + 2, ']', line_len - (size_t)(p + 2 - line));
+        if (cb) {
+            size_t cb_idx = (size_t)(cb - line);
+            if (cb_idx + 1 < line_len && line[cb_idx + 1] == ':') {
+                p = cb + 2;
+                continue;
+            }
+            size_t l_len = (size_t)(cb - (p + 2));
+            if (l_len > 0 && l_len < 128) {
+                if (!first_ref) {
+                    first_ref = p + 2;
+                    first_len = l_len;
+                }
+                if (ed->cursor_col >= match_col && ed->cursor_col <= cb_idx + 1) {
+                    best_ref = p + 2;
+                    best_len = l_len;
+                    break;
+                }
+            }
+            p = cb + 1;
+        } else {
+            p += 2;
+        }
+    }
+
+    const char *chosen = best_ref ? best_ref : first_ref;
+    size_t chosen_len = best_ref ? best_len : first_len;
+
+    if (chosen && chosen_len > 0) {
+        // If cursor was NOT on the footnote and a normal link is on cursor, let normal link take precedence
+        if (!best_ref) {
+            char dummy_url[PATH_MAX];
+            char dummy_anc[128];
+            if (editor_extract_link_at_cursor(ed, dummy_url, sizeof(dummy_url), dummy_anc, sizeof(dummy_anc))) {
+                return false;
+            }
+        }
+
+        char label[128];
+        memcpy(label, chosen, chosen_len);
+        label[chosen_len] = '\0';
+
+        // Search document for footnote definition "[^<label>]:"
+        char def_prefix[140];
+        snprintf(def_prefix, sizeof(def_prefix), "[^%s]:", label);
+        size_t def_prefix_len = strlen(def_prefix);
+
+        size_t total_lines = buffer_line_count(&ed->buffer);
+        for (size_t r = 0; r < total_lines; ++r) {
+            const char *l = buffer_line(&ed->buffer, r);
+            size_t llen = buffer_line_len(&ed->buffer, r);
+            if (!l) continue;
+
+            size_t ind = 0;
+            while (ind < llen && (l[ind] == ' ' || l[ind] == '\t')) ind++;
+
+            if (llen >= ind + def_prefix_len && strncmp(l + ind, def_prefix, def_prefix_len) == 0) {
+                push_link_history(ed);
+                ed->cursor_row = r;
+                ed->cursor_col = ind;
+                const char *dest_line = buffer_line(&ed->buffer, r);
+                ed->target_visual_col = utf8_byte_to_col(dest_line, ind);
+                ed->mark_active = false;
+                ed->rendered_dirty = true;
+                editor_update_scroll(ed, ed->view_rows > 0 ? ed->view_rows : 24);
+                editor_set_status(ed, "Jumped to footnote [^%s] (F8/M-- to go back)", label);
+                return true;
+            }
+        }
+
+        editor_set_status(ed, "Footnote definition '[^%s]:' not found", label);
+        return true;
+    }
+
+    return false;
+}
+
 /** @brief Follow a local Markdown file link or `#heading` anchor under the cursor. */
 bool editor_follow_link(Editor *ed) {
     if (!ed) return false;
     editor_touch_key(ed);
 
+    // Footnote navigation: jump between reference and definition
+    if (editor_follow_footnote(ed)) {
+        return true;
+    }
+
     char url[PATH_MAX] = {0};
     char anchor[128] = {0};
     if (!editor_extract_link_at_cursor(ed, url, sizeof(url), anchor, sizeof(anchor))) {
-        editor_set_status(ed, "No link found on current line");
+        editor_set_status(ed, "No link or footnote found on current line");
         return false;
     }
 
@@ -560,9 +759,14 @@ bool editor_follow_link(Editor *ed) {
 
     // Same-document #anchor jump
     if (!url[0] && anchor[0]) {
+        push_link_history(ed);
         if (jump_to_heading_anchor(ed, anchor)) {
-            editor_set_status(ed, "Jumped to #%s", anchor);
+            editor_set_status(ed, "Jumped to #%s (F8/M-- to go back)", anchor);
             return true;
+        }
+        if (ed->link_history_count > 0) {
+            free(ed->link_history[--ed->link_history_count].file_path);
+            ed->link_history[ed->link_history_count].file_path = NULL;
         }
         editor_set_status(ed, "Heading '#%s' not found", anchor);
         return false;
@@ -638,11 +842,21 @@ bool editor_navigate_back(Editor *ed) {
     LinkHistoryEntry entry = ed->link_history[--ed->link_history_count];
     ed->link_history[ed->link_history_count].file_path = NULL;
 
-    bool loaded = buffer_load(&ed->buffer, entry.file_path);
-    if (!loaded) {
-        buffer_free(&ed->buffer);
-        buffer_init(&ed->buffer);
-        ed->buffer.file_path = strdup(entry.file_path);
+    char cur_norm[PATH_MAX] = {0};
+    if (ed->buffer.file_path && ed->buffer.file_path[0]) {
+        normalize_abs_path(ed->buffer.file_path, cur_norm, sizeof(cur_norm));
+    }
+
+    bool same_file = (entry.file_path[0] == '\0' && cur_norm[0] == '\0') ||
+                     (entry.file_path[0] != '\0' && cur_norm[0] != '\0' && strcmp(entry.file_path, cur_norm) == 0);
+
+    if (!same_file && entry.file_path[0] != '\0') {
+        bool loaded = buffer_load(&ed->buffer, entry.file_path);
+        if (!loaded) {
+            buffer_free(&ed->buffer);
+            buffer_init(&ed->buffer);
+            ed->buffer.file_path = strdup(entry.file_path);
+        }
     }
 
     size_t max_row = buffer_line_count(&ed->buffer);
@@ -654,8 +868,13 @@ bool editor_navigate_back(Editor *ed) {
     ed->scroll_col = 0;
     ed->mark_active = false;
     ed->rendered_dirty = true;
+    editor_update_scroll(ed, ed->view_rows > 0 ? ed->view_rows : 24);
 
-    editor_set_status(ed, "Back to %s", entry.file_path);
+    if (same_file) {
+        editor_set_status(ed, "Navigated back to line %zu", ed->cursor_row + 1);
+    } else {
+        editor_set_status(ed, "Back to %s", entry.file_path);
+    }
     free(entry.file_path);
     return true;
 }

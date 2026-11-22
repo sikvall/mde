@@ -34,8 +34,23 @@ void config_init_defaults(MdeConfig *cfg) {
  * @return true if path was resolved, false on error.
  */
 static bool get_config_path(char *out_path, size_t cap, bool for_write) {
+    if (cap < PATH_MAX) return false;
+
+    const char *xdg_env = getenv("XDG_CONFIG_HOME");
+    if (xdg_env && xdg_env[0]) {
+        char app_dir[PATH_MAX];
+        int an = snprintf(app_dir, sizeof(app_dir), "%s/mde", xdg_env);
+        if (an < 0 || (size_t)an >= sizeof(app_dir)) return false;
+        if (for_write) {
+            mkdir(xdg_env, 0755);
+            mkdir(app_dir, 0755);
+        }
+        int cn = snprintf(out_path, cap, "%s/config", app_dir);
+        return (cn > 0 && (size_t)cn < cap);
+    }
+
     const char *home = getenv("HOME");
-    if (!home || !home[0] || cap < PATH_MAX) return false;
+    if (!home || !home[0]) return false;
 
     char xdg_dir[PATH_MAX];
     int n = snprintf(xdg_dir, sizeof(xdg_dir), "%s/.config", home);

@@ -76,6 +76,7 @@ typedef struct {
     int screen_cols;             /**< Total terminal screen columns */
     int editor_width;            /**< Width of editor pane in columns */
     int preview_width;           /**< Width of preview pane in columns */
+    int view_rows;               /**< Visible text height in viewport lines */
 
     // Selection / Mark state
     bool mark_active;            /**< Flag indicating if selection mark is active */
@@ -393,6 +394,25 @@ bool editor_resolve_link_path(const Editor *ed, const char *link_target,
  * the target file's first H1 heading or filename stem.
  */
 bool editor_insert_file_link(Editor *ed, const char *target_path);
+
+/**
+ * @brief Check whether the cursor is on or adjacent to a footnote reference or definition.
+ *
+ * @param ed Pointer to Editor.
+ * @return true if a footnote reference or definition is found at or near cursor.
+ */
+bool editor_is_footnote_at_cursor(const Editor *ed);
+
+/**
+ * @brief Jump between a footnote reference [^note] and its definition [^note]: (or vice versa).
+ *
+ * If jumping from a definition with multiple references, jumps to the first reference.
+ * Pushes the previous location to the link navigation history stack (restorable with F8).
+ *
+ * @param ed Pointer to Editor.
+ * @return true if a jump was performed, false if no footnote under cursor.
+ */
+bool editor_follow_footnote(Editor *ed);
 
 /**
  * @brief Check whether following the link at the cursor will load a different local file.

@@ -17,6 +17,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <limits.h>
+#include <ctype.h>
 
 /** Global editor state instance managed by the main event loop. */
 static Editor g_editor;
@@ -271,7 +272,8 @@ static void set_cursor_from_click(int click_x, int click_y, bool is_click_or_rel
                     if (is_click_or_release && !editor_has_selection(&g_editor)) {
                         char link_target[PATH_MAX];
                         char anchor[128];
-                        if (editor_extract_link_at_cursor(&g_editor, link_target, sizeof(link_target), anchor, sizeof(anchor))) {
+                        if (editor_extract_link_at_cursor(&g_editor, link_target, sizeof(link_target), anchor, sizeof(anchor)) ||
+                            editor_is_footnote_at_cursor(&g_editor)) {
                             handle_follow_link();
                         }
                     }
@@ -346,6 +348,58 @@ static void handle_meta_key(char *search_buf, size_t search_cap, bool *last_sear
             editor_clear_mark(&g_editor);
         }
         return;
+    }
+
+    if (next == '[') {
+        char seq[16] = {0};
+        size_t idx = 0;
+        nodelay(stdscr, TRUE);
+        int c;
+        while ((c = getch()) != ERR && idx + 1 < sizeof(seq)) {
+            seq[idx++] = (char)c;
+            if (isalpha((unsigned char)c) || c == '~') break;
+        }
+        nodelay(stdscr, FALSE);
+
+        if (strcmp(seq, "1;5H") == 0 || strcmp(seq, "7;5~") == 0 || strcmp(seq, "1~") == 0) {
+            editor_move_doc_start(&g_editor);
+            return;
+        } else if (strcmp(seq, "1;5F") == 0 || strcmp(seq, "8;5~") == 0 || strcmp(seq, "4~") == 0) {
+            editor_move_doc_end(&g_editor);
+            return;
+        } else if (strcmp(seq, "1;5D") == 0 || strcmp(seq, "1;3D") == 0) {
+            editor_move_word_left(&g_editor);
+            return;
+        } else if (strcmp(seq, "1;5C") == 0 || strcmp(seq, "1;3C") == 0) {
+            editor_move_word_right(&g_editor);
+            return;
+        } else if (strcmp(seq, "H") == 0) {
+            editor_move_home(&g_editor);
+            return;
+        } else if (strcmp(seq, "F") == 0) {
+            editor_move_end(&g_editor);
+            return;
+        } else if (strcmp(seq, "3~") == 0) {
+            editor_delete(&g_editor);
+            return;
+        } else if (strcmp(seq, "47;5u") == 0 || strcmp(seq, "47;6u") == 0 || strcmp(seq, "31;5u") == 0) {
+            prompt_goto_line();
+            return;
+        } else if (strcmp(seq, "93;5u") == 0 || strcmp(seq, "93;6u") == 0 || strcmp(seq, "29~") == 0 || strcmp(seq, "23~") == 0) {
+            editor_jump_matching_pair(&g_editor);
+            return;
+        }
+    } else if (next == 'O') {
+        nodelay(stdscr, TRUE);
+        int c = getch();
+        nodelay(stdscr, FALSE);
+        if (c == 'H') {
+            editor_move_home(&g_editor);
+            return;
+        } else if (c == 'F') {
+            editor_move_end(&g_editor);
+            return;
+        }
     }
 
     switch (next) {
@@ -444,6 +498,13 @@ static void handle_meta_key(char *search_buf, size_t search_cap, bool *last_sear
         case 'd':
         case 'D':
             ui_show_document_stats(&g_editor);
+            break;
+        case 'm':
+        case 'M':
+            editor_jump_matching_pair(&g_editor);
+            break;
+        case ':':
+            prompt_goto_line();
             break;
         case ']':
             editor_jump_matching_pair(&g_editor);
@@ -557,7 +618,7 @@ static void handle_key_event(int ch, char *search_buf, size_t search_cap,
         handle_insert_file_link();
     } else if (ch == KEY_F(7)) {
         handle_follow_link();
-    } else if (ch == CTRL_KEY(']')) {
+    } else if (ch == CTRL_KEY(']') || ch == KEY_F(11)) {
         editor_jump_matching_pair(&g_editor);
     } else if (ch == KEY_F(8)) {
         handle_navigate_back();
@@ -623,6 +684,10 @@ static void handle_key_event(int ch, char *search_buf, size_t search_cap,
                 editor_move_word_left(&g_editor);
             } else if (strcmp(kname, "kRIT5") == 0 || strcmp(kname, "kRIT3") == 0) {
                 editor_move_word_right(&g_editor);
+            } else if (strcmp(kname, "kHOM5") == 0 || strcmp(kname, "kHOM3") == 0) {
+                editor_move_doc_start(&g_editor);
+            } else if (strcmp(kname, "kEND5") == 0 || strcmp(kname, "kEND3") == 0) {
+                editor_move_doc_end(&g_editor);
             }
         }
     }
