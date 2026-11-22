@@ -1,7 +1,8 @@
 CC ?= gcc
-CFLAGS ?= -std=c11 -Wall -Wextra -pedantic -O2 -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700 -D_XOPEN_SOURCE_EXTENDED=1
+CFLAGS ?= -std=c11 -MMD -MP -Wall -Wextra -pedantic -O2 -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700 -D_XOPEN_SOURCE_EXTENDED=1
 LDFLAGS ?= -lncursesw
 
+PREFIX ?= /usr/local
 SRC_DIR := src
 BIN_DIR := bin
 OBJ_DIR := obj
@@ -50,10 +51,10 @@ clean:
 	rm -rf $(OBJ_DIR) $(BIN_DIR)
 
 install: $(TARGET)
-	install -d $(DESTDIR)/usr/local/bin
-	install -m 755 $(TARGET) $(DESTDIR)/usr/local/bin/mde
-	install -d $(DESTDIR)/usr/local/share/man/man1
-	install -m 644 $(MAN_DIR)/mde.1 $(DESTDIR)/usr/local/share/man/man1/mde.1
+	install -d $(DESTDIR)$(PREFIX)/bin
+	install -m 755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/mde
+	install -d $(DESTDIR)$(PREFIX)/share/man/man1
+	install -m 644 $(MAN_DIR)/mde.1 $(DESTDIR)$(PREFIX)/share/man/man1/mde.1
 
 deb: $(TARGET)
 	@echo "==> Packaging Debian package $(DEB_PKG_NAME).deb..."
@@ -98,3 +99,5 @@ deb: $(TARGET)
 	dpkg-deb --build --root-owner-group $(DEB_STAGING) $(BIN_DIR)/$(DEB_PKG_NAME).deb
 	rm -rf $(DEB_STAGING)
 	@echo "==> Debian package generated at: $(BIN_DIR)/$(DEB_PKG_NAME).deb"
+
+-include $(OBJS:.o=.d)

@@ -1,3 +1,4 @@
+#include "backup.h"
 /**
  * @file editor.c
  * @brief Implementation of editor state management, navigation, and Markdown helpers.
@@ -35,6 +36,7 @@ void editor_init(Editor *ed, const char *filename) {
     ed->scroll_col = 0;
     ed->preview_scroll_row = 0;
     ed->quit_requested = false;
+    ed->backup_made = false;
     ed->search_active = false;
     ed->mark_active = false;
     ed->mark_row = 0;
@@ -1519,7 +1521,15 @@ bool editor_has_unsaved_changes(const Editor *ed) {
 /** @brief Save the current buffer to opt_path (or existing file_path when NULL). */
 bool editor_save(Editor *ed, const char *opt_path) {
     if (!ed) return false;
+    const char *save_target = opt_path ? opt_path : ed->buffer.file_path;
+    if (save_target && save_target[0] && !ed->backup_made) {
+        backup_create_tilde(save_target);
+        ed->backup_made = true;
+    }
     if (buffer_save(&ed->buffer, opt_path)) {
+        if (ed->buffer.file_path) {
+            backup_remove_autosave(ed->buffer.file_path);
+        }
         editor_set_status(ed, "Saved %zu lines to %s", buffer_line_count(&ed->buffer), ed->buffer.file_path);
         return true;
     } else {
@@ -1540,6 +1550,7 @@ bool editor_open(Editor *ed, const char *path) {
         ed->mark_active = false;
         ed->search_active = false;
         ed->rendered_dirty = true;
+        ed->backup_made = false;
         editor_touch_key(ed);
         editor_set_status(ed, "Opened %s", path);
         return true;
@@ -2203,6 +2214,9 @@ uint64_t editor_get_time_ms(void) {
 void editor_touch_key(Editor *ed) {
     if (!ed) return;
     ed->last_key_time = editor_get_time_ms();
+    if (ed->buffer.file_path && ed->buffer.is_dirty) {
+        backup_create_autosave(ed->buffer.file_path, &ed->buffer);
+    }
 }
 
 /** @brief Return true when the cursor should be shown (always true for steady cursor). */

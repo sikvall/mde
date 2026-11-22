@@ -35,7 +35,7 @@ void ui_init(void) {
     fputs("\033[2 q", stdout);
     fflush(stdout);
     theme_init();
-    mousemask(ALL_MOUSE_EVENTS, NULL);
+    mousemask(ALL_MOUSE_EVENTS | REPORT_MOUSE_POSITION, NULL);
 }
 
 /** @brief Restore default terminal cursor style and exit ncurses cleanly. */

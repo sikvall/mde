@@ -91,11 +91,11 @@
 
 ## Centralized Versioning
 
-All application metadata, title, version, and build date are defined centrally in [`src/version.h`](file:///home/anders/mde/src/version.h):
+All application metadata, title, version, and build date are defined centrally in [`src/version.h`](src/version.h):
 
 ```c
 #define MDE_APP_NAME        "mde"
-#define MDE_VERSION_STRING  "0.1.0"
+#define MDE_VERSION_STRING  "0.1.1"
 #define MDE_BUILD_DATE      __DATE__
 #define MDE_BUILD_TIME      __TIME__
 ```
@@ -196,7 +196,7 @@ Builds an installable Debian package at `bin/mde_<version>_<arch>.deb` (includes
 To install the built package:
 
 ```bash
-sudo dpkg -i bin/mde_0.1.0_amd64.deb
+sudo dpkg -i bin/mde_0.1.1_amd64.deb
 ```
 
 ### Install Directly

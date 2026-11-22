@@ -103,6 +103,7 @@ typedef struct {
     size_t link_history_count;
 
     bool quit_requested;         /**< Termination flag */
+    bool backup_made;            /**< True if ~ backup was created this session */
 } Editor;
 
 /**

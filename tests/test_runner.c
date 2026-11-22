@@ -42,9 +42,9 @@ static void test_version(void) {
     printf("--- Testing Version & Build Metadata ---\n");
     TEST_ASSERT(strcmp(MDE_APP_NAME, "mde") == 0, "App name is 'mde'");
     TEST_ASSERT(strcmp(MDE_APP_TITLE, "Markdown Editor") == 0, "App title is 'Markdown Editor'");
-    TEST_ASSERT(strcmp(MDE_VERSION_STRING, "0.1.0") == 0, "Version string is '0.1.0'");
-    TEST_ASSERT(MDE_VERSION_MAJOR == 0 && MDE_VERSION_MINOR == 1 && MDE_VERSION_PATCH == 0,
-                "Numeric version macros match 0.1.0");
+    TEST_ASSERT(strcmp(MDE_VERSION_STRING, "0.1.1") == 0, "Version string is '0.1.1'");
+    TEST_ASSERT(MDE_VERSION_MAJOR == 0 && MDE_VERSION_MINOR == 1 && MDE_VERSION_PATCH == 1,
+                "Numeric version macros match 0.1.1");
     TEST_ASSERT(strlen(MDE_BUILD_DATE) > 0, "Build date is non-empty");
     TEST_ASSERT(strlen(MDE_BUILD_TIME) > 0, "Build time is non-empty");
     TEST_ASSERT(strlen(MDE_AUTHOR) > 0, "Author is non-empty");

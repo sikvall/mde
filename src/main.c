@@ -1,3 +1,4 @@
+#include "config.h"
 /**
  * @file main.c
  * @brief Application entry point, CLI option parsing, and Nano-compatible event loop.
@@ -237,8 +238,44 @@ static void prompt_goto_line(void) {
  * Input Event Dispatch (Mouse, Meta/Alt, Control & Printable Keys)
  * ========================================================================= */
 
+static void set_cursor_from_click(int click_x, int click_y) {
+    int num_hints = ui_get_shortcut_hint_rows(g_editor.screen_rows);
+    int text_max_y = g_editor.screen_rows - num_hints - 1;
+
+    if (click_y >= 1 && click_y < text_max_y) {
+        if (g_editor.view_mode == VIEW_PREVIEW) {
+            size_t rend_idx = g_editor.preview_scroll_row + (size_t)(click_y - 1);
+            if (rend_idx < g_editor.rendered_doc.count) {
+                size_t target_row = g_editor.rendered_doc.lines[rend_idx].source_row;
+                if (target_row < buffer_line_count(&g_editor.buffer)) {
+                    g_editor.cursor_row = target_row;
+                    const char *l = buffer_line(&g_editor.buffer, target_row);
+                    int target_vcol = click_x >= 2 ? (click_x - 2) : 0;
+                    g_editor.cursor_col = utf8_col_to_byte(l, target_vcol);
+                    g_editor.target_visual_col = utf8_byte_to_col(l, g_editor.cursor_col);
+                }
+            }
+        } else {
+            size_t target_row = g_editor.scroll_row + (size_t)(click_y - 1);
+            size_t total_lines = buffer_line_count(&g_editor.buffer);
+            if (target_row < total_lines) {
+                g_editor.cursor_row = target_row;
+                const char *l = buffer_line(&g_editor.buffer, target_row);
+                int digits = 1;
+                size_t tmp = total_lines;
+                while (tmp >= 10) { digits++; tmp /= 10; }
+                if (digits < 3) digits = 3;
+                int gutter = digits + 4;
+                int target_vcol = (click_x >= gutter) ? (click_x - gutter + (int)g_editor.scroll_col) : 0;
+                g_editor.cursor_col = utf8_col_to_byte(l, target_vcol);
+                g_editor.target_visual_col = utf8_byte_to_col(l, g_editor.cursor_col);
+            }
+        }
+    }
+}
+
 /**
- * @brief Handle ncurses mouse wheel scrolling and left-click cursor placement.
+ * @brief Handle ncurses mouse wheel scrolling, drag selection, and paste.
  */
 static void handle_mouse_event(void) {
     MEVENT mevent;
@@ -250,49 +287,27 @@ static void handle_mouse_event(void) {
     } else if (mevent.bstate & BUTTON5_PRESSED) {
         editor_move_down(&g_editor);
         editor_move_down(&g_editor);
-    } else if (mevent.bstate & BUTTON1_CLICKED) {
-        int click_y = mevent.y;
-        int click_x = mevent.x;
-        int num_hints = ui_get_shortcut_hint_rows(g_editor.screen_rows);
-        int text_max_y = g_editor.screen_rows - num_hints - 1;
-
-        // Only handle clicks inside the text body (below row 0 ruler/header, above status bar)
-        if (click_y >= 1 && click_y < text_max_y) {
-            if (g_editor.view_mode == VIEW_PREVIEW) {
-                size_t rend_idx = g_editor.preview_scroll_row + (size_t)(click_y - 1);
-                if (rend_idx < g_editor.rendered_doc.count) {
-                    size_t target_row = g_editor.rendered_doc.lines[rend_idx].source_row;
-                    if (target_row < buffer_line_count(&g_editor.buffer)) {
-                        g_editor.cursor_row = target_row;
-                        const char *l = buffer_line(&g_editor.buffer, target_row);
-                        int target_vcol = click_x >= 2 ? (click_x - 2) : 0;
-                        g_editor.cursor_col = utf8_col_to_byte(l, target_vcol);
-                        g_editor.target_visual_col = utf8_byte_to_col(l, g_editor.cursor_col);
-                    }
-                }
-            } else {
-                size_t target_row = g_editor.scroll_row + (size_t)(click_y - 1);
-                size_t total_lines = buffer_line_count(&g_editor.buffer);
-                if (target_row < total_lines) {
-                    g_editor.cursor_row = target_row;
-                    const char *l = buffer_line(&g_editor.buffer, target_row);
-                    int digits = 1;
-                    size_t tmp = total_lines;
-                    while (tmp >= 10) { digits++; tmp /= 10; }
-                    if (digits < 3) digits = 3;
-                    int gutter = digits + 4;
-                    int target_vcol = (click_x >= gutter) ? (click_x - gutter + (int)g_editor.scroll_col) : 0;
-                    g_editor.cursor_col = utf8_col_to_byte(l, target_vcol);
-                    g_editor.target_visual_col = utf8_byte_to_col(l, g_editor.cursor_col);
-                }
-            }
+    } else if (mevent.bstate & BUTTON1_PRESSED) {
+        set_cursor_from_click(mevent.x, mevent.y);
+        editor_set_mark(&g_editor);
+    } else if (mevent.bstate & (BUTTON1_RELEASED | BUTTON1_CLICKED)) {
+        set_cursor_from_click(mevent.x, mevent.y);
+        if (editor_has_selection(&g_editor)) {
+            editor_copy(&g_editor);
         }
+    } else if (mevent.bstate & (BUTTON2_CLICKED | BUTTON3_CLICKED
+#ifdef BUTTON2_PRESSED
+        | BUTTON2_PRESSED
+#endif
+#ifdef BUTTON3_PRESSED
+        | BUTTON3_PRESSED
+#endif
+    )) {
+        set_cursor_from_click(mevent.x, mevent.y);
+        editor_paste(&g_editor);
     }
 }
 
-/**
- * @brief Dispatch an Escape / Meta (`Alt+key`) sequence using Nano conventions.
- */
 static void handle_meta_key(char *search_buf, size_t search_cap, bool *last_search_forward) {
     nodelay(stdscr, TRUE);
     int next = getch();
@@ -611,7 +626,15 @@ int main(int argc, char *argv[]) {
 
     ui_init();
     editor_init(&g_editor, file_to_open);
-    if (has_cli_wrap) {
+    MdeConfig cfg;
+    if (config_load(&cfg)) {
+        if (!has_cli_wrap && cfg.wrap_col >= 0) {
+            editor_set_wrap_col(&g_editor, cfg.wrap_col);
+        }
+        if (cfg.view_mode >= 0 && cfg.view_mode <= 2) {
+            g_editor.view_mode = (ViewMode)cfg.view_mode;
+        }
+    } else if (has_cli_wrap) {
         editor_set_wrap_col(&g_editor, cli_wrap_col);
     }
 

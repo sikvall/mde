@@ -203,6 +203,109 @@ static void render_inline_spans(RenderedLine *rl, const char *raw_line, const Md
 }
 
 /** @brief Return true if a table line is a Markdown alignment separator row (e.g. `| --- | --- |`). */
+
+static void render_inline_spans_wrapped(RenderedDoc *doc, RenderedLine **current_rl,
+                                       size_t source_row, int max_width,
+                                       const char *cont_prefix, size_t prefix_len, attr_t prefix_attr,
+                                       int initial_col,
+                                       const char *raw_line, const MdParsedLine *pl,
+                                       size_t start_idx, size_t end_idx,
+                                       bool use_override_attr, attr_t override_attr) {
+    int cur_col = initial_col;
+    size_t i = start_idx;
+
+    while (i < end_idx) {
+        MdSpan *sp = &pl->spans[i];
+        if (md_is_header_marker(sp->type) ||
+            sp->type == MD_BLOCKQUOTE_MARKER ||
+            is_stripped_inline_marker(sp->type)) {
+            i++;
+            continue;
+        }
+
+        if (sp->type == MD_IMAGE_MARKER) {
+            const char *alt, *url;
+            size_t alt_len, url_len;
+            i = parse_link_span_seq(raw_line, pl, i, end_idx, &alt, &alt_len, &url, &url_len);
+            attr_t img_attr = use_override_attr ? override_attr : (COLOR_PAIR(CP_HEADER4) | A_BOLD);
+            line_add_chunk(*current_rl, "[Img: ", 6, img_attr);
+            cur_col += 6;
+            if (alt_len > 0) {
+                line_add_chunk(*current_rl, alt, alt_len, img_attr);
+                cur_col += utf8_visual_width_range(alt, 0, alt_len);
+            } else {
+                line_add_chunk(*current_rl, "image", 5, img_attr);
+                cur_col += 5;
+            }
+            line_add_chunk(*current_rl, "]", 1, img_attr);
+            cur_col += 1;
+            continue;
+        }
+
+        if (sp->type == MD_LINK_BRACKET && raw_line[sp->start] == '[') {
+            const char *label, *url;
+            size_t label_len, url_len;
+            i = parse_link_span_seq(raw_line, pl, i, end_idx, &label, &label_len, &url, &url_len);
+            attr_t link_attr = use_override_attr ? (override_attr | A_UNDERLINE) : (COLOR_PAIR(CP_LINK) | A_UNDERLINE);
+            attr_t arrow_attr = use_override_attr ? override_attr : (COLOR_PAIR(CP_LINK) | A_BOLD);
+            const char *txt = (label_len > 0) ? label : url;
+            size_t txt_len = (label_len > 0) ? label_len : url_len;
+            if (txt_len > 0) {
+                line_add_chunk(*current_rl, txt, txt_len, link_attr);
+                cur_col += utf8_visual_width_range(txt, 0, txt_len);
+            }
+            const char *ind = link_direction_indicator(url, url_len);
+            if (ind[0]) {
+                size_t ind_l = strlen(ind);
+                line_add_chunk(*current_rl, ind, ind_l, arrow_attr);
+                cur_col += utf8_visual_width_range(ind, 0, ind_l);
+            }
+            continue;
+        }
+
+        attr_t a = use_override_attr ? override_attr : theme_token_attr(sp->type, false);
+        const char *span_text = raw_line + sp->start;
+        size_t span_len = sp->end - sp->start;
+
+        if (max_width > 12) {
+            size_t pos = 0;
+            while (pos < span_len) {
+                size_t next_pos = pos;
+                while (next_pos < span_len && isspace((unsigned char)span_text[next_pos])) next_pos++;
+                size_t word_end = next_pos;
+                while (word_end < span_len && !isspace((unsigned char)span_text[word_end])) word_end++;
+
+                size_t token_end = (word_end > next_pos) ? word_end : (next_pos < span_len ? next_pos + 1 : span_len);
+                size_t token_bytes = token_end - pos;
+                int token_w = utf8_visual_width_range(span_text, pos, token_end);
+
+                if (cur_col + token_w > max_width && cur_col > (int)prefix_len) {
+                    *current_rl = doc_add_line(doc, source_row);
+                    if (cont_prefix && prefix_len > 0) {
+                        line_add_chunk(*current_rl, cont_prefix, prefix_len, prefix_attr);
+                        cur_col = (int)prefix_len;
+                    } else {
+                        cur_col = 0;
+                    }
+                    while (pos < token_end && isspace((unsigned char)span_text[pos])) pos++;
+                    if (pos >= token_end) continue;
+                    token_bytes = token_end - pos;
+                    token_w = utf8_visual_width_range(span_text, pos, token_end);
+                }
+
+                line_add_chunk(*current_rl, span_text + pos, token_bytes, a);
+                cur_col += token_w;
+                pos = token_end;
+            }
+        } else {
+            line_add_chunk(*current_rl, span_text, span_len, a);
+            cur_col += utf8_visual_width_range(span_text, 0, span_len);
+        }
+
+        i++;
+    }
+}
+
 static bool is_table_separator(const char *line, size_t len) {
     bool has_dash = false;
     bool has_pipe = false;
@@ -538,40 +641,58 @@ void render_document(const Buffer *buf, int width, RenderedDoc *out_doc) {
         } else if (pl.is_blockquote) {
             RenderedLine *rl = doc_add_line(out_doc, row);
             line_add_chunk(rl, "▎ ", 4, COLOR_PAIR(CP_HEADER1) | A_BOLD);
-            render_inline_spans(rl, raw_line, &pl, 0, pl.span_count, false, 0);
+            int max_w = width > 4 ? (width - 4) : 80;
+            render_inline_spans_wrapped(out_doc, &rl, row, max_w,
+                                        "▎ ", 4, COLOR_PAIR(CP_HEADER1) | A_BOLD,
+                                        2, raw_line, &pl, 0, pl.span_count, false, 0);
         } else if (pl.is_list_item) {
             RenderedLine *rl = doc_add_line(out_doc, row);
             size_t body_start = 0;
+            int initial_indent = 4;
+            char cont_indent[32] = "    ";
 
             for (size_t i = 0; i < pl.span_count; ++i) {
                 MdSpan *sp = &pl.spans[i];
                 if (sp->type == MD_LIST_BULLET) {
                     if (pl.is_task) {
                         size_t ind = 0;
-                        while (ind < sp->end && (raw_line[ind] == ' ' || raw_line[ind] == '\t')) ind++;
+                        while (ind < sp->end && (raw_line[ind] == ' ' || raw_line[ind] == '	')) ind++;
                         if (ind > 0) line_add_chunk(rl, raw_line, ind, COLOR_PAIR(CP_DEFAULT));
                     } else if (sp->end > sp->start && isdigit((unsigned char)raw_line[sp->start])) {
                         line_add_chunk(rl, raw_line + sp->start, sp->end - sp->start,
                                        COLOR_PAIR(CP_HEADER2) | A_BOLD);
+                        initial_indent = (int)(sp->end - sp->start);
                     } else {
                         line_add_chunk(rl, "  • ", 6, COLOR_PAIR(CP_HEADER2) | A_BOLD);
+                        initial_indent = 4;
                     }
                     body_start = i + 1;
                 } else if (sp->type == MD_TASK_UNCHECKED) {
                     line_add_chunk(rl, "☐  ", 5, COLOR_PAIR(CP_TASK_UNCHECKED) | A_BOLD);
+                    initial_indent += 3;
                     body_start = i + 1;
                 } else if (sp->type == MD_TASK_CHECKED) {
                     line_add_chunk(rl, "☑  ", 5, COLOR_PAIR(CP_TASK_CHECKED) | A_BOLD);
+                    initial_indent += 3;
                     body_start = i + 1;
                 } else {
                     break;
                 }
             }
-            render_inline_spans(rl, raw_line, &pl, body_start, pl.span_count, false, 0);
+            if (initial_indent > 24) initial_indent = 24;
+            memset(cont_indent, ' ', initial_indent);
+            cont_indent[initial_indent] = 0;
+            int max_w = width > 4 ? (width - 4) : 80;
+            render_inline_spans_wrapped(out_doc, &rl, row, max_w,
+                                        cont_indent, initial_indent, COLOR_PAIR(CP_DEFAULT),
+                                        initial_indent, raw_line, &pl, body_start, pl.span_count, false, 0);
         } else {
             RenderedLine *rl = doc_add_line(out_doc, row);
             if (raw_len > 0) {
-                render_inline_spans(rl, raw_line, &pl, 0, pl.span_count, false, 0);
+                int max_w = width > 4 ? (width - 4) : 80;
+                render_inline_spans_wrapped(out_doc, &rl, row, max_w,
+                                            "", 0, COLOR_PAIR(CP_DEFAULT),
+                                            0, raw_line, &pl, 0, pl.span_count, false, 0);
             }
         }
 

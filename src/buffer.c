@@ -71,6 +71,7 @@ void buffer_init(Buffer *buf) {
     buf->current_group_id = 1;
     buf->saved_undo_depth = 0;
     buf->saved_depth_valid = true;
+    buf->has_crlf_endings = false;
 }
 
 /** @brief Release all lines, file path, and undo/redo history owned by buf. */
@@ -142,8 +143,12 @@ bool buffer_load(Buffer *buf, const char *file_path) {
     char *line_buf = NULL;
     size_t line_cap = 0;
     ssize_t read_bytes;
+    bool detected_crlf = false;
 
     while ((read_bytes = getline(&line_buf, &line_cap, f)) != -1) {
+        if (read_bytes >= 2 && line_buf[read_bytes - 2] == '\r' && line_buf[read_bytes - 1] == '\n') {
+            detected_crlf = true;
+        }
         // Strip trailing \r and \n characters
         while (read_bytes > 0 && (line_buf[read_bytes - 1] == '\n' || line_buf[read_bytes - 1] == '\r')) {
             line_buf[--read_bytes] = '\0';
@@ -181,6 +186,7 @@ bool buffer_load(Buffer *buf, const char *file_path) {
     undo_stack_clear(&buf->redo_stack);
     buf->saved_undo_depth = 0;
     buf->saved_depth_valid = true;
+    buf->has_crlf_endings = detected_crlf;
     return true;
 }
 

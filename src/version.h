@@ -13,8 +13,8 @@
 #define MDE_APP_TITLE       "Markdown Editor"
 #define MDE_VERSION_MAJOR   0
 #define MDE_VERSION_MINOR   1
-#define MDE_VERSION_PATCH   0
-#define MDE_VERSION_STRING  "0.1.0"
+#define MDE_VERSION_PATCH   1
+#define MDE_VERSION_STRING  "0.1.1"
 
 #ifndef MDE_BUILD_DATE
 #define MDE_BUILD_DATE      __DATE__
@@ -25,7 +25,7 @@
 #endif
 
 #define MDE_AUTHOR          "Anders"
-#define MDE_MAINTAINER      "Anders <anders@localhost>"
+#define MDE_MAINTAINER      "Anders <anders@sikvall.se>"
 #define MDE_DESCRIPTION     "Full-screen text-mode Markdown editor"
 
 #endif // MDE_VERSION_H
