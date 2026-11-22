@@ -903,7 +903,19 @@ bool export_document_ex(const Buffer *buf, ExportFormat fmt, const char *out_pat
         }
         use_pandoc = true;
     } else if (engine == EXPORT_ENGINE_AUTO) {
-        use_pandoc = has_pandoc;
+        // Use native built-in converters where available; pandoc is only used
+        // as a fallback if a format lacks a native converter.
+        switch (fmt) {
+            case EXPORT_HTML:
+            case EXPORT_XML:
+            case EXPORT_EPUB:
+            case EXPORT_LATEX:
+                use_pandoc = false;
+                break;
+            default:
+                use_pandoc = has_pandoc;
+                break;
+        }
     }
 
     ExportDocList docs;

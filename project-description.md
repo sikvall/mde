@@ -5,7 +5,7 @@
 > recent upgrades, git history, and the remaining roadmap items.
 >
 > Snapshot basis: **v0.1.1** (2026-11-22), pure C11 codebase compiling warning-free with `gcc`, `ncursesw`, and `libzip`.
-> Test runner passes **541 / 541 tests (100.0%)**.
+> Test runner passes **543 / 543 tests (100.0%)**.
 
 ---
 

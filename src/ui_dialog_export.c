@@ -94,10 +94,10 @@ bool ui_export_menu(Editor *ed) {
         char eng_line[128];
         if (has_pandoc) {
             snprintf(eng_line, sizeof(eng_line), "Engine: %s  (pandoc detected - press E to toggle)",
-                     engine == EXPORT_ENGINE_BUILTIN ? "Built-in C11" : "Auto (Pandoc)");
+                     engine == EXPORT_ENGINE_PANDOC ? "Pandoc (external)" : "Built-in C11 (native)");
             wattron(win, COLOR_PAIR(CP_TASK_CHECKED) | A_BOLD);
         } else {
-            snprintf(eng_line, sizeof(eng_line), "Engine: Built-in C11  (native conversion; pandoc optional)");
+            snprintf(eng_line, sizeof(eng_line), "Engine: Built-in C11 (native conversion; pandoc optional)");
             wattron(win, COLOR_PAIR(CP_TASK_CHECKED));
         }
         if (win_w > 4) {
@@ -154,10 +154,7 @@ bool ui_export_menu(Editor *ed) {
             }
 
             // Right-aligned backend badge
-            const char *badge = "[built-in]";
-            if (has_pandoc && engine != EXPORT_ENGINE_BUILTIN) {
-                badge = "[pandoc]";
-            }
+            const char *badge = (engine == EXPORT_ENGINE_PANDOC && has_pandoc) ? "[pandoc]" : "[built-in]";
             int blen = (int)strlen(badge);
             if (win_w - blen - 2 > 22) {
                 mvwaddstr(win, y, win_w - blen - 2, badge);
@@ -358,7 +355,7 @@ bool ui_export_menu(Editor *ed) {
             } else if (ch >= '1' && ch <= '4') {
                 selected_fmt = (ExportFormat)(ch - '1');
             } else if ((ch == 'e' || ch == 'E') && has_pandoc) {
-                engine = (engine == EXPORT_ENGINE_AUTO) ? EXPORT_ENGINE_BUILTIN : EXPORT_ENGINE_AUTO;
+                engine = (engine == EXPORT_ENGINE_PANDOC) ? EXPORT_ENGINE_AUTO : EXPORT_ENGINE_PANDOC;
                 err_msg[0] = '\0';
             } else if (ch == 'l' || ch == 'L') {
                 include_linked = !include_linked;

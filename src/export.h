@@ -2,9 +2,8 @@
  * @file export.h
  * @brief Document export subsystem for HTML, XML, EPUB, and LaTeX.
  *
- * Uses pandoc when available and appropriate (and requires pandoc for EPUB),
- * with built-in C11 exporters for HTML5, structured XML, and LaTeX as
- * self-contained fallbacks.
+ * Uses native built-in C11 converters for HTML, XML, EPUB, and LaTeX,
+ * with optional pandoc delegation available when explicitly selected.
  */
 
 #ifndef MDE_EXPORT_H
@@ -33,8 +32,8 @@ typedef enum {
  * @brief Export backend engine selection.
  */
 typedef enum {
-    EXPORT_ENGINE_AUTO = 0, /**< Prefer pandoc if available; fall back to built-in for HTML/XML/LaTeX */
-    EXPORT_ENGINE_BUILTIN,  /**< Force built-in C11 exporter (unavailable for EPUB) */
+    EXPORT_ENGINE_AUTO = 0, /**< Prefer native built-in converters where available; fall back to pandoc */
+    EXPORT_ENGINE_BUILTIN,  /**< Force built-in C11 exporter */
     EXPORT_ENGINE_PANDOC    /**< Force pandoc external converter */
 } ExportEngine;
 

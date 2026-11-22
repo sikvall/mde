@@ -880,9 +880,18 @@ static void test_export_subsystem(void) {
         setenv("PATH", new_path, 1);
 
         TEST_ASSERT(export_has_pandoc(), "export_has_pandoc detects pandoc on PATH");
+
+        // 5a. EXPORT_ENGINE_AUTO uses native built-in engine even when pandoc is on PATH
         ok = export_document(&buf, EXPORT_EPUB, epub_out, EXPORT_ENGINE_AUTO,
                              used, sizeof(used), err, sizeof(err));
-        TEST_ASSERT(ok, "EPUB export succeeds via pandoc");
+        TEST_ASSERT(ok, "EPUB export succeeds with EXPORT_ENGINE_AUTO");
+        TEST_ASSERT(strcmp(used, "built-in") == 0, "EXPORT_ENGINE_AUTO prefers native built-in converter");
+        remove(epub_out);
+
+        // 5b. EXPORT_ENGINE_PANDOC explicitly routes to pandoc
+        ok = export_document(&buf, EXPORT_EPUB, epub_out, EXPORT_ENGINE_PANDOC,
+                             used, sizeof(used), err, sizeof(err));
+        TEST_ASSERT(ok, "EPUB export succeeds via pandoc when EXPORT_ENGINE_PANDOC selected");
         TEST_ASSERT(strcmp(used, "pandoc") == 0, "EPUB engine reported as pandoc");
         char *epub_txt = read_entire_file(epub_out);
         TEST_ASSERT(epub_txt != NULL && strstr(epub_txt, "MOCK_PANDOC_OUTPUT") != NULL,
@@ -1236,7 +1245,7 @@ static void test_hypertext_linking_and_export(void) {
     setenv("PATH", mock_path_env, 1);
 
     const char *epub_out = "/tmp/mde_ht_test/book.epub";
-    ok = export_document_ex(&root_buf, EXPORT_EPUB, epub_out, EXPORT_ENGINE_AUTO,
+    ok = export_document_ex(&root_buf, EXPORT_EPUB, epub_out, EXPORT_ENGINE_PANDOC,
                             true, &linked_cnt, used, sizeof(used), err, sizeof(err));
     TEST_ASSERT(ok && linked_cnt == 2 && strcmp(used, "pandoc") == 0,
                 "EPUB multi-file export via pandoc included all 2 linked files");
