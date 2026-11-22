@@ -1,0 +1,132 @@
+.TH MD2EPUB 1 "November 2026" "mde 0.1.1" "User Commands"
+.SH NAME
+md2epub \- native Markdown to EPUB 2/3 e-book converter
+.SH SYNOPSIS
+.B md2epub
+[\fIOPTIONS\fR] \fIinput.md\fR [\fIoutput.epub\fR]
+.SH DESCRIPTION
+.B md2epub
+is a native C11 command-line tool that converts CommonMark and extended Markdown
+documents, along with linked local document graphs, into fully compliant EPUB 3 or
+legacy EPUB 2.0.1 e-books.
+.PP
+Packaging is performed natively using \fBlibzip\fR, strictly enforcing the Open
+Container Format (OCF) standard: the \fImimetype\fR file is stored uncompressed
+(\fBZIP_CM_STORE\fR) at offset 0, followed by \fIMETA-INF/container.xml\fR,
+\fIEPUB/package.opf\fR, navigation files, CSS stylesheets, bundled local images,
+and valid XHTML 1.1 / HTML5 chapters.
+.PP
+By default, \fBmd2epub\fR automatically splits input documents into distinct
+chapters at every H1 (\fB#\fR) heading and at linked Markdown document boundaries.
+Internal cross-references and links between chapters are rewritten to valid intra-archive
+anchors, and external URLs (e.g. \fIhttps://\fR) are fully preserved.
+.SH OPTIONS
+.TP
+.BR \-o " " \fIFILE\fR ", " \-\-output " " \fIFILE\fR
+Specify destination \fI.epub\fR archive path. Defaults to \fI<input_stem>.epub\fR.
+.TP
+.BR \-2 ", " \-\-epub2
+Generate an EPUB 2.0.1 e-book with \fItoc.ncx\fR navigation map for older e-readers.
+.TP
+.BR \-3 ", " \-\-epub3
+Generate a modern EPUB 3.2 e-book with semantic \fInav.xhtml\fR navigation document
+(and backward-compatible NCX spine). This is the default.
+.TP
+.BR \-t " " \fISTRING\fR ", " \-\-title " " \fISTRING\fR
+Override the publication title (defaults to YAML front matter or the first H1 heading).
+.TP
+.BR \-a " " \fISTRING\fR ", " \-\-author " " \fISTRING\fR
+Override the author / creator metadata.
+.TP
+.BR \-l " " \fICODE\fR ", " \-\-lang " " \fICODE\fR
+Override the BCP 47 language code (defaults to \fIen\fR or YAML front matter).
+.TP
+.BR \-\-date " " \fISTRING\fR
+Set the publication date (ISO 8601 or \fIYYYY-MM-DD\fR format).
+.TP
+.BR \-\-publisher " " \fISTRING\fR
+Set the publisher entity name.
+.TP
+.BR \-\-identifier " " \fISTRING\fR
+Set a unique publication identifier (e.g., URN UUID or ISBN).
+.TP
+.BR \-\-rights " " \fISTRING\fR
+Set the copyright or licensing statement.
+.TP
+.BR \-\-description " " \fISTRING\fR
+Set the book description or abstract.
+.TP
+.BR \-\-cover " " \fIIMAGE_FILE\fR
+Embed the specified image file (JPEG, PNG, WebP, GIF, or SVG) as the e-book cover,
+creating a dedicated cover page and manifest cover metadata.
+.TP
+.BR \-c " " \fICSS_FILE\fR ", " \-\-css " " \fICSS_FILE\fR
+Use a custom CSS stylesheet instead of the built-in typographic stylesheet.
+.TP
+.BR \-\-no\-split
+Do not split chapters on H1 headings; keep the entire input document in a single chapter.
+.TP
+.BR \-\-no\-linked
+Do not follow or bundle locally linked Markdown files (\fI[Link](chapter.md)\fR).
+.TP
+.BR \-q ", " \-\-quiet
+Suppress progress reporting and informational output.
+.TP
+.BR \-v ", " \-\-version
+Print version and build information, then exit.
+.TP
+.BR \-h ", " \-\-help
+Print usage instructions and options summary, then exit.
+.SH YAML FRONT MATTER
+\fBmd2epub\fR automatically detects and parses YAML front matter delimited by
+\fB---\fR at the beginning of the Markdown file. Supported keys include:
+.RS
+.TP
+.B title
+Book title string.
+.TP
+.B author
+Author name.
+.TP
+.B language
+Language code (e.g., \fIen\fR, \fIsv\fR, \fIde\fR).
+.TP
+.B date
+Publication date.
+.TP
+.B publisher
+Publisher name.
+.TP
+.B identifier
+Unique ID (UUID or ISBN).
+.TP
+.B rights
+Copyright or licensing text.
+.TP
+.B description
+Abstract or summary.
+.TP
+.B cover
+Relative or absolute path to cover image.
+.TP
+.B css
+Relative or absolute path to custom stylesheet.
+.RE
+.PP
+Front-matter blocks are cleanly stripped from the generated chapter bodies. CLI flags
+always take precedence over YAML front-matter values.
+.SH EXAMPLES
+.TP
+Convert a single Markdown file to an EPUB 3 e-book:
+.B md2epub novel.md
+.TP
+Convert with custom title, author, and output path:
+.B md2epub \-o /tmp/manual.epub \-\-title "User Manual" \-\-author "Tech Corp" guide.md
+.TP
+Generate an EPUB 2 e-book with custom CSS and a cover image:
+.B md2epub \-2 \-\-cover cover.jpg \-c book.css thesis.md
+.SH SEE ALSO
+.BR mde (1),
+.BR zip (1)
+.SH AUTHOR
+Anders (mde project)

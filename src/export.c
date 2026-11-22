@@ -156,14 +156,14 @@ static void extract_doc_title(const Buffer *buf, char *out_title, size_t cap) {
  * ========================================================================= */
 
 /** @brief Initialize an empty ExportDocList container. */
-static void export_doc_list_init(ExportDocList *list) {
+void export_doc_list_init(ExportDocList *list) {
     list->nodes = NULL;
     list->count = 0;
     list->cap = 0;
 }
 
 /** @brief Free all owned child buffers and node array inside an ExportDocList. */
-static void export_doc_list_free(ExportDocList *list) {
+void export_doc_list_free(ExportDocList *list) {
     if (!list) return;
     for (size_t i = 0; i < list->count; ++i) {
         if (list->nodes[i].owned_buf) {
@@ -448,7 +448,7 @@ static void collect_linked_recursive(ExportDocList *list, size_t doc_idx) {
 }
 
 /** @brief Populate list with root (node 0) and optionally all recursively linked Markdown files. */
-static bool export_doc_list_collect(ExportDocList *list, const Buffer *root, bool include_linked) {
+bool export_doc_list_collect(ExportDocList *list, const Buffer *root, bool include_linked) {
     export_doc_list_init(list);
     if (!root) return false;
 
@@ -895,22 +895,8 @@ bool export_document_ex(const Buffer *buf, ExportFormat fmt, const char *out_pat
 
     bool has_pandoc = export_has_pandoc();
 
-    // EPUB always requires pandoc
-    if (fmt == EXPORT_EPUB) {
-        if (engine == EXPORT_ENGINE_BUILTIN) {
-            set_str(err_msg, err_cap, "EPUB export requires pandoc (no built-in EPUB backend)");
-            return false;
-        }
-        if (!has_pandoc) {
-            set_str(err_msg, err_cap, "EPUB export requires pandoc (install: sudo apt install pandoc)");
-            return false;
-        }
-    }
-
     bool use_pandoc = false;
-    if (fmt == EXPORT_EPUB) {
-        use_pandoc = true;
-    } else if (engine == EXPORT_ENGINE_PANDOC) {
+    if (engine == EXPORT_ENGINE_PANDOC) {
         if (!has_pandoc) {
             set_str(err_msg, err_cap, "pandoc is not installed on PATH");
             return false;
@@ -939,6 +925,7 @@ bool export_document_ex(const Buffer *buf, ExportFormat fmt, const char *out_pat
         switch (fmt) {
             case EXPORT_HTML:  ok = export_builtin_html(&docs, out_path, err_msg, err_cap); break;
             case EXPORT_XML:   ok = export_builtin_xml(&docs, out_path, err_msg, err_cap); break;
+            case EXPORT_EPUB:  ok = export_builtin_epub(&docs, out_path, NULL, err_msg, err_cap); break;
             case EXPORT_LATEX: ok = export_builtin_latex(&docs, out_path, err_msg, err_cap); break;
             default:
                 set_str(err_msg, err_cap, "Unsupported export format");

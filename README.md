@@ -55,7 +55,8 @@
     - **HTML5 & EPUB 3**: Bundles all linked documents and rewrites internal `.md` links into working hypertext section/chapter links.
     - **LaTeX**: Combines the root document and all linked Markdown sources into **one unified `.tex` document** (single preamble and `\begin{document}...\end{document}` with internal `\hypertarget`/`\hyperlink` cross-references).
     - **XML**: Includes all linked sources as structured `<linked-document>` / DocBook sections with rewritten internal links.
-  - Automatically detects and uses **`pandoc`** (invoked safely via `fork`/`execvp`, never a shell) when installed, with full built-in C11 exporters for HTML5, structured XML, and LaTeX as zero-dependency fallbacks (EPUB requires `pandoc`).
+  - Automatically detects and uses **`pandoc`** (invoked safely via `fork`/`execvp`, never a shell) when installed, with full built-in C11 exporters for HTML5, structured XML, EPUB 2/3, and LaTeX as zero-dependency native fallbacks.
+  - **Native EPUB 2/3 & Standalone `md2epub` CLI Tool**: EPUB export is powered natively in C11 using `libzip-dev`, creating compliant Open Container Format (OCF) archives with uncompressed `mimetype` at offset 0, automatic chapter splitting on `# ` headings and linked files, YAML front-matter metadata parsing, local image bundling, and multi-level table-of-contents navigation (`nav.xhtml` and `toc.ncx`). You can also use the standalone `md2epub` command directly from the shell (`md2epub book.md -o book.epub`).
   - Pre-fills the output filename based on the current file and updates extensions automatically as you choose a format; press `Tab` to customize the destination path, `L` to toggle linked-file inclusion, or `E` to toggle between Pandoc and Built-in engines. If the destination file already exists, an explicit `(Y)es / (N)o` overwrite confirmation is required before writing.
 - **Document Outline (`F9` / `Alt+T`), Search & Replace (`Ctrl+\` / `Alt+R`) & Paragraph Reflow (`Alt+J`)**:
   - **Document Outline (`F9` / `Alt+T`)**: Opens a scrollable heading navigator listing all H1–H6 headings in the active file; press `Enter` to jump directly to any section.
@@ -222,13 +223,15 @@ mde -w 100 notes.md
 
 # Open with automatic line break disabled
 mde --wrap=off notes.md
-
-# Open sample demo file
 mde examples/demo.md
-
-# View help and version
 mde --help
 mde --version
+
+# Running md2epub standalone converter
+md2epub examples/demo.md               # Creates examples/demo.epub (EPUB 3)
+md2epub -2 --cover cover.jpg book.md   # Creates book.epub (EPUB 2 with cover)
+md2epub -o dist/book.epub --title "Title" --author "Author" book.md
+md2epub --help
 ```
 
 ---
@@ -243,12 +246,19 @@ mde/
 │   ├── demo.md         # Comprehensive interactive showcase document
 │   └── advanced.md     # Multi-file navigation & linked export showcase
 ├── man/
-│   └── mde.1           # Standard UNIX man page
+│   ├── mde.1           # Standard UNIX man page for editor
+│   └── md2epub.1       # UNIX man page for EPUB converter
 ├── src/
 │   ├── version.h       # Centralized name, version, and build date
 │   ├── buffer.h / .c   # Text buffer with UTF-8 & dynamic reallocation
 │   ├── editor.h / .c   # Editor state, auto line break, selection & Markdown helpers
-│   ├── export.h / .c   # Export to HTML, XML, EPUB, LaTeX (pandoc + built-in C11)
+│   ├── epub.h          # Native EPUB2/EPUB3 converter API
+│   ├── export.h / .c   # Export dispatcher (HTML, XML, EPUB, LaTeX)
+│   ├── export_epub.c   # Native C11 EPUB 2/3 builder using libzip
+│   ├── export_html.c   # Built-in HTML5 exporter
+│   ├── export_latex.c  # Built-in unified LaTeX exporter
+│   ├── export_xml.c    # Built-in structured XML exporter
+│   ├── md2epub_main.c  # Standalone CLI binary entry point
 │   ├── markdown.h / .c # Markdown lexer, AST spans & block/inline tokenizer
 │   ├── renderer.h / .c # Formatted preview renderer with synchronized line mapping
 │   ├── theme.h / .c    # 256-color & 16-color ncurses palette & token styles
@@ -257,7 +267,7 @@ mde/
 │   ├── utf8.h / .c     # UTF-8 boundary checks, visual column conversions (wcwidth)
 │   └── main.c          # Event loop, CLI parsing, signals, key & mouse dispatch
 └── tests/
-    └── test_runner.c   # Comprehensive C11 unit test suite (395 tests)
+    └── test_runner.c   # Comprehensive C11 unit test suite (541 tests)
 ```
 
 ---

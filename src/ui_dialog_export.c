@@ -93,12 +93,12 @@ bool ui_export_menu(Editor *ed) {
         // Row 1: Engine status bar
         char eng_line[128];
         if (has_pandoc) {
-            snprintf(eng_line, sizeof(eng_line), "Engine: %s  (pandoc detected)",
+            snprintf(eng_line, sizeof(eng_line), "Engine: %s  (pandoc detected - press E to toggle)",
                      engine == EXPORT_ENGINE_BUILTIN ? "Built-in C11" : "Auto (Pandoc)");
             wattron(win, COLOR_PAIR(CP_TASK_CHECKED) | A_BOLD);
         } else {
-            snprintf(eng_line, sizeof(eng_line), "Engine: Built-in  (pandoc not found; EPUB needs pandoc)");
-            wattron(win, COLOR_PAIR(CP_TASK_UNCHECKED));
+            snprintf(eng_line, sizeof(eng_line), "Engine: Built-in C11  (native conversion; pandoc optional)");
+            wattron(win, COLOR_PAIR(CP_TASK_CHECKED));
         }
         if (win_w > 4) {
             mvwaddnstr(win, 1, 2, eng_line, win_w - 4);
@@ -155,9 +155,7 @@ bool ui_export_menu(Editor *ed) {
 
             // Right-aligned backend badge
             const char *badge = "[built-in]";
-            if (k_formats[i].fmt == EXPORT_EPUB) {
-                badge = has_pandoc ? "[pandoc]" : "[needs pandoc]";
-            } else if (has_pandoc && engine != EXPORT_ENGINE_BUILTIN) {
+            if (has_pandoc && engine != EXPORT_ENGINE_BUILTIN) {
                 badge = "[pandoc]";
             }
             int blen = (int)strlen(badge);

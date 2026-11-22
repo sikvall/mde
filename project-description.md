@@ -4,8 +4,8 @@
 > **mde**. It details what the project is, its architectural design, build system, current state,
 > recent upgrades, git history, and the remaining roadmap items.
 >
-> Snapshot basis: **v0.1.1** (2026-11-22), pure C11 codebase compiling warning-free with `gcc` and `ncursesw`.
-> Test runner passes **490 / 490 tests (100.0%)**.
+> Snapshot basis: **v0.1.1** (2026-11-22), pure C11 codebase compiling warning-free with `gcc`, `ncursesw`, and `libzip`.
+> Test runner passes **541 / 541 tests (100.0%)**.
 
 ---
 
@@ -47,9 +47,9 @@ make deb             # Package Debian .deb package -> bin/mde_<version>_<arch>.d
 ./bin/mde -h | -v             # Usage instructions / version info
 ```
 
-- **Compiler & Flags:** `CFLAGS ?= -std=c11 -MMD -MP -Wall -Wextra -pedantic -O2 -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700 -D_XOPEN_SOURCE_EXTENDED=1`, `LDFLAGS ?= -lncursesw`.
+- **Compiler & Flags:** `CFLAGS ?= -std=c11 -MMD -MP -Wall -Wextra -pedantic -O2 -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700 -D_XOPEN_SOURCE_EXTENDED=1`, `LDFLAGS ?= -lncursesw -lzip`.
 - **Automatic Header Dependencies:** The build system uses `-MMD -MP` and `-include $(OBJS:.o=.d)` to automatically track `.h` changes across builds.
-- **Unified Installation:** `PREFIX ?= /usr/local` applies to `make install` (`$(DESTDIR)$(PREFIX)/bin` and `$(DESTDIR)$(PREFIX)/share/man/man1`).
+- **Unified Installation:** `PREFIX ?= /usr/local` applies to `make install` (`bin/mde`, `bin/md2epub` in `$(DESTDIR)$(PREFIX)/bin` and `man/mde.1`, `man/md2epub.1` in `$(DESTDIR)$(PREFIX)/share/man/man1`).
 
 ---
 
@@ -222,7 +222,24 @@ The following tasks from your requirements and project roadmap are identified fo
   - Added dedicated function key toggle (`F10` / `F12`) to instantly hide/show bottom shortcut hints and maximize editable screen area.
   - Added persistent configuration setting `show_keybindings = true/false` in `~/.config/mde/config`.
 
-### 6.6 Markdown Authoring, Typography & Diagnostic Tools
+### 6.6 Native Markdown to EPUB 2/3 Converter & Standalone CLI (md2epub)
+- [x] **Native C11 EPUB 2/3 Engine (`src/export_epub.c`, `src/epub.h`):**
+  - Fully implemented native EPUB conversion without third-party tools, replacing external pandoc reliance for EPUB in `mde`.
+  - Packages valid Open Container Format (OCF) archives with uncompressed `mimetype` (`application/epub+zip`, 20 bytes STORE at offset 0) using `libzip`.
+  - Automatically splits chapters on H1 (`# `) headings and linked `.md` document boundaries.
+  - Generates semantic `nav.xhtml` for EPUB 3 and `toc.ncx` for EPUB 2 with nested subheadings (H2, H3).
+  - Automatically extracts YAML front matter metadata (`title`, `author`, `language`, `date`, `publisher`, `identifier`, `rights`, `description`, `cover`, `css`) and strips front matter from the published book body.
+  - Automatically bundles local images referenced in the text into `EPUB/images/` with correct MIME types in the OPF manifest.
+  - Preserves external HTTP/HTTPS hyperlinks and rewrites internal document links to intra-archive XHTML anchors.
+- [x] **Standalone CLI Tool (`bin/md2epub`, `src/md2epub_main.c`):**
+  - Independent binary with CLI options (`-o`, `-2`, `-3`, `-t`, `-a`, `-l`, `--date`, `--publisher`, `--identifier`, `--rights`, `--description`, `--cover`, `-c`, `--no-split`, `--no-linked`, `-q`, `-v`, `-h`).
+  - Terminal progress indicator (6 steps: parsing metadata, splitting chapters, generating XHTML, navigation documents, manifest OPF, zip packaging).
+- [x] **Documentation & Test Coverage:**
+  - Added complete roff man page `man/md2epub.1`.
+  - Added comprehensive test suite `test_epub_system` in `tests/test_runner.c` verifying front matter parsing, chapter splitting, image inclusion, EPUB 2/3 OCF archives, and CLI execution. All 541 tests pass (100.0%).
+  - Updated specification and handover documentation in `md-to-epub.md`.
+
+### 6.7 Markdown Authoring, Typography & Diagnostic Tools
 - [ ] **Link Integrity & Dead Link Validator (`F9` / Alt+L):**
   - Provide a diagnostic scan of all inline `[text](target)` and reference `[ref]: target` links in the current document.
   - Verify existence of local target files on disk and validate `#anchor` fragments against heading slugs.

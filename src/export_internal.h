@@ -8,6 +8,7 @@
 
 #define _POSIX_C_SOURCE 200809L
 #include "export.h"
+#include "epub.h"
 #include "markdown.h"
 #include "utf8.h"
 #include <stdio.h>
@@ -57,9 +58,14 @@ ssize_t find_linked_doc_index(const ExportDocList *list, size_t from_idx,
                               char *out_frag, size_t frag_cap);
 void slugify_heading(const char *text, size_t len, char *out_slug, size_t cap);
 
+void export_doc_list_init(ExportDocList *list);
+void export_doc_list_free(ExportDocList *list);
+bool export_doc_list_collect(ExportDocList *list, const Buffer *root, bool include_linked);
+
 bool export_builtin_html(const ExportDocList *docs, const char *out_path, char *err_msg, size_t err_cap);
 bool export_builtin_xml(const ExportDocList *docs, const char *out_path, char *err_msg, size_t err_cap);
 bool export_builtin_latex(const ExportDocList *docs, const char *out_path, char *err_msg, size_t err_cap);
+bool export_builtin_epub(const ExportDocList *docs, const char *out_path, const EpubOptions *opts, char *err_msg, size_t err_cap);
 
 #ifdef __cplusplus
 }

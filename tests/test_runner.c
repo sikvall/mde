@@ -23,8 +23,10 @@
 #include "../src/theme.h"
 #include "../src/editor.h"
 #include "../src/export.h"
+#include "../src/epub.h"
 #include "../src/ui.h"
 #include "../src/config.h"
+#include <zip.h>
 
 static int g_tests_run = 0;
 static int g_tests_passed = 0;
@@ -846,12 +848,15 @@ static void test_export_subsystem(void) {
     }
     remove(tex_out);
 
-    // 4. EPUB built-in rejection (requires pandoc)
+    // 4. Native EPUB built-in export
     const char *epub_out = "/tmp/test_mde_export.epub";
     ok = export_document(&buf, EXPORT_EPUB, epub_out, EXPORT_ENGINE_BUILTIN,
                          used, sizeof(used), err, sizeof(err));
-    TEST_ASSERT(!ok, "EPUB fails gracefully when built-in engine is forced");
-    TEST_ASSERT(strstr(err, "pandoc") != NULL, "EPUB error mentions pandoc");
+    TEST_ASSERT(ok, "EPUB export succeeds with native built-in engine");
+    TEST_ASSERT(strcmp(used, "built-in") == 0, "EPUB engine reported as built-in");
+    struct stat epub_st;
+    TEST_ASSERT(stat(epub_out, &epub_st) == 0 && epub_st.st_size > 0, "Native EPUB file generated on disk");
+    remove(epub_out);
 
     // 5. Pandoc execution pipeline verified with mock pandoc script on PATH
     const char *mock_dir = "/tmp/mde_mock_bin";
@@ -1948,6 +1953,319 @@ static void test_footnote_navigation_and_config_persistence(void) {
     editor_free(&ed);
 }
 
+/** @brief Helper to append a line of text to a test Buffer. */
+static void test_buf_add_line(Buffer *b, const char *text) {
+    size_t count = buffer_line_count(b);
+    if (count == 1 && buffer_line_len(b, 0) == 0) {
+        buffer_replace_line(b, 0, text, strlen(text), 0);
+    } else {
+        buffer_split_line(b, count - 1, buffer_line_len(b, count - 1), 0);
+        buffer_replace_line(b, count, text, strlen(text), 0);
+    }
+}
+
+/** @brief Helper to read an entire entry from an open libzip archive. */
+static char *zip_test_read_entry(struct zip *za, const char *name, zip_uint64_t *out_size) {
+    struct zip_stat st;
+    zip_stat_init(&st);
+    if (zip_stat(za, name, 0, &st) != 0) return NULL;
+    struct zip_file *zf = zip_fopen(za, name, 0);
+    if (!zf) return NULL;
+    char *buf = (char *)malloc(st.size + 1);
+    if (!buf) { zip_fclose(zf); return NULL; }
+    zip_int64_t n = zip_fread(zf, buf, st.size);
+    zip_fclose(zf);
+    if (n < 0) { free(buf); return NULL; }
+    buf[n] = '\0';
+    if (out_size) *out_size = st.size;
+    return buf;
+}
+
+/** @brief Test suite for native EPUB 2/3 conversion, front matter, chapter splitting, and OCF packaging. */
+static void test_epub_system(void) {
+    printf("--- Testing Native EPUB 2/3 System ---\n");
+
+    // 1. YAML Front Matter parsing
+    Buffer buf;
+    buffer_init(&buf);
+    const char *front_matter_md =
+        "---\n"
+        "title: \"The Great Book\"\n"
+        "author: Jane Austen\n"
+        "language: en\n"
+        "date: 2026-11-22\n"
+        "publisher: Classic Press\n"
+        "identifier: urn:uuid:12345678-1234-5678-1234-567812345678\n"
+        "rights: Public Domain\n"
+        "description: A masterpiece of English literature.\n"
+        "---\n"
+        "# Chapter 1: Introduction\n"
+        "\n"
+        "It is a truth universally acknowledged...\n";
+
+    const char *p = front_matter_md;
+    while (*p) {
+        const char *nl = strchr(p, '\n');
+        size_t len = nl ? (size_t)(nl - p) : strlen(p);
+        char line_buf[512];
+        if (len >= sizeof(line_buf)) len = sizeof(line_buf) - 1;
+        memcpy(line_buf, p, len);
+        line_buf[len] = '\0';
+        test_buf_add_line(&buf, line_buf);
+        p = nl ? nl + 1 : p + len;
+    }
+
+    EpubMetadata meta;
+    memset(&meta, 0, sizeof(meta));
+    size_t body_start = 0;
+    bool has_front = epub_parse_front_matter(&buf, &meta, &body_start);
+    TEST_ASSERT(has_front, "epub_parse_front_matter successfully parsed YAML block");
+    TEST_ASSERT(strcmp(meta.title, "The Great Book") == 0, "Parsed title from YAML");
+    TEST_ASSERT(strcmp(meta.author, "Jane Austen") == 0, "Parsed author from YAML");
+    TEST_ASSERT(strcmp(meta.language, "en") == 0, "Parsed language from YAML");
+    TEST_ASSERT(strcmp(meta.date, "2026-11-22") == 0, "Parsed date from YAML");
+    TEST_ASSERT(strcmp(meta.publisher, "Classic Press") == 0, "Parsed publisher from YAML");
+    TEST_ASSERT(strcmp(meta.identifier, "urn:uuid:12345678-1234-5678-1234-567812345678") == 0, "Parsed identifier from YAML");
+    TEST_ASSERT(strcmp(meta.rights, "Public Domain") == 0, "Parsed rights from YAML");
+    TEST_ASSERT(strcmp(meta.description, "A masterpiece of English literature.") == 0, "Parsed description from YAML");
+    TEST_ASSERT(body_start == 10, "body_start points to line 10 after front matter delimiter");
+
+    // 2. EPUB 3 conversion and OCF compliance verification
+    const char *epub3_path = "/tmp/test_book_epub3.epub";
+    char err[256] = {0};
+    EpubOptions opts3;
+    epub_options_init(&opts3);
+    opts3.version = EPUB_VERSION_3;
+
+    bool ok = epub_convert_buffer(&buf, epub3_path, &opts3, err, sizeof(err));
+    TEST_ASSERT(ok, "epub_convert_buffer succeeds for EPUB 3");
+
+    int errcode = 0;
+    struct zip *za = zip_open(epub3_path, ZIP_RDONLY, &errcode);
+    TEST_ASSERT(za != NULL, "Generated EPUB 3 is a valid zip archive");
+    if (za) {
+        // First entry must be mimetype
+        const char *e0 = zip_get_name(za, 0, 0);
+        TEST_ASSERT(e0 != NULL && strcmp(e0, "mimetype") == 0, "First archive entry is 'mimetype'");
+
+        zip_uint64_t mt_size = 0;
+        char *mt_content = zip_test_read_entry(za, "mimetype", &mt_size);
+        TEST_ASSERT(mt_content != NULL && strcmp(mt_content, "application/epub+zip") == 0,
+                    "mimetype entry contains exact 'application/epub+zip'");
+        TEST_ASSERT(mt_size == 20, "mimetype entry is exactly 20 bytes uncompressed");
+        free(mt_content);
+
+        // container.xml
+        char *cnt = zip_test_read_entry(za, "META-INF/container.xml", NULL);
+        TEST_ASSERT(cnt != NULL && strstr(cnt, "full-path=\"EPUB/package.opf\"") != NULL,
+                    "container.xml points to EPUB/package.opf");
+        free(cnt);
+
+        // package.opf (EPUB 3)
+        char *opf = zip_test_read_entry(za, "EPUB/package.opf", NULL);
+        TEST_ASSERT(opf != NULL, "EPUB/package.opf exists in archive");
+        if (opf) {
+            TEST_ASSERT(strstr(opf, "version=\"3.0\"") != NULL, "OPF specifies version='3.0'");
+            TEST_ASSERT(strstr(opf, "<dc:title>The Great Book</dc:title>") != NULL, "OPF contains title metadata");
+            TEST_ASSERT(strstr(opf, "Jane Austen") != NULL && strstr(opf, "<dc:creator") != NULL, "OPF contains creator metadata");
+            TEST_ASSERT(strstr(opf, "properties=\"nav\"") != NULL, "OPF manifest marks nav.xhtml with properties='nav'");
+            free(opf);
+        }
+
+        // nav.xhtml (EPUB 3 navigation document)
+        char *nav = zip_test_read_entry(za, "EPUB/nav.xhtml", NULL);
+        TEST_ASSERT(nav != NULL, "EPUB/nav.xhtml exists in archive");
+        if (nav) {
+            TEST_ASSERT(strstr(nav, "<nav epub:type=\"toc\"") != NULL, "nav.xhtml contains epub:type='toc'");
+            TEST_ASSERT(strstr(nav, "Chapter 1: Introduction") != NULL, "nav.xhtml contains chapter heading in TOC");
+            free(nav);
+        }
+
+        // ch001.xhtml
+        char *ch1 = zip_test_read_entry(za, "EPUB/ch001.xhtml", NULL);
+        TEST_ASSERT(ch1 != NULL, "EPUB/ch001.xhtml exists in archive");
+        if (ch1) {
+            TEST_ASSERT(strstr(ch1, "It is a truth universally acknowledged") != NULL,
+                        "Chapter content contains body paragraph text");
+            TEST_ASSERT(strstr(ch1, "Jane Austen") == NULL,
+                        "YAML front matter is stripped from chapter body text");
+            free(ch1);
+        }
+
+        // stylesheet.css
+        char *css = zip_test_read_entry(za, "EPUB/stylesheet.css", NULL);
+        TEST_ASSERT(css != NULL && strstr(css, "font-family") != NULL,
+                    "EPUB/stylesheet.css exists and contains CSS rules");
+        free(css);
+
+        zip_close(za);
+    }
+    remove(epub3_path);
+    buffer_free(&buf);
+
+    // 3. EPUB 2 conversion and backward compatibility
+    Buffer buf2;
+    buffer_init(&buf2);
+    const char *ch_split_md =
+        "# Part One\n"
+        "Paragraph in part one.\n"
+        "## Section A\n"
+        "Section A text.\n"
+        "# Part Two\n"
+        "Paragraph in part two.\n";
+
+    p = ch_split_md;
+    while (*p) {
+        const char *nl = strchr(p, '\n');
+        size_t len = nl ? (size_t)(nl - p) : strlen(p);
+        char line_buf[512];
+        if (len >= sizeof(line_buf)) len = sizeof(line_buf) - 1;
+        memcpy(line_buf, p, len);
+        line_buf[len] = '\0';
+        test_buf_add_line(&buf2, line_buf);
+        p = nl ? nl + 1 : p + len;
+    }
+
+    const char *epub2_path = "/tmp/test_book_epub2.epub";
+    EpubOptions opts2;
+    epub_options_init(&opts2);
+    opts2.version = EPUB_VERSION_2;
+    snprintf(opts2.meta.title, sizeof(opts2.meta.title), "Split Book");
+    snprintf(opts2.meta.author, sizeof(opts2.meta.author), "Author Two");
+
+    ok = epub_convert_buffer(&buf2, epub2_path, &opts2, err, sizeof(err));
+    TEST_ASSERT(ok, "epub_convert_buffer succeeds for EPUB 2 with chapter splitting");
+
+    za = zip_open(epub2_path, ZIP_RDONLY, &errcode);
+    TEST_ASSERT(za != NULL, "Generated EPUB 2 is a valid zip archive");
+    if (za) {
+        // package.opf (EPUB 2)
+        char *opf = zip_test_read_entry(za, "EPUB/package.opf", NULL);
+        TEST_ASSERT(opf != NULL, "EPUB/package.opf exists in EPUB 2 archive");
+        if (opf) {
+            TEST_ASSERT(strstr(opf, "version=\"2.0\"") != NULL, "OPF specifies version='2.0'");
+            TEST_ASSERT(strstr(opf, "toc=\"ncx\"") != NULL, "Spine references toc='ncx'");
+            free(opf);
+        }
+
+        // toc.ncx (EPUB 2 NCX navigation)
+        char *ncx = zip_test_read_entry(za, "EPUB/toc.ncx", NULL);
+        TEST_ASSERT(ncx != NULL, "EPUB/toc.ncx exists in EPUB 2 archive");
+        if (ncx) {
+            TEST_ASSERT(strstr(ncx, "<ncx") != NULL, "toc.ncx contains <ncx root element");
+            TEST_ASSERT(strstr(ncx, "<navMap>") != NULL, "toc.ncx contains <navMap>");
+            TEST_ASSERT(strstr(ncx, "Part One") != NULL, "toc.ncx includes Part One");
+            TEST_ASSERT(strstr(ncx, "Section A") != NULL, "toc.ncx includes nested Section A");
+            TEST_ASSERT(strstr(ncx, "Part Two") != NULL, "toc.ncx includes Part Two");
+            free(ncx);
+        }
+
+        // Multi-chapter splitting verification
+        char *ch1 = zip_test_read_entry(za, "EPUB/ch001.xhtml", NULL);
+        TEST_ASSERT(ch1 != NULL && strstr(ch1, "Paragraph in part one") != NULL,
+                    "ch001.xhtml contains first chapter");
+        free(ch1);
+
+        char *ch2 = zip_test_read_entry(za, "EPUB/ch002.xhtml", NULL);
+        TEST_ASSERT(ch2 != NULL && strstr(ch2, "Paragraph in part two") != NULL,
+                    "ch002.xhtml contains second chapter");
+        free(ch2);
+
+        zip_close(za);
+    }
+    remove(epub2_path);
+
+    // 4. Single-chapter mode (--no-split)
+    const char *nosplit_path = "/tmp/test_book_nosplit.epub";
+    EpubOptions opts_nosplit;
+    epub_options_init(&opts_nosplit);
+    opts_nosplit.split_h1 = false;
+    ok = epub_convert_buffer(&buf2, nosplit_path, &opts_nosplit, err, sizeof(err));
+    TEST_ASSERT(ok, "epub_convert_buffer succeeds with split_h1 = false");
+
+    za = zip_open(nosplit_path, ZIP_RDONLY, &errcode);
+    if (za) {
+        char *ch1 = zip_test_read_entry(za, "EPUB/ch001.xhtml", NULL);
+        TEST_ASSERT(ch1 != NULL && strstr(ch1, "Paragraph in part one") != NULL &&
+                    strstr(ch1, "Paragraph in part two") != NULL,
+                    "Single chapter mode keeps all headings in ch001.xhtml");
+        free(ch1);
+        struct zip_stat st_ch2;
+        zip_stat_init(&st_ch2);
+        TEST_ASSERT(zip_stat(za, "EPUB/ch002.xhtml", 0, &st_ch2) != 0,
+                    "No ch002.xhtml created when splitting is disabled");
+        zip_close(za);
+    }
+    remove(nosplit_path);
+
+    // 5. Image bundling into EPUB
+    const char *dummy_img_path = "/tmp/mde_test_diagram.png";
+    FILE *img_f = fopen(dummy_img_path, "wb");
+    if (img_f) {
+        // Write standard 8-byte PNG header + dummy payload
+        const unsigned char png_hdr[] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x01};
+        fwrite(png_hdr, 1, sizeof(png_hdr), img_f);
+        fclose(img_f);
+
+        Buffer img_buf;
+        buffer_init(&img_buf);
+        test_buf_add_line(&img_buf, "# Book with Image");
+        char img_line[256];
+        snprintf(img_line, sizeof(img_line), "Here is the diagram: ![Diagram](%s)", dummy_img_path);
+        test_buf_add_line(&img_buf, img_line);
+
+        const char *img_epub = "/tmp/test_book_image.epub";
+        ok = epub_convert_buffer(&img_buf, img_epub, NULL, err, sizeof(err));
+        TEST_ASSERT(ok, "EPUB conversion succeeds with local image reference");
+
+        za = zip_open(img_epub, ZIP_RDONLY, &errcode);
+        if (za) {
+            char *ch = zip_test_read_entry(za, "EPUB/ch001.xhtml", NULL);
+            TEST_ASSERT(ch != NULL && strstr(ch, "src=\"images/img_001.png\"") != NULL,
+                        "Chapter XHTML rewrites image source to images/ relative path");
+            free(ch);
+
+            struct zip_stat img_st;
+            zip_stat_init(&img_st);
+            TEST_ASSERT(zip_stat(za, "EPUB/images/img_001.png", 0, &img_st) == 0,
+                        "Image is bundled inside EPUB/images/ in the zip archive");
+
+            char *opf = zip_test_read_entry(za, "EPUB/package.opf", NULL);
+            TEST_ASSERT(opf != NULL && strstr(opf, "media-type=\"image/png\"") != NULL,
+                        "OPF manifest declares image with image/png media type");
+            free(opf);
+            zip_close(za);
+        }
+        remove(img_epub);
+        buffer_free(&img_buf);
+        remove(dummy_img_path);
+    }
+
+    buffer_free(&buf2);
+
+    // 6. Standalone CLI binary invocation
+    const char *cli_md_path = "/tmp/test_md2epub_cli.md";
+    const char *cli_epub_path = "/tmp/test_md2epub_cli.epub";
+    FILE *cf = fopen(cli_md_path, "wb");
+    if (cf) {
+        fputs("# CLI Chapter\nCLI Body paragraph.\n", cf);
+        fclose(cf);
+
+        char cmd[512];
+        snprintf(cmd, sizeof(cmd), "./bin/md2epub -q -o %s --title \"CLI Book\" --author \"CLI Author\" %s",
+                 cli_epub_path, cli_md_path);
+        int rc = system(cmd);
+        TEST_ASSERT(rc == 0, "Standalone bin/md2epub CLI command exited with code 0");
+
+        struct stat cli_st;
+        TEST_ASSERT(stat(cli_epub_path, &cli_st) == 0 && cli_st.st_size > 0,
+                    "Standalone bin/md2epub generated destination .epub file");
+
+        remove(cli_epub_path);
+        remove(cli_md_path);
+    }
+}
+
 /** @brief Run all unit test suites and return 0 on 100% pass, 1 on any failure. */
 int main(void) {
     setlocale(LC_ALL, "");
@@ -1981,6 +2299,7 @@ int main(void) {
     test_interactive_ux_and_navigation();
     test_doc_navigation_and_preview_sync();
     test_footnote_navigation_and_config_persistence();
+    test_epub_system();
 
     printf("==========================================\n");
     printf("Test Results: %d / %d tests passed (%.1f%%)\n",

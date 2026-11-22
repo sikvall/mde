@@ -31,6 +31,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Bi-directional footnote hypertext navigation via `Alt+O` / `F7` (jumping between `[^note]` and `[^note]:`, jumping to first reference if multiple exist, with history back on `F8` / `Alt+-`).
 - Ergonomic keybindings for Jump (`Alt+M` / `M-M`, `F11`) and Go to Line (`Alt+G` / `M-G`, `Alt+:`), with updated bottom badges for accessibility across international keyboard layouts.
 - Organized sample documents into dedicated `examples/` directory (`examples/demo.md` and `examples/advanced.md`).
+- Native C11 Markdown to EPUB 2/3 converter using `libzip` (`src/export_epub.c`, `src/epub.h`), replacing external reliance on pandoc for EPUB exports in `mde`.
+- Standalone CLI tool `bin/md2epub` (`src/md2epub_main.c`) with support for EPUB 2/3 target formats, chapter splitting, metadata overrides, cover image embedding, and progress reporting.
+- Standard UNIX man page for the converter (`man/md2epub.1`).
+- Compliant Open Container Format (OCF) packaging with uncompressed STORE `mimetype` at offset 0, automated chapter splitting on H1 (`# `) headings and linked files, YAML front-matter extraction, and local image asset bundling.
+- Expanded test suite with comprehensive EPUB 2/3 verification in `tests/test_runner.c` (541 / 541 passing tests, 100% pass rate).
 
 ## [0.1.0] - 2026-11-21
 
