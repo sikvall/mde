@@ -320,7 +320,7 @@ static void draw_preview_pane(Editor *ed, int start_col, int width, int start_ro
                 RenderChunk *rc = &rl->chunks[c];
                 if (render_x >= start_col + width) break;
 
-                attron(rc->attr);
+                attrset(rc->attr);
                 size_t byte_pos = 0;
                 while (byte_pos < rc->text_len && render_x < start_col + width) {
                     size_t ch_len = utf8_char_len((unsigned char)rc->text[byte_pos]);
@@ -332,8 +332,8 @@ static void draw_preview_pane(Editor *ed, int start_col, int width, int start_ro
                     }
                     byte_pos += ch_len;
                 }
-                attroff(rc->attr);
             }
+            attrset(COLOR_PAIR(CP_DEFAULT));
         }
 
         // Clear rest of line in preview pane

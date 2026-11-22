@@ -139,7 +139,8 @@ static size_t parse_link_span_seq(const char *raw_line, const MdParsedLine *pl,
             *out_url = raw_line + pl->spans[k].start;
             *out_url_len = pl->spans[k].end - pl->spans[k].start;
         }
-        bool done = (pl->spans[k].type == MD_LINK_URL_PAREN && raw_line[pl->spans[k].start] == ')');
+        bool done = (pl->spans[k].type == MD_LINK_URL_PAREN &&
+                     (raw_line[pl->spans[k].start] == ')' || raw_line[pl->spans[k].start] == ']'));
         k++;
         if (done) break;
     }
@@ -196,14 +197,56 @@ static void render_inline_spans(RenderedLine *rl, const char *raw_line, const Md
             continue;
         }
 
-        attr_t a = use_override_attr ? override_attr : theme_token_attr(sp->type, false);
+        if (sp->type == MD_AUTO_LINK) {
+            attr_t link_a = use_override_attr ? (override_attr | A_UNDERLINE) : (COLOR_PAIR(CP_LINK) | A_UNDERLINE);
+            attr_t arrow_a = use_override_attr ? override_attr : (COLOR_PAIR(CP_LINK) | A_BOLD);
+            const char *url_txt = raw_line + sp->start;
+            size_t url_l = sp->end - sp->start;
+            line_add_chunk(rl, url_txt, url_l, link_a);
+            const char *ind = link_direction_indicator(url_txt, url_l);
+            if (ind[0]) {
+                line_add_chunk(rl, ind, strlen(ind), arrow_a);
+            }
+            i++;
+            continue;
+        }
+
+        if (sp->type == MD_FOOTNOTE_REF) {
+            attr_t fn_a = use_override_attr ? override_attr : (COLOR_PAIR(CP_HEADER3) | A_BOLD);
+            const char *fn_txt = raw_line + sp->start;
+            size_t fn_l = sp->end - sp->start;
+            line_add_chunk(rl, fn_txt, fn_l, fn_a);
+            i++;
+            continue;
+        }
+
+                attr_t a = use_override_attr ? override_attr : theme_token_attr(sp->type, false);
         line_add_chunk(rl, raw_line + sp->start, sp->end - sp->start, a);
         i++;
     }
 }
 
-/** @brief Return true if a table line is a Markdown alignment separator row (e.g. `| --- | --- |`). */
-
+/**
+ * @brief Render inline spans into lines with responsive soft word-wrapping.
+ *
+ * Words that exceed max_width wrap onto newly allocated RenderedLines,
+ * prepending cont_prefix to maintain visual indentation for lists and blockquotes.
+ *
+ * @param doc Pointer to RenderedDoc destination.
+ * @param current_rl Pointer to currently active RenderedLine pointer.
+ * @param source_row Line index in source buffer.
+ * @param max_width Maximum allowable columns before wrapping.
+ * @param cont_prefix Continuation indentation prefix string.
+ * @param prefix_len Byte length of continuation prefix.
+ * @param prefix_attr Ncurses visual attribute for prefix.
+ * @param initial_col Starting column position.
+ * @param raw_line Pointer to original raw Markdown line.
+ * @param pl Pointer to parsed Markdown spans.
+ * @param start_idx Index of first span to render.
+ * @param end_idx Index after last span to render.
+ * @param use_override_attr If true, override theme styling with override_attr.
+ * @param override_attr Explicit attribute override.
+ */
 static void render_inline_spans_wrapped(RenderedDoc *doc, RenderedLine **current_rl,
                                        size_t source_row, int max_width,
                                        const char *cont_prefix, size_t prefix_len, attr_t prefix_attr,
@@ -260,6 +303,23 @@ static void render_inline_spans_wrapped(RenderedDoc *doc, RenderedLine **current
                 line_add_chunk(*current_rl, ind, ind_l, arrow_attr);
                 cur_col += utf8_visual_width_range(ind, 0, ind_l);
             }
+            continue;
+        }
+
+        if (sp->type == MD_AUTO_LINK) {
+            attr_t link_attr = use_override_attr ? (override_attr | A_UNDERLINE) : (COLOR_PAIR(CP_LINK) | A_UNDERLINE);
+            attr_t arrow_attr = use_override_attr ? override_attr : (COLOR_PAIR(CP_LINK) | A_BOLD);
+            const char *url_txt = raw_line + sp->start;
+            size_t url_l = sp->end - sp->start;
+            line_add_chunk(*current_rl, url_txt, url_l, link_attr);
+            cur_col += utf8_visual_width_range(url_txt, 0, url_l);
+            const char *ind = link_direction_indicator(url_txt, url_l);
+            if (ind[0]) {
+                size_t ind_l = strlen(ind);
+                line_add_chunk(*current_rl, ind, ind_l, arrow_attr);
+                cur_col += utf8_visual_width_range(ind, 0, ind_l);
+            }
+            i++;
             continue;
         }
 
@@ -414,28 +474,107 @@ static void emit_table_border(RenderedDoc *out_doc, size_t source_row,
     line_add_chunk(rl, bar, b, border_attr);
 }
 
-/** @brief Truncate/pad a UTF-8 cell string into dst so it occupies exactly target_cols screen cells. */
-static void format_table_cell(const char *src, int target_cols, char *dst, size_t dst_cap) {
+/**
+ * @brief Parse a Markdown table delimiter row to detect per-column alignments.
+ *
+ * Checks cells for leading and trailing colons (`:---:` for center, `---:` for right,
+ * and `:---` or `---` for left).
+ *
+ * @param line Pointer to raw separator row string.
+ * @param len Length of separator line in bytes.
+ * @param aligns Output array of TableAlign specifiers.
+ * @param out_count Pointer to receive detected column count.
+ */
+static void extract_table_alignments(const char *line, size_t len,
+                                    TableAlign aligns[MDE_TABLE_MAX_COLS], size_t *out_count) {
+    size_t col = 0;
+    size_t pos = 0;
+    while (pos < len && isspace((unsigned char)line[pos])) pos++;
+    if (pos < len && line[pos] == '|') pos++;
+
+    while (pos < len && col < MDE_TABLE_MAX_COLS) {
+        size_t cstart = pos;
+        while (pos < len && line[pos] != '|') pos++;
+        size_t cend = pos;
+
+        while (cstart < cend && isspace((unsigned char)line[cstart])) cstart++;
+        while (cend > cstart && isspace((unsigned char)line[cend - 1])) cend--;
+
+        if (cstart < cend) {
+            bool left_colon = (line[cstart] == ':');
+            bool right_colon = (line[cend - 1] == ':');
+            if (left_colon && right_colon) {
+                aligns[col] = ALIGN_CENTER;
+            } else if (right_colon) {
+                aligns[col] = ALIGN_RIGHT;
+            } else {
+                aligns[col] = ALIGN_LEFT;
+            }
+        } else {
+            aligns[col] = ALIGN_LEFT;
+        }
+        col++;
+        if (pos >= len) break;
+        pos++;
+    }
+    if (out_count) *out_count = col;
+}
+
+/** @brief Truncate/pad a UTF-8 cell string with alignment into dst so it occupies target_cols screen cells. */
+static void format_table_cell_aligned(const char *src, int target_cols, TableAlign align,
+                                      char *dst, size_t dst_cap) {
+    if (!dst || dst_cap == 0) return;
+    if (target_cols <= 0) {
+        dst[0] = '\0';
+        return;
+    }
+
     size_t src_len = strlen(src);
     size_t pos = 0;
-    size_t out = 0;
-    int cur_w = 0;
+    int content_w = 0;
 
     while (pos < src_len) {
         size_t cl = utf8_char_len((unsigned char)src[pos]);
         if (pos + cl > src_len) cl = src_len - pos;
         int cw = utf8_visual_width_range(src, pos, pos + cl);
-        if (cur_w + cw > target_cols) break;
-        if (out + cl >= dst_cap - 1) break;
-        memcpy(dst + out, src + pos, cl);
-        out += cl;
-        cur_w += cw;
+        if (content_w + cw > target_cols) break;
+        content_w += cw;
         pos += cl;
     }
+    size_t content_bytes = pos;
 
-    while (cur_w < target_cols && out + 1 < dst_cap) {
+    int total_pad = target_cols - content_w;
+    if (total_pad < 0) total_pad = 0;
+
+    int left_pad = 0;
+    int right_pad = 0;
+    if (align == ALIGN_RIGHT) {
+        left_pad = total_pad;
+        right_pad = 0;
+    } else if (align == ALIGN_CENTER) {
+        left_pad = total_pad / 2;
+        right_pad = total_pad - left_pad;
+    } else {
+        left_pad = 0;
+        right_pad = total_pad;
+    }
+
+    size_t out = 0;
+    while (left_pad > 0 && out + 1 < dst_cap) {
         dst[out++] = ' ';
-        cur_w++;
+        left_pad--;
+    }
+    size_t to_copy = content_bytes;
+    if (out + to_copy >= dst_cap) {
+        to_copy = dst_cap - 1 - out;
+    }
+    if (to_copy > 0) {
+        memcpy(dst + out, src, to_copy);
+        out += to_copy;
+    }
+    while (right_pad > 0 && out + 1 < dst_cap) {
+        dst[out++] = ' ';
+        right_pad--;
     }
     dst[out] = '\0';
 }
@@ -446,13 +585,19 @@ static void format_table_cell(const char *src, int target_cols, char *dst, size_
 static void render_table_block(const Buffer *buf, size_t t_start, size_t t_end,
                                int width, RenderedDoc *out_doc) {
     int col_widths[MDE_TABLE_MAX_COLS] = {0};
+    TableAlign aligns[MDE_TABLE_MAX_COLS];
+    for (size_t c = 0; c < MDE_TABLE_MAX_COLS; ++c) aligns[c] = ALIGN_LEFT;
     size_t num_cols = 0;
 
-    // Pass 1: Measure column count and natural visual widths
+    // Pass 1: Measure column count, natural visual widths, and column alignments
     for (size_t r = t_start; r < t_end; ++r) {
         const char *l = buffer_line(buf, r);
         size_t len = buffer_line_len(buf, r);
-        if (is_table_separator(l, len)) continue;
+        if (is_table_separator(l, len)) {
+            size_t count = 0;
+            extract_table_alignments(l, len, aligns, &count);
+            continue;
+        }
 
         char cells[MDE_TABLE_MAX_COLS][256];
         size_t nc = extract_table_cells(l, len, cells);
@@ -508,7 +653,7 @@ static void render_table_block(const Buffer *buf, size_t t_start, size_t t_end,
         for (size_t c = 0; c < num_cols; ++c) {
             line_add_chunk(rl, "│ ", 4, border_attr);
             char padded[512];
-            format_table_cell(c < nc ? cells[c] : "", col_widths[c], padded, sizeof(padded));
+            format_table_cell_aligned(c < nc ? cells[c] : "", col_widths[c], aligns[c], padded, sizeof(padded));
             line_add_chunk(rl, padded, strlen(padded), cell_attr);
             line_add_chunk(rl, " ", 1, cell_attr);
         }
@@ -518,20 +663,63 @@ static void render_table_block(const Buffer *buf, size_t t_start, size_t t_end,
     emit_table_border(out_doc, t_end - 1, num_cols, col_widths, "└", "┴", "┘");
 }
 
-/** @brief Render an entire Buffer into styled RenderedDoc lines sized to width. */
-void render_document(const Buffer *buf, int width, RenderedDoc *out_doc) {
+/** @brief Render a slice of buffer lines [start_row, end_row) into out_doc. */
+void render_document_range(const Buffer *buf, int width, size_t start_row, size_t end_row, RenderedDoc *out_doc) {
     if (!buf || !out_doc) return;
     rendered_doc_free(out_doc);
     rendered_doc_init(out_doc);
 
     if (width <= 4) width = 80;
 
+    size_t line_count = buffer_line_count(buf);
+    if (start_row >= line_count) return;
+    if (end_row > line_count) end_row = line_count;
+    if (end_row <= start_row) return;
+
+    // Expand start_row if it lands in the middle of a Markdown table block
+    while (start_row > 0) {
+        bool in_c = false;
+        char l_buf[32] = {0};
+        MdParsedLine probe;
+        md_parse_line(buffer_line(buf, start_row), buffer_line_len(buf, start_row),
+                      &in_c, l_buf, sizeof(l_buf), &probe);
+        bool is_tbl = probe.is_table_row;
+        md_parsed_line_free(&probe);
+        if (!is_tbl) break;
+        start_row--;
+    }
+
+    // Determine initial fenced code block state at start_row
     bool in_code_block = false;
     char code_lang[32] = {0};
+    for (size_t r = 0; r < start_row; ++r) {
+        const char *l = buffer_line(buf, r);
+        size_t len = buffer_line_len(buf, r);
+        size_t indent = 0;
+        while (indent < len && (l[indent] == ' ' || l[indent] == '\t')) indent++;
+        if (indent + 3 <= len &&
+            ((l[indent] == '`' && l[indent+1] == '`' && l[indent+2] == '`') ||
+             (l[indent] == '~' && l[indent+1] == '~' && l[indent+2] == '~'))) {
+            char fence_char = l[indent];
+            if (in_code_block) {
+                in_code_block = false;
+                code_lang[0] = '\0';
+            } else {
+                in_code_block = true;
+                size_t fe = indent;
+                while (fe < len && l[fe] == fence_char) fe++;
+                while (fe < len && isspace((unsigned char)l[fe])) fe++;
+                size_t le = fe;
+                while (le < len && !isspace((unsigned char)l[le])) le++;
+                size_t n = le > fe ? (le - fe) : 0;
+                if (n >= sizeof(code_lang)) n = sizeof(code_lang) - 1;
+                memcpy(code_lang, l + fe, n);
+                code_lang[n] = '\0';
+            }
+        }
+    }
 
-    size_t line_count = buffer_line_count(buf);
-
-    for (size_t row = 0; row < line_count; ++row) {
+    for (size_t row = start_row; row < end_row; ++row) {
         const char *raw_line = buffer_line(buf, row);
         size_t raw_len = buffer_line_len(buf, row);
 
@@ -645,6 +833,13 @@ void render_document(const Buffer *buf, int width, RenderedDoc *out_doc) {
             render_inline_spans_wrapped(out_doc, &rl, row, max_w,
                                         "▎ ", 4, COLOR_PAIR(CP_HEADER1) | A_BOLD,
                                         2, raw_line, &pl, 0, pl.span_count, false, 0);
+        } else if (pl.is_footnote_def) {
+            RenderedLine *rl = doc_add_line(out_doc, row);
+            line_add_chunk(rl, "  ⚓ ", 6, COLOR_PAIR(CP_HEADER3) | A_BOLD);
+            int max_w = width > 4 ? (width - 4) : 80;
+            render_inline_spans_wrapped(out_doc, &rl, row, max_w,
+                                        "    ", 4, COLOR_PAIR(CP_DEFAULT),
+                                        4, raw_line, &pl, 0, pl.span_count, false, 0);
         } else if (pl.is_list_item) {
             RenderedLine *rl = doc_add_line(out_doc, row);
             size_t body_start = 0;
@@ -656,15 +851,28 @@ void render_document(const Buffer *buf, int width, RenderedDoc *out_doc) {
                 if (sp->type == MD_LIST_BULLET) {
                     if (pl.is_task) {
                         size_t ind = 0;
-                        while (ind < sp->end && (raw_line[ind] == ' ' || raw_line[ind] == '	')) ind++;
+                        while (ind < sp->end && (raw_line[ind] == ' ' || raw_line[ind] == '\t')) ind++;
                         if (ind > 0) line_add_chunk(rl, raw_line, ind, COLOR_PAIR(CP_DEFAULT));
-                    } else if (sp->end > sp->start && isdigit((unsigned char)raw_line[sp->start])) {
-                        line_add_chunk(rl, raw_line + sp->start, sp->end - sp->start,
-                                       COLOR_PAIR(CP_HEADER2) | A_BOLD);
-                        initial_indent = (int)(sp->end - sp->start);
+                        initial_indent = (int)ind;
                     } else {
-                        line_add_chunk(rl, "  • ", 6, COLOR_PAIR(CP_HEADER2) | A_BOLD);
-                        initial_indent = 4;
+                        size_t bpos = sp->start;
+                        while (bpos < sp->end && (raw_line[bpos] == ' ' || raw_line[bpos] == '\t')) bpos++;
+                        if (bpos < sp->end && isdigit((unsigned char)raw_line[bpos])) {
+                            line_add_chunk(rl, raw_line + sp->start, sp->end - sp->start,
+                                           COLOR_PAIR(CP_HEADER2) | A_BOLD);
+                            initial_indent = (int)(sp->end - sp->start);
+                        } else {
+                            if (pl.list_indent >= 4) {
+                                line_add_chunk(rl, "      ▪ ", strlen("      ▪ "), COLOR_PAIR(CP_HEADER3) | A_BOLD);
+                                initial_indent = 8;
+                            } else if (pl.list_indent >= 2) {
+                                line_add_chunk(rl, "    ◦ ", strlen("    ◦ "), COLOR_PAIR(CP_HEADER2) | A_BOLD);
+                                initial_indent = 6;
+                            } else {
+                                line_add_chunk(rl, "  • ", strlen("  • "), COLOR_PAIR(CP_HEADER2) | A_BOLD);
+                                initial_indent = 4;
+                            }
+                        }
                     }
                     body_start = i + 1;
                 } else if (sp->type == MD_TASK_UNCHECKED) {
@@ -698,6 +906,12 @@ void render_document(const Buffer *buf, int width, RenderedDoc *out_doc) {
 
         md_parsed_line_free(&pl);
     }
+}
+
+/** @brief Render an entire Buffer into styled RenderedDoc lines sized to width. */
+void render_document(const Buffer *buf, int width, RenderedDoc *out_doc) {
+    if (!buf || !out_doc) return;
+    render_document_range(buf, width, 0, buffer_line_count(buf), out_doc);
 }
 
 /** @brief Map a 0-indexed buffer row to the first corresponding RenderedDoc line index. */

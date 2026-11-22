@@ -54,6 +54,8 @@ typedef struct {
     Buffer buffer;               /**< Underlying document buffer */
     RenderedDoc rendered_doc;    /**< Cached rendered preview document */
     bool rendered_dirty;         /**< Dirty flag indicating preview needs refresh */
+    size_t rendered_view_start;  /**< Buffer row of first rendered line in view-bound mode */
+    size_t rendered_view_end;    /**< Buffer row of last rendered line in view-bound mode */
 
     ViewMode view_mode;          /**< Current active view mode */
     bool insert_mode;            /**< Insert mode active (true, default) vs Overwrite mode (false) */
@@ -99,8 +101,8 @@ typedef struct {
     uint64_t last_key_time;      /**< Monotonic timestamp in ms of the last keypress */
 
     // Hypertext link navigation history
-    LinkHistoryEntry link_history[MDE_LINK_HISTORY_MAX];
-    size_t link_history_count;
+    LinkHistoryEntry link_history[MDE_LINK_HISTORY_MAX]; /**< Hypertext navigation breadcrumb stack */
+    size_t link_history_count;   /**< Number of history entries currently in stack */
 
     bool quit_requested;         /**< Termination flag */
     bool backup_made;            /**< True if ~ backup was created this session */

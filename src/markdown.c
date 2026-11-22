@@ -24,6 +24,8 @@ void md_parsed_line_init(MdParsedLine *pl) {
     pl->is_task = false;
     pl->task_checked = false;
     pl->task_bracket_start = 0;
+    pl->list_indent = 0;
+    pl->is_footnote_def = false;
     pl->is_blockquote = false;
     pl->is_table_row = false;
     pl->code_lang[0] = '\0';
@@ -212,6 +214,66 @@ static void parse_inlines(const char *text, size_t text_len, size_t base_offset,
             }
         }
 
+        // Footnote reference: [^note]
+        if (text[i] == '[' && i + 1 < text_len && text[i + 1] == '^') {
+            size_t cb = i + 2;
+            while (cb < text_len && text[cb] != ']') cb++;
+            if (cb < text_len && cb > i + 2) {
+                if (i > plain_start) {
+                    md_parsed_line_add_span(pl, base_offset + plain_start, base_offset + i, default_type);
+                }
+                md_parsed_line_add_span(pl, base_offset + i, base_offset + cb + 1, MD_FOOTNOTE_REF);
+                i = cb + 1;
+                plain_start = i;
+                continue;
+            }
+        }
+
+        // Auto-link: http:// or https://
+        if ((i + 7 < text_len && strncmp(text + i, "http://", 7) == 0) ||
+            (i + 8 < text_len && strncmp(text + i, "https://", 8) == 0)) {
+            size_t ue = i + 7;
+            while (ue < text_len && !isspace((unsigned char)text[ue]) &&
+                   text[ue] != '>' && text[ue] != ')' && text[ue] != ']' &&
+                   text[ue] != '"' && text[ue] != '\'') ue++;
+            if (ue > i + 7) {
+                if (i > plain_start) {
+                    md_parsed_line_add_span(pl, base_offset + plain_start, base_offset + i, default_type);
+                }
+                md_parsed_line_add_span(pl, base_offset + i, base_offset + ue, MD_AUTO_LINK);
+                i = ue;
+                plain_start = i;
+                continue;
+            }
+        }
+
+        // Link: [text](url) or reference [text][ref]
+        if (text[i] == '[') {
+            size_t close_bracket = i + 1;
+            while (close_bracket < text_len && text[close_bracket] != ']') close_bracket++;
+            if (close_bracket < text_len && close_bracket + 1 < text_len && text[close_bracket + 1] == '[') {
+                size_t close_ref = close_bracket + 2;
+                while (close_ref < text_len && text[close_ref] != ']') close_ref++;
+                if (close_ref < text_len) {
+                    if (i > plain_start) {
+                        md_parsed_line_add_span(pl, base_offset + plain_start, base_offset + i, default_type);
+                    }
+                    md_parsed_line_add_span(pl, base_offset + i, base_offset + i + 1, MD_LINK_BRACKET);
+                    if (close_bracket > i + 1) {
+                        md_parsed_line_add_span(pl, base_offset + i + 1, base_offset + close_bracket, MD_LINK_TEXT);
+                    }
+                    md_parsed_line_add_span(pl, base_offset + close_bracket, base_offset + close_bracket + 1, MD_LINK_BRACKET);
+                    md_parsed_line_add_span(pl, base_offset + close_bracket + 1, base_offset + close_bracket + 2, MD_LINK_URL_PAREN);
+                    if (close_ref > close_bracket + 2) {
+                        md_parsed_line_add_span(pl, base_offset + close_bracket + 2, base_offset + close_ref, MD_LINK_URL);
+                    }
+                    md_parsed_line_add_span(pl, base_offset + close_ref, base_offset + close_ref + 1, MD_LINK_URL_PAREN);
+                    i = close_ref + 1;
+                    plain_start = i;
+                    continue;
+                }
+            }
+        }
         // Link: [text](url)
         if (text[i] == '[') {
             size_t close_bracket = i + 1;
@@ -391,6 +453,41 @@ void md_parse_line(const char *line, size_t len,
         return;
     }
 
+    // Footnote definition: [^note]:
+    if (indent < len && line[indent] == '[' && indent + 1 < len && line[indent + 1] == '^') {
+        size_t cb = indent + 2;
+        while (cb < len && line[cb] != ']') cb++;
+        if (cb < len && cb + 1 < len && line[cb + 1] == ':') {
+            out_line->is_footnote_def = true;
+            size_t def_end = cb + 2;
+            while (def_end < len && line[def_end] == ' ') def_end++;
+            md_parsed_line_add_span(out_line, 0, def_end, MD_FOOTNOTE_DEF);
+            if (def_end < len) {
+                parse_inlines(line + def_end, len - def_end, def_end, out_line, MD_TEXT);
+            }
+            return;
+        }
+    }
+
+    // Link reference definition: [ref]: url
+    if (indent < len && line[indent] == '[' && (indent + 1 >= len || line[indent + 1] != '^')) {
+        size_t cb = indent + 1;
+        while (cb < len && line[cb] != ']') cb++;
+        if (cb < len && cb + 1 < len && line[cb + 1] == ':') {
+            size_t def_end = cb + 2;
+            while (def_end < len && line[def_end] == ' ') def_end++;
+            md_parsed_line_add_span(out_line, indent, indent + 1, MD_LINK_BRACKET);
+            if (cb > indent + 1) {
+                md_parsed_line_add_span(out_line, indent + 1, cb, MD_LINK_TEXT);
+            }
+            md_parsed_line_add_span(out_line, cb, def_end, MD_LINK_BRACKET);
+            if (def_end < len) {
+                md_parsed_line_add_span(out_line, def_end, len, MD_LINK_URL);
+            }
+            return;
+        }
+    }
+
     // Horizontal rule
     if (md_is_hrule(line, len)) {
         out_line->is_hrule = true;
@@ -442,6 +539,7 @@ void md_parse_line(const char *line, size_t len,
     bool task_checked = false;
     if (md_detect_list(line, len, &prefix_len, bullet, sizeof(bullet), &is_task, &task_checked)) {
         out_line->is_list_item = true;
+        out_line->list_indent = indent;
         out_line->is_task = is_task;
         out_line->task_checked = task_checked;
 

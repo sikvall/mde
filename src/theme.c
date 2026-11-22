@@ -195,6 +195,13 @@ attr_t theme_token_attr(MdTokenType type, bool is_active_line) {
         case MD_IMAGE_MARKER:
             return COLOR_PAIR(CP_HEADER4) | A_BOLD;
 
+        case MD_FOOTNOTE_REF:
+        case MD_FOOTNOTE_DEF:
+            return COLOR_PAIR(CP_HEADER3) | A_BOLD;
+
+        case MD_AUTO_LINK:
+            return COLOR_PAIR(CP_LINK) | A_UNDERLINE;
+
         case MD_TEXT:
         default:
             return COLOR_PAIR(CP_DEFAULT);

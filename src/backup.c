@@ -46,6 +46,13 @@ bool backup_create_tilde(const char *file_path) {
     return true;
 }
 
+/**
+ * @brief Construct the autosave recovery file path (#filename#) from a target path.
+ *
+ * @param file_path Source file path.
+ * @param out Buffer to receive the generated autosave file path.
+ * @param cap Capacity of the output buffer in bytes.
+ */
 static void get_autosave_path(const char *file_path, char *out, size_t cap) {
     const char *slash = strrchr(file_path, '/');
     if (slash) {

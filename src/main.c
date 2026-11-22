@@ -238,6 +238,15 @@ static void prompt_goto_line(void) {
  * Input Event Dispatch (Mouse, Meta/Alt, Control & Printable Keys)
  * ========================================================================= */
 
+/**
+ * @brief Map screen coordinates from a mouse click to buffer cursor row and col.
+ *
+ * Translates click (x, y) coordinates into buffer coordinates, accounting
+ * for active view mode (editor, split, or preview) and line number gutter.
+ *
+ * @param click_x Screen horizontal coordinate.
+ * @param click_y Screen vertical coordinate.
+ */
 static void set_cursor_from_click(int click_x, int click_y) {
     int num_hints = ui_get_shortcut_hint_rows(g_editor.screen_rows);
     int text_max_y = g_editor.screen_rows - num_hints - 1;

@@ -71,6 +71,21 @@ void rendered_doc_free(RenderedDoc *doc);
 void render_document(const Buffer *buf, int width, RenderedDoc *out_doc);
 
 /**
+ * @brief Render a slice of buffer lines [start_row, end_row) into out_doc.
+ *
+ * Scans code-fence context prior to start_row so code blocks spanning the
+ * viewport boundary are rendered with accurate syntax highlighting.
+ * Expands range boundaries to encapsulate entire table blocks.
+ *
+ * @param buf The source TextBuffer.
+ * @param width Target display width.
+ * @param start_row Starting 0-indexed buffer line.
+ * @param end_row Ending 0-indexed buffer line (exclusive).
+ * @param out_doc Destination RenderedDoc structure.
+ */
+void render_document_range(const Buffer *buf, int width, size_t start_row, size_t end_row, RenderedDoc *out_doc);
+
+/**
  * @brief Find the rendered line index corresponding to a given source buffer line.
  *
  * Used for synchronized vertical scrolling between the editor and preview panes.

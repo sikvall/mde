@@ -418,7 +418,7 @@ static void collect_linked_recursive(ExportDocList *list, size_t doc_idx) {
                         pl.spans[s].type == MD_LINK_TEXT ||
                         pl.spans[s].type == MD_LINK_URL_PAREN ||
                         pl.spans[s].type == MD_LINK_URL)) {
-                    if (pl.spans[s].type == MD_LINK_URL_PAREN && raw[pl.spans[s].start] == ')') break;
+                    if (pl.spans[s].type == MD_LINK_URL_PAREN && (raw[pl.spans[s].start] == ')' || raw[pl.spans[s].start] == ']')) break;
                     s++;
                 }
                 continue;
@@ -554,7 +554,7 @@ static void write_pandoc_rewritten_line(FILE *tf, const char *raw, size_t len,
                     pl.spans[s].type == MD_LINK_TEXT ||
                     pl.spans[s].type == MD_LINK_URL_PAREN ||
                     pl.spans[s].type == MD_LINK_URL)) {
-                if (pl.spans[s].type == MD_LINK_URL_PAREN && raw[pl.spans[s].start] == ')') break;
+                if (pl.spans[s].type == MD_LINK_URL_PAREN && (raw[pl.spans[s].start] == ')' || raw[pl.spans[s].start] == ']')) break;
                 s++;
             }
             continue;
@@ -819,7 +819,7 @@ static bool is_skipped_export_marker(MdTokenType type) {
            type == MD_BOLD_ITALIC_MARKER ||
            type == MD_STRIKE_MARKER ||
            type == MD_INLINE_CODE_MARKER ||
-           type == MD_TABLE_BORDER;
+           type == MD_TABLE_BORDER || type == MD_FOOTNOTE_DEF;
 }
 
 /**
@@ -849,7 +849,7 @@ static size_t extract_link_or_image_span(const char *raw, const MdParsedLine *pl
             *out_url = raw + pl->spans[k].start;
             *out_url_len = pl->spans[k].end - pl->spans[k].start;
         }
-        bool done = (pl->spans[k].type == MD_LINK_URL_PAREN && raw[pl->spans[k].start] == ')');
+        bool done = (pl->spans[k].type == MD_LINK_URL_PAREN && (raw[pl->spans[k].start] == ')' || raw[pl->spans[k].start] == ']'));
         k++;
         if (done) break;
     }
@@ -922,6 +922,29 @@ static void html_write_spans(FILE *f, const char *raw, const MdParsedLine *pl,
             continue;
         }
 
+        if (sp.type == MD_FOOTNOTE_REF) {
+            fputs("<sup><a href=\"#fn-", f);
+            const char *fn = raw + sp.start + 2;
+            size_t fn_len = (sp.end > sp.start + 3) ? (sp.end - sp.start - 3) : 0;
+            html_escape(f, fn, fn_len);
+            fputs("\">[", f);
+            html_escape(f, fn, fn_len);
+            fputs("]</a></sup>", f);
+            s++;
+            continue;
+        }
+
+        if (sp.type == MD_AUTO_LINK) {
+            const char *url = raw + sp.start;
+            size_t ulen = sp.end - sp.start;
+            fputs("<a href=\"", f);
+            html_escape(f, url, ulen);
+            fputs("\">", f);
+            html_escape(f, url, ulen);
+            fputs("</a>", f);
+            s++;
+            continue;
+        }
         if (sp.type == MD_IMAGE_MARKER) {
             const char *alt, *url;
             size_t alt_len, url_len;
@@ -1079,6 +1102,14 @@ static void export_builtin_html_body(FILE *f, const ExportDocList *docs, size_t 
         } else if (pl.is_hrule) {
             html_close_block(f, &blk);
             fputs("<hr>\n", f);
+        } else if (pl.is_footnote_def) {
+            html_close_block(f, &blk);
+            const char *raw_fn = raw + pl.spans[0].start + 2;
+            size_t id_len = 0;
+            while (id_len < pl.spans[0].end - pl.spans[0].start && raw_fn[id_len] != ']') id_len++;
+            fprintf(f, "<div class=\"footnote\" id=\"fn-%.*s\"><sup>[%.*s]</sup> ", (int)id_len, raw_fn, (int)id_len, raw_fn);
+            html_write_spans(f, raw, &pl, 1, pl.span_count, docs, doc_idx);
+            fputs("</div>\n", f);
         } else if (pl.is_blockquote) {
             if (blk != HTML_BLK_QUOTE) {
                 html_close_block(f, &blk);
@@ -1230,6 +1261,27 @@ static void xml_write_spans(FILE *f, const char *raw, const MdParsedLine *pl,
             continue;
         }
 
+        if (sp.type == MD_FOOTNOTE_REF) {
+            const char *fn = raw + sp.start + 2;
+            size_t fn_len = (sp.end > sp.start + 3) ? (sp.end - sp.start - 3) : 0;
+            fputs("<footnoteref linkend=\"fn-", f);
+            xml_escape(f, fn, fn_len);
+            fputs("\"/>", f);
+            s++;
+            continue;
+        }
+
+        if (sp.type == MD_AUTO_LINK) {
+            const char *url = raw + sp.start;
+            size_t ulen = sp.end - sp.start;
+            fputs("<link url=\"", f);
+            xml_escape(f, url, ulen);
+            fputs("\">", f);
+            xml_escape(f, url, ulen);
+            fputs("</link>", f);
+            s++;
+            continue;
+        }
         if (sp.type == MD_IMAGE_MARKER) {
             const char *alt, *url;
             size_t alt_len, url_len;
@@ -1371,6 +1423,14 @@ static void export_builtin_xml_body(FILE *f, const ExportDocList *docs, size_t d
             fputs("    <paragraph>", f);
             xml_write_spans(f, raw, &pl, 0, pl.span_count, docs, doc_idx);
             fputs("</paragraph>\n", f);
+        } else if (pl.is_footnote_def) {
+            xml_close_block(f, &blk);
+            const char *raw_fn = raw + pl.spans[0].start + 2;
+            size_t id_len = 0;
+            while (id_len < pl.spans[0].end - pl.spans[0].start && raw_fn[id_len] != ']') id_len++;
+            fprintf(f, "  <footnote id=\"fn-%.*s\">", (int)id_len, raw_fn);
+            xml_write_spans(f, raw, &pl, 1, pl.span_count, docs, doc_idx);
+            fputs("</footnote>\n", f);
         } else if (pl.is_list_item) {
             if (blk != XML_BLK_LIST) {
                 xml_close_block(f, &blk);
@@ -1500,6 +1560,25 @@ static void latex_write_spans(FILE *f, const char *raw, const MdParsedLine *pl,
             continue;
         }
 
+        if (sp.type == MD_FOOTNOTE_REF) {
+            const char *fn = raw + sp.start + 2;
+            size_t fn_len = (sp.end > sp.start + 3) ? (sp.end - sp.start - 3) : 0;
+            fputs("\\footnotemark[", f);
+            fwrite(fn, 1, fn_len, f);
+            fputs("]", f);
+            s++;
+            continue;
+        }
+
+        if (sp.type == MD_AUTO_LINK) {
+            const char *url = raw + sp.start;
+            size_t ulen = sp.end - sp.start;
+            fputs("\\url{", f);
+            fwrite(url, 1, ulen, f);
+            fputs("}", f);
+            s++;
+            continue;
+        }
         if (sp.type == MD_IMAGE_MARKER) {
             const char *alt, *url;
             size_t alt_len, url_len;
@@ -1636,6 +1715,14 @@ static void export_builtin_latex_body(FILE *f, const ExportDocList *docs, size_t
         } else if (pl.is_hrule) {
             latex_close_block(f, &blk);
             fputs("\\noindent\\rule{\\textwidth}{0.4pt}\n\n", f);
+        } else if (pl.is_footnote_def) {
+            latex_close_block(f, &blk);
+            const char *raw_fn = raw + pl.spans[0].start + 2;
+            size_t id_len = 0;
+            while (id_len < pl.spans[0].end - pl.spans[0].start && raw_fn[id_len] != ']') id_len++;
+            fprintf(f, "\\footnotetext[%.*s]{", (int)id_len, raw_fn);
+            latex_write_spans(f, raw, &pl, 1, pl.span_count, docs, doc_idx);
+            fputs("}\n\n", f);
         } else if (pl.is_blockquote) {
             if (blk != LATEX_BLK_QUOTE) {
                 latex_close_block(f, &blk);

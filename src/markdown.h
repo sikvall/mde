@@ -66,8 +66,20 @@ typedef enum {
     MD_LINK_TEXT,          /**< Link anchor text */
     MD_LINK_URL_PAREN,     /**< Link URL parentheses '(' and ')' */
     MD_LINK_URL,           /**< Destination URL */
-    MD_IMAGE_MARKER        /**< Leading '!' for images */
+    MD_IMAGE_MARKER,       /**< Leading '!' for images */
+    MD_FOOTNOTE_REF,       /**< Footnote reference [^1] */
+    MD_FOOTNOTE_DEF,       /**< Footnote definition marker [^1]: */
+    MD_AUTO_LINK           /**< Autolink URL https://... */
 } MdTokenType;
+
+/**
+ * @brief Table column alignment specifier.
+ */
+typedef enum {
+    ALIGN_LEFT = 0,        /**< Left alignment (`:---` or `---`) */
+    ALIGN_CENTER,          /**< Center alignment (`:---:`) */
+    ALIGN_RIGHT            /**< Right alignment (`---:`) */
+} TableAlign;
 
 /**
  * @brief A contiguous byte slice within a line tagged with a token type.
@@ -90,11 +102,13 @@ typedef struct {
     bool is_hrule;             /**< Line is a horizontal rule */
     int header_level;          /**< 1-6 if header, 0 otherwise */
     bool is_list_item;         /**< Line is an ordered/unordered list item */
+    size_t list_indent;        /**< Indentation level (spaces) of list item */
     bool is_task;              /**< Line contains a task checkbox */
     bool task_checked;         /**< true if task is [x], false if [ ] */
     size_t task_bracket_start; /**< Byte offset of '[' in task box */
     bool is_blockquote;        /**< Line is a blockquote */
     bool is_table_row;         /**< Line is a table row */
+    bool is_footnote_def;      /**< Line is a footnote definition [^...]: */
     char code_lang[32];        /**< Active code block language tag */
 } MdParsedLine;
 

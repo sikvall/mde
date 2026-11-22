@@ -29,6 +29,8 @@ void editor_init(Editor *ed, const char *filename) {
     ed->insert_mode = true;     // Default to Insert mode (steady block cursor), press Ins for Overwrite
     ed->wrap_col = MDE_WRAP_COL_DEFAULT; // Default automatic line break at 78 columns
     ed->rendered_dirty = true;
+    ed->rendered_view_start = 0;
+    ed->rendered_view_end = 0;
     ed->cursor_row = 0;
     ed->cursor_col = 0;
     ed->target_visual_col = 0;
@@ -105,7 +107,23 @@ void editor_cycle_view_mode(Editor *ed) {
 void editor_refresh_rendered(Editor *ed) {
     if (!ed || !ed->rendered_dirty) return;
     int p_width = ed->preview_width > 0 ? ed->preview_width : 80;
-    render_document(&ed->buffer, p_width, &ed->rendered_doc);
+
+    size_t total_lines = buffer_line_count(&ed->buffer);
+    if (total_lines > 1000) {
+        // Document is large (> 1,000 lines): render view-bound range with lookahead margin
+        size_t center = (ed->view_mode == VIEW_PREVIEW) ? ed->cursor_row : ed->scroll_row;
+        size_t margin = 120;
+        size_t start_row = center > margin ? (center - margin) : 0;
+        size_t end_row = center + margin < total_lines ? (center + margin) : total_lines;
+
+        render_document_range(&ed->buffer, p_width, start_row, end_row, &ed->rendered_doc);
+        ed->rendered_view_start = start_row;
+        ed->rendered_view_end = end_row;
+    } else {
+        render_document(&ed->buffer, p_width, &ed->rendered_doc);
+        ed->rendered_view_start = 0;
+        ed->rendered_view_end = total_lines;
+    }
     ed->rendered_dirty = false;
 }
 
@@ -2494,6 +2512,14 @@ void editor_update_scroll(Editor *ed, int view_rows) {
             ed->preview_scroll_row = ed->rendered_doc.count - (size_t)view_rows;
         } else {
             ed->preview_scroll_row = rend_idx;
+        }
+    }
+
+    if (total_lines > 1000) {
+        size_t check_row = (ed->view_mode == VIEW_PREVIEW) ? ed->cursor_row : ed->scroll_row;
+        if (check_row < ed->rendered_view_start + 25 ||
+            check_row + 25 >= ed->rendered_view_end) {
+            ed->rendered_dirty = true;
         }
     }
 }

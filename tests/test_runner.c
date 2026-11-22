@@ -1500,6 +1500,165 @@ static void test_shortcut_hints_and_dialog(void) {
     editor_free(&ed);
 }
 
+/** @brief Verify Markdown extensions: footnotes, nested lists, reference links, autolinks, table alignment. */
+static void test_markdown_extensions(void) {
+    printf("--- Testing Markdown Extensions (v0.1.1) ---\n");
+
+    bool in_code = false;
+    char lang[32] = {0};
+    MdParsedLine pl;
+
+    // 1. Footnotes
+    const char *fn_line = "A paragraph with [^note1] reference.";
+    md_parse_line(fn_line, strlen(fn_line), &in_code, lang, sizeof(lang), &pl);
+    bool found_fn_ref = false;
+    for (size_t s = 0; s < pl.span_count; ++s) {
+        if (pl.spans[s].type == MD_FOOTNOTE_REF) {
+            found_fn_ref = true;
+            size_t slen = pl.spans[s].end - pl.spans[s].start;
+            TEST_ASSERT(strncmp(fn_line + pl.spans[s].start, "[^note1]", slen) == 0,
+                        "Footnote ref span matches [^note1]");
+            break;
+        }
+    }
+    TEST_ASSERT(found_fn_ref, "Found MD_FOOTNOTE_REF span");
+    md_parsed_line_free(&pl);
+
+    const char *fn_def = "[^note1]: Explanation of footnote";
+    md_parse_line(fn_def, strlen(fn_def), &in_code, lang, sizeof(lang), &pl);
+    TEST_ASSERT(pl.is_footnote_def, "Line identified as footnote definition");
+    TEST_ASSERT(pl.span_count >= 1 && pl.spans[0].type == MD_FOOTNOTE_DEF,
+                "First span of footnote definition is MD_FOOTNOTE_DEF");
+    md_parsed_line_free(&pl);
+
+    // 2. Nested Lists
+    const char *list_l2 = "  - Level two item";
+    md_parse_line(list_l2, strlen(list_l2), &in_code, lang, sizeof(lang), &pl);
+    TEST_ASSERT(pl.is_list_item, "Level 2 item recognized as list item");
+    TEST_ASSERT(pl.list_indent == 2, "Level 2 item has list_indent == 2");
+    md_parsed_line_free(&pl);
+
+    const char *list_l3 = "    * Level three item";
+    md_parse_line(list_l3, strlen(list_l3), &in_code, lang, sizeof(lang), &pl);
+    TEST_ASSERT(pl.is_list_item, "Level 3 item recognized as list item");
+    TEST_ASSERT(pl.list_indent == 4, "Level 3 item has list_indent == 4");
+    md_parsed_line_free(&pl);
+
+    Buffer list_buf;
+    buffer_init(&list_buf);
+    buffer_replace_line(&list_buf, 0, "- L1", 4, 0);
+    buffer_split_line(&list_buf, 0, 4, 0);
+    buffer_replace_line(&list_buf, 1, "  - L2", 6, 0);
+    buffer_split_line(&list_buf, 1, 6, 0);
+    buffer_replace_line(&list_buf, 2, "    * L3", 8, 0);
+
+    RenderedDoc list_doc;
+    rendered_doc_init(&list_doc);
+    render_document(&list_buf, 80, &list_doc);
+    TEST_ASSERT(list_doc.count >= 3, "Rendered at least 3 list lines");
+    bool found_bullet_circle = false;
+    bool found_bullet_square = false;
+    for (size_t l = 0; l < list_doc.count; ++l) {
+        for (size_t c = 0; c < list_doc.lines[l].chunk_count; ++c) {
+            RenderChunk *rc = &list_doc.lines[l].chunks[c];
+            if (strstr(rc->text, "◦")) found_bullet_circle = true;
+            if (strstr(rc->text, "▪")) found_bullet_square = true;
+        }
+    }
+    TEST_ASSERT(found_bullet_circle, "Preview cycles bullet to ◦ for level 2");
+    TEST_ASSERT(found_bullet_square, "Preview cycles bullet to ▪ for level 3");
+    rendered_doc_free(&list_doc);
+    buffer_free(&list_buf);
+
+    // 3. Reference-style links
+    const char *ref_inline = "Link to [Search Engine][se1] now.";
+    md_parse_line(ref_inline, strlen(ref_inline), &in_code, lang, sizeof(lang), &pl);
+    bool found_ref_label = false;
+    bool found_ref_target = false;
+    for (size_t s = 0; s < pl.span_count; ++s) {
+        if (pl.spans[s].type == MD_LINK_TEXT) {
+            found_ref_label = true;
+            TEST_ASSERT(strncmp(ref_inline + pl.spans[s].start, "Search Engine", 13) == 0,
+                        "Reference link label text matches");
+        }
+        if (pl.spans[s].type == MD_LINK_URL) {
+            found_ref_target = true;
+            TEST_ASSERT(strncmp(ref_inline + pl.spans[s].start, "se1", 3) == 0,
+                        "Reference link target ref matches");
+        }
+    }
+    TEST_ASSERT(found_ref_label && found_ref_target, "Reference inline link parsed correctly");
+    md_parsed_line_free(&pl);
+
+    const char *ref_def = "[se1]: https://duckduckgo.com";
+    md_parse_line(ref_def, strlen(ref_def), &in_code, lang, sizeof(lang), &pl);
+    bool found_def_url = false;
+    for (size_t s = 0; s < pl.span_count; ++s) {
+        if (pl.spans[s].type == MD_LINK_URL) {
+            found_def_url = true;
+            TEST_ASSERT(strncmp(ref_def + pl.spans[s].start, "https://duckduckgo.com", 22) == 0,
+                        "Reference definition URL matches");
+        }
+    }
+    TEST_ASSERT(found_def_url, "Reference definition parsed correctly");
+    md_parsed_line_free(&pl);
+
+    // 4. Autolink bare URLs
+    const char *auto_line = "Visit https://kernel.org and http://example.com for info";
+    md_parse_line(auto_line, strlen(auto_line), &in_code, lang, sizeof(lang), &pl);
+    int auto_count = 0;
+    for (size_t s = 0; s < pl.span_count; ++s) {
+        if (pl.spans[s].type == MD_AUTO_LINK) auto_count++;
+    }
+    TEST_ASSERT(auto_count == 2, "Found both https:// and http:// bare autolinks");
+    md_parsed_line_free(&pl);
+
+    // 5. Table Column Alignment
+    Buffer tbl_buf;
+    buffer_init(&tbl_buf);
+    buffer_replace_line(&tbl_buf, 0, "| Left | Center | Right |", 25, 0);
+    buffer_split_line(&tbl_buf, 0, 25, 0);
+    buffer_replace_line(&tbl_buf, 1, "| :--- | :---: | ---: |", 23, 0);
+    buffer_split_line(&tbl_buf, 1, 23, 0);
+    buffer_replace_line(&tbl_buf, 2, "| A | B | C |", 13, 0);
+
+    RenderedDoc tbl_doc;
+    rendered_doc_init(&tbl_doc);
+    render_document(&tbl_buf, 80, &tbl_doc);
+    TEST_ASSERT(tbl_doc.count >= 5, "Table renders box borders and rows");
+    rendered_doc_free(&tbl_doc);
+    buffer_free(&tbl_buf);
+
+    // 6. View-bound range rendering (large document optimization)
+    Buffer range_buf;
+    buffer_init(&range_buf);
+    for (size_t i = 0; i < 30; ++i) {
+        char line_str[64];
+        if (i == 4) snprintf(line_str, sizeof(line_str), "```c");
+        else if (i == 10) snprintf(line_str, sizeof(line_str), "```");
+        else snprintf(line_str, sizeof(line_str), "Line %zu content", i);
+        if (i > 0) buffer_split_line(&range_buf, i - 1, buffer_line_len(&range_buf, i - 1), 0);
+        buffer_replace_line(&range_buf, i, line_str, strlen(line_str), 0);
+    }
+    RenderedDoc range_doc;
+    rendered_doc_init(&range_doc);
+    render_document_range(&range_buf, 80, 6, 9, &range_doc);
+    TEST_ASSERT(range_doc.count >= 3, "Range rendering produced lines for [6, 9)");
+    bool found_code_in_range = false;
+    for (size_t l = 0; l < range_doc.count; ++l) {
+        TEST_ASSERT(range_doc.lines[l].source_row >= 6 && range_doc.lines[l].source_row < 9,
+                    "Rendered lines within requested source row slice");
+        for (size_t c = 0; c < range_doc.lines[l].chunk_count; ++c) {
+            if (range_doc.lines[l].chunks[c].attr & COLOR_PAIR(CP_CODE_BLOCK)) {
+                found_code_in_range = true;
+            }
+        }
+    }
+    TEST_ASSERT(found_code_in_range, "Range rendering accurately inherited code-fence state");
+    rendered_doc_free(&range_doc);
+    buffer_free(&range_buf);
+}
+
 /** @brief Run all unit test suites and return 0 on 100% pass, 1 on any failure. */
 int main(void) {
     setlocale(LC_ALL, "");
@@ -1529,6 +1688,7 @@ int main(void) {
     test_replace_reflow_and_word_nav();
     test_renderer_tables_and_links();
     test_shortcut_hints_and_dialog();
+    test_markdown_extensions();
 
     printf("==========================================\n");
     printf("Test Results: %d / %d tests passed (%.1f%%)\n",

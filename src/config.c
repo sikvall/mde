@@ -21,6 +21,17 @@ void config_init_defaults(MdeConfig *cfg) {
     cfg->view_mode = 0;
 }
 
+/**
+ * @brief Resolve the user configuration file path according to XDG/legacy layout.
+ *
+ * Checks for $HOME/.config/mde/config; if $HOME/.config does not exist,
+ * falls back to $HOME/.mde/config.
+ *
+ * @param out_path Buffer to receive resolved configuration path.
+ * @param cap Capacity of out_path buffer in bytes.
+ * @param for_write If true, ensures parent directory is created.
+ * @return true if path was resolved, false on error.
+ */
 static bool get_config_path(char *out_path, size_t cap, bool for_write) {
     const char *home = getenv("HOME");
     if (!home || !home[0] || cap < PATH_MAX) return false;
