@@ -1,0 +1,10 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: mde
+Upstream-Contact: Täpp Anders Sikvall <anders@sikvall.se>
+Source: https://github.com/sikvall/mde
+
+Files: *
+Copyright: 2026 Täpp Anders Sikvall
+License: MIT
+ On packaged systems, the full license text shipped with mde is available in
+ /usr/share/doc/mde/LICENSE.md.

@@ -1,0 +1,28 @@
+Source: mde
+Section: editors
+Priority: optional
+Maintainer: Täpp Anders Sikvall <anders@sikvall.se>
+Build-Depends:
+ debhelper-compat (= 13),
+ gcc,
+ libncurses-dev | libncursesw5-dev,
+ libzip-dev,
+ make,
+ pkg-config
+Standards-Version: 4.6.2
+Homepage: https://github.com/sikvall/mde
+Rules-Requires-Root: no
+
+Package: mde
+Architecture: any
+Depends:
+ ${misc:Depends},
+ ${shlibs:Depends}
+Suggests:
+ pandoc
+Description: Full-screen text-mode Markdown editor with native EPUB exporter
+ mde is a specialized terminal text editor written in pure C11 and ncursesw
+ for editing and viewing Markdown (.md) documents with dual-pane live preview,
+ in-place rich syntax styling, fullscreen rendered editing, column ruler,
+ task checkboxes, UTF-8 support, hypertext file linking, and native EPUB 2/3
+ e-book export alongside the standalone md2epub command-line tool.

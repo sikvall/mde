@@ -1,0 +1,43 @@
+name: mde
+base: core22
+version: '0.1.3'
+summary: Full-screen text-mode Markdown editor with native EPUB exporter
+description: |
+  mde is a fast terminal Markdown editor written in C11 and ncursesw featuring
+  dual-pane live preview, in-place rich syntax highlighting, column ruler,
+  task checkboxes, hypertext file links, and native EPUB 2/3 book publishing
+  with the standalone md2epub CLI tool.
+grade: stable
+confinement: strict
+
+apps:
+  mde:
+    command: usr/bin/mde
+    plugs:
+      - home
+      - removable-media
+  md2epub:
+    command: usr/bin/md2epub
+    plugs:
+      - home
+      - removable-media
+
+parts:
+  mde:
+    plugin: nil
+    source: ../..
+    build-packages:
+      - gcc
+      - make
+      - libncurses-dev
+      - libzip-dev
+      - pkg-config
+    stage-packages:
+      - libncursesw6
+      - libtinfo6
+      - libzip4
+    override-build: |
+      ./configure --prefix=/usr --mandir=/usr/share/man --docdir=/usr/share/doc/mde --disable-werror
+      make -j"$(nproc)"
+      make check
+      make DESTDIR="$CRAFT_PART_INSTALL" install-strip

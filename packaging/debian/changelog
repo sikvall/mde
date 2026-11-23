@@ -1,0 +1,13 @@
+mde (0.1.3-1) unstable; urgency=medium
+
+  * Add GNU configure/make build system, multi-distro Linux packaging,
+    strict C11 warnings, and buffer bounds safety hardening.
+
+ -- Täpp Anders Sikvall <anders@sikvall.se>  Tue, 24 Nov 2026 00:14:00 +0100
+
+mde (0.1.2-1) unstable; urgency=medium
+
+  * Release 0.1.2 with three-mode line wrapping, native EPUB 2/3 publisher,
+    and standalone md2epub CLI tool.
+
+ -- Täpp Anders Sikvall <anders@sikvall.se>  Mon, 23 Nov 2026 12:00:00 +0100
