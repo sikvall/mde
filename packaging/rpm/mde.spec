@@ -1,5 +1,5 @@
 Name:           mde
-Version:        0.1.3
+Version:        0.2.0
 Release:        1%{?dist}
 Summary:        Full-screen text-mode Markdown editor with native EPUB exporter
 
@@ -43,6 +43,9 @@ rm -rf %{buildroot}%{_datadir}/doc/%{name} %{buildroot}%{_datadir}/doc/packages/
 %{_mandir}/man1/md2epub.1*
 
 %changelog
+* Tue Nov 24 2026 Täpp Anders Sikvall <anders@sikvall.se> - 0.2.0-1
+- Release 0.2.0 minor version bump
+
 * Tue Nov 24 2026 Täpp Anders Sikvall <anders@sikvall.se> - 0.1.3-1
 - Release 0.1.3 with GNU configure/make build system, multi-distro packaging, and buffer safety hardening
 

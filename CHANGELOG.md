@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.0 - 2026-11-24
+- Added built-in UNIX/Linux manual page (`.1` roff) export backend and menu option.
+- Stepped minor release version to 0.2.0.
+
 ## 0.1.3 - 2026-11-24
 - Added a cross-platform prerequisite installer for major Linux distributions and macOS.
 - Upgraded the build system to GNU-style `./configure` and `make` with standard installation paths and out-of-tree build support.

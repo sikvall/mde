@@ -1,4 +1,4 @@
-.TH MDE 1 "November 2026" "mde 0.1.3" "User Commands"
+.TH MDE 1 "November 2026" "mde 0.2.0" "User Commands"
 .SH NAME
 mde \- full-screen text-mode Markdown editor
 .SH SYNOPSIS
@@ -96,13 +96,14 @@ Read / Open interactive file dialogue to browse directories and open a file.
 .TP
 .BR F5 " or " Alt+X
 Open the interactive Export Menu to export the current Markdown document to
-\fBHTML\fR (\fI.html\fR), \fBXML\fR (\fI.xml\fR), \fBEPUB\fR (\fI.epub\fR), or
-\fBLaTeX\fR (\fI.tex\fR). Press \fBM\fR within the menu to view and update
+\fBHTML\fR (\fI.html\fR), \fBXML\fR (\fI.xml\fR), \fBEPUB\fR (\fI.epub\fR),
+\fBLaTeX\fR (\fI.tex\fR), or \fBMan\fR (\fI.1\fR UNIX/Linux manual page).
+Press \fBM\fR within the menu to view and update
 document metadata. Recursively discovers and includes all locally linked
 Markdown files (toggleable with \fBL\fR), rewriting internal links into working
-hypertext references; for \fBLaTeX\fR, all linked sources are combined into one
-single unified \fI.tex\fR document. Built-in native C11 converters are used for
-all formats, with \fBpandoc\fR(1) available as an optional alternative.
+hypertext references; for \fBLaTeX\fR and \fBMan\fR, all linked sources are
+combined into one unified output document. Built-in native C11 converters are
+used for all formats, with \fBpandoc\fR(1) available as an optional alternative.
 .TP
 .BR Alt+I
 Open the Document Metadata modal dialogue to view and edit common book metadata
@@ -278,6 +279,51 @@ The EPUB publishing engine is also available as a standalone command-line tool,
 .RS
 .B md2epub book.md \-o book.epub
 .RE
+.SH UNIX/LINUX MAN PAGE EXPORT
+\fBmde\fR includes a built-in native C11 converter for exporting Markdown
+documents directly to standard UNIX/Linux \fBman\fR(7) roff manual pages.
+.SS Generating a Reference Manual
+Press \fBF5\fR (or \fBAlt+X\fR) to open the Export Menu, then press \fB5\fR to
+select \fBMan (.1)\fR. Use \fBTab\fR to customize the output filename (for
+example \fImylib.3\fR for library calls or \fImytool.8\fR for administration
+commands), \fBL\fR to toggle bundling of linked Markdown files, \fBM\fR to edit
+document metadata, or \fBE\fR to switch between the built-in converter and
+\fBpandoc\fR(1) when installed, then press \fBEnter\fR to write the file.
+.SS Section Header & Front-Matter Mapping
+The manual header macro (\fB.TH\fR) is populated automatically:
+.IP \(bu 2
+The manual section number is inferred from the output file extension (\fB.1\fR\-\fB.9\fR,
+defaulting to \fB1\fR when omitted or non-numeric).
+.IP \(bu 2
+If YAML front matter is present at the top of the buffer, its \fBtitle\fR,
+\fBdate\fR, and \fBpublisher\fR (or \fBauthor\fR) fields populate the \fB.TH\fR
+title, date, and source footer, and the front-matter block is stripped from the
+manual body.
+.SS Markdown-to-Roff Translation
+Built-in man conversion translates Markdown constructs into portable groff/troff macros:
+.IP \(bu 2
+H1 headings become uppercased \fB.SH\fR sections, H2 headings become \fB.SS\fR
+subsections, and H3+ headings render as bold subheaders.
+.IP \(bu 2
+Inline \fB**bold**\fR, \fB`code`\fR, \fI*italic*\fR, and \fB***bold-italic***\fR
+map to \fB\efB\fR, \fB\efI\fR, and \fB\ef(BI\fR font escapes; backslashes, hyphens,
+quoted macro arguments, and line-leading \fB.\fR or \fB'\fR characters (\fB\e&\fR)
+are escaped safely.
+.IP \(bu 2
+Fenced code blocks use indented \fB.RS 4\fR / \fB.nf\fR / \fB.fi\fR blocks,
+lists and task checkboxes map to \fB.IP\fR items, footnotes emit \fB.TP\fR
+entries, and Markdown tables automatically emit a \fBtbl\fR(1) preprocessor
+header (\fB'\e" t\fR) with \fB.TS\fR / \fB.TE\fR boxed tables.
+.IP \(bu 2
+When linked-file bundling is enabled, all locally linked Markdown documents are
+combined sequentially into a single unified manual with section headers and
+cross-references.
+.PP
+Preview any exported manual directly in the terminal with:
+.PP
+.RS
+.B man \-l output.1
+.RE
 .SH EXAMPLES
 .TP
 Open or create a Markdown document with default 78-column automatic line break:
@@ -291,6 +337,9 @@ Disable automatic line breaking:
 .TP
 Export a multi-chapter book to EPUB directly from the shell:
 .B md2epub examples/book/main.md \-o mybook.epub
+.TP
+Preview an exported UNIX manual page rendered locally:
+.B man \-l mydoc.1
 .SH SEE ALSO
 .BR md2epub (1),
 .BR zip (1)

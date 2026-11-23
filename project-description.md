@@ -4,7 +4,7 @@
 > **mde**. It details what the project is, its architectural design, build system, current state,
 > recent upgrades, git history, and the remaining roadmap items.
 >
-> Snapshot basis: **v0.1.3** (2026-11-24), pure C11 codebase compiling warning-free with `gcc`, `ncursesw`, and `libzip`.
+> Snapshot basis: **v0.2.0** (2026-11-24), pure C11 codebase compiling warning-free with `gcc`, `ncursesw`, and `libzip`.
 > Test runner passes **616 / 616 tests (100.0%)**.
 
 ---
@@ -18,14 +18,14 @@ navigating, and previewing Markdown (`.md`) documents. It is written in **pure C
 - **Author / owner:** Täpp Anders Sikvall.
 - **Remote:** `git@github.com:sikvall/mde.git` (branch `main`).
 - **License:** MIT.
-- **Version:** `0.1.3` (central source of truth: `src/version.h`).
+- **Version:** `0.2.0` (central source of truth: `src/version.h`).
 - **Platform:** Linux/Unix terminals (including WSL).
 
 ### Core Product Tenets
 
 1. **Distraction-Free Writing & Live Dual-Pane Preview**: Instant feedback without terminal flicker, featuring steady non-flashing cursors (`█` in insert mode, `_` in overwrite mode).
 2. **Nano-Compatible Muscle Memory**: Intuitive keybindings mirroring GNU `nano` (`^X`, `^O`, `^R`, `^S`, `^W`, `^K`, `^U`, `^G`, `M-U`/`M-E` undo/redo).
-3. **Multi-File Document & Book Authoring**: In-editor hypertext link following (`F7` / `Alt+O`), backward navigation (`F8`), and recursive linked-file export bundling (HTML5, XML/DocBook5, LaTeX, and EPUB).
+3. **Multi-File Document & Book Authoring**: In-editor hypertext link following (`F7` / `Alt+O`), backward navigation (`F8`), and recursive linked-file export bundling (HTML5, XML/DocBook5, LaTeX, EPUB, and UNIX man pages).
 4. **Data Safety First**: Atomic temp-file saves with symlink resolution, permission preservation, exact dirty-state tracking, save/discard confirmation prompts, and Emacs-style backup/recovery files.
 5. **Zero Heavy Runtime Dependencies**: Pure C11 standard library + `libncursesw`.
 
@@ -68,7 +68,7 @@ mde/
 ├── Makefile.in            # Build, check, install, uninstall, dist, and packaging template
 ├── packaging/             # Native Linux packaging (debian/, rpm/, arch/, alpine/, void/, gentoo/, nix/, snap/)
 ├── README.md              # User documentation and keybindings guide
-├── CHANGELOG.md           # Plain Markdown changelog covering releases (0.1.0 to 0.1.3)
+├── CHANGELOG.md           # Plain Markdown changelog covering releases (0.1.0 to 0.2.0)
 ├── LICENSE.md             # Software license
 ├── examples/              # Interactive sample documents demonstrating mde features
 │   ├── demo.md            # Comprehensive interactive showcase document
@@ -98,6 +98,7 @@ mde/
 │   ├── export_html.c      # Built-in standalone HTML5 export backend
 │   ├── export_xml.c       # Built-in structured XML export backend
 │   ├── export_latex.c     # Built-in unified LaTeX export backend
+│   ├── export_man.c       # Built-in UNIX/Linux man(7) manual page export backend
 │   ├── md2epub_main.c     # Standalone CLI binary entry point
 │   ├── markdown.h / .c    # Streaming Markdown lexer and span tokenizer
 │   ├── renderer.h / .c    # Formatted preview renderer with responsive soft-wrapping & tables

@@ -50,13 +50,13 @@
   - **Insert File Link (`F6` / `Alt+H`)**: Opens an interactive file picker to choose an existing file (or type a new target filename), automatically computes a portable relative path, derives a label from the selection or the target's H1 heading, and inserts `[Label](relative/path.md)`.
   - **Follow Links & Footnotes (`F7` / `Alt+O`)**: Jump directly into any local Markdown link `[Label](file.md)`, `#heading` anchor, or footnote reference/definition under the cursor (or on the active line). Pressing `F7` / `Alt+O` on a footnote reference `[^note]` jumps to its definition; pressing it on a definition `[^note]:` jumps back to the first reference in the text.
   - **Link & Footnote History Back (`F8` / `Alt+-`)**: Return to previously visited linked documents or footnote jump points with your exact cursor line and column restored. Prompts to save if a different file is loaded and the current buffer has unsaved edits.
-- **Multi-File Linked Export Menu (`F5` / `Alt+X`) — HTML, XML, EPUB, LaTeX**:
-  - Export the current Markdown buffer directly to **HTML5** (`.html`), **XML / DocBook 5** (`.xml`), **EPUB 3** (`.epub`), or **LaTeX** (`.tex`).
+- **Multi-File Linked Export Menu (`F5` / `Alt+X`) — HTML, XML, EPUB, LaTeX, Man**:
+  - Export the current Markdown buffer directly to **HTML5** (`.html`), **XML / DocBook 5** (`.xml`), **EPUB 3** (`.epub`), **LaTeX** (`.tex`), or **UNIX/Linux manual page** (`.1` roff).
   - **Automatic Linked-File Bundling**: Recursively discovers all locally linked Markdown files (with cycle protection) and includes them in the export (toggleable with `L` inside the Export Menu):
     - **HTML5 & EPUB 3**: Bundles all linked documents and rewrites internal `.md` links into working hypertext section/chapter links.
-    - **LaTeX**: Combines the root document and all linked Markdown sources into **one unified `.tex` document** (single preamble and `\begin{document}...\end{document}` with internal `\hypertarget`/`\hyperlink` cross-references).
+    - **LaTeX & UNIX Man Page**: Combines the root document and all linked Markdown sources into one unified `.tex` or troff/groff `.1` reference manual with internal cross-references.
     - **XML**: Includes all linked sources as structured `<linked-document>` / DocBook sections with rewritten internal links.
-  - Automatically detects and uses **`pandoc`** (invoked safely via `fork`/`execvp`, never a shell) when installed, with full built-in C11 exporters for HTML5, structured XML, EPUB 2/3, and LaTeX as zero-dependency native fallbacks.
+  - Automatically detects and uses **`pandoc`** (invoked safely via `fork`/`execvp`, never a shell) when installed, with full built-in C11 exporters for HTML5, structured XML, EPUB 2/3, LaTeX, and UNIX/Linux man pages as zero-dependency native fallbacks.
   - **Native EPUB 2/3 & Standalone `md2epub` CLI Tool**: EPUB export is powered natively in C11 using `libzip-dev`, creating compliant Open Container Format (OCF) archives with uncompressed `mimetype` at offset 0, automatic chapter splitting on `# ` headings and linked files, YAML front-matter metadata parsing, local image bundling, and multi-level table-of-contents navigation (`nav.xhtml` and `toc.ncx`). You can also use the standalone `md2epub` command directly from the shell (`md2epub book.md -o book.epub`).
   - Pre-fills the output filename based on the current file and updates extensions automatically as you choose a format; press `Tab` to customize the destination path, `L` to toggle linked-file inclusion, or `E` to toggle between Pandoc and Built-in engines. If the destination file already exists, an explicit `(Y)es / (N)o` overwrite confirmation is required before writing.
 - **Document Outline (`F9` / `Alt+T`), Search & Replace (`Ctrl+\` / `Alt+R`) & Paragraph Reflow (`Alt+J`)**:
@@ -97,7 +97,7 @@ All application metadata, title, version, and build date are defined centrally i
 
 ```c
 #define MDE_APP_NAME        "mde"
-#define MDE_VERSION_STRING  "0.1.3"
+#define MDE_VERSION_STRING  "0.2.0"
 #define MDE_BUILD_DATE      __DATE__
 #define MDE_BUILD_TIME      __TIME__
 ```
@@ -127,13 +127,35 @@ Updating this single file automatically updates the CLI output (`mde -v`), the h
 You can export any Markdown buffer directly from the editor:
 
 1. Press **`F5`** (or **`Alt+X`**) to open the interactive **Export Menu**.
-2. Press **`3`** to select **EPUB (`.epub`)**.
+2. Select a target format using **`↑`/`↓`** or keys **`1`–`5`**:
+   - **`1`**: **HTML** (`.html`) — standalone HTML5 document
+   - **`2`**: **XML** (`.xml`) — structured XML
+   - **`3`**: **EPUB** (`.epub`) — EPUB 2/3 e-book
+   - **`4`**: **LaTeX** (`.tex`) — unified `.tex` document source
+   - **`5`**: **Man** (`.1`) — UNIX/Linux roff reference manual
 3. **Options within the menu**:
    - **`L`**: Toggle recursive linked-file inclusion (`ON` / `OFF`).
    - **`E`**: Toggle export engine between **Built-in** (native C11) and **Pandoc**.
    - **`M`**: Jump directly into the **Document Metadata** screen to edit author, title, cover image, and identifiers before exporting.
-   - **`Tab`**: Edit the destination `.epub` file path.
-4. Press **`Enter`** to generate the e-book.
+   - **`Tab`**: Customize the destination path (for example, changing `.1` to `.3` for library man pages).
+4. Press **`Enter`** to export (prompts for confirmation if the destination file already exists).
+
+---
+
+### UNIX/Linux Reference Manual Export (`.1` roff)
+
+Choosing **`5. Man (.1)`** converts your Markdown document (and optionally any linked `.md` files) into a standard UNIX/Linux **`man(7)`** troff/groff manual page using the built-in C11 converter—no external `pandoc` required:
+
+- **Header & Section Number (`.TH`)**: Infers the manual section (`1`–`9`) from the destination filename suffix (`.1` by default, or e.g. `.3` / `.8` if customized via `Tab`). Optional YAML front matter (`title`, `date`, `publisher` or `author`) populates the `.TH` header/footer and is omitted from the body.
+- **Headings & Inline Formatting**: Top-level headings (`#`) map to uppercased `.SH` sections, `##` maps to `.SS` subsections, `###+` renders as bold subheaders, and emphasis (`**bold**`, `*italic*`, `***both***`, `` `code` ``) emits `\fB`, `\fI`, and `\f(BI` escapes.
+- **Code, Lists, Footnotes & Tables**: Fenced code blocks use `.RS 4` / `.nf` / `.fi`; ordered, unordered, and task lists emit `.IP` items; footnotes emit `.TP` entries; and Markdown tables automatically emit the `'\" t` `tbl` header with boxed `.TS` / `.TE` layouts.
+- **Roff Escaping & Multi-File Manuals**: Safely escapes backslashes (`\e`), hyphens (`\-`), quotes, and line-leading `.` / `'` (`\&`) so code samples and prose never trigger unintended macro calls. When linked files are included (`L`), all linked `.md` documents are bundled into one unified manual with cross-references.
+
+You can preview the exported manual immediately in your terminal:
+
+```bash
+man -l mytool.1
+```
 
 ---
 
@@ -321,7 +343,7 @@ md2epub -q -o release/handbook.epub handbook.md
 | **`Ctrl+S`** | Save current file directly (opens Write Out dialogue if untitled) |
 | **`Ctrl+O`** | Write Out (Save As file dialogue to choose directory & name) |
 | **`Ctrl+R`** | Read / Open file dialogue to browse and open a file |
-| **`F5` / `Alt+X`** | Open Export Menu (**HTML**, **XML**, **EPUB**, **LaTeX**; press `M` to edit metadata; bundles linked `.md` files) |
+| **`F5` / `Alt+X`** | Open Export Menu (**HTML**, **XML**, **EPUB**, **LaTeX**, **Man**; press `M` to edit metadata; bundles linked `.md` files) |
 | **`Alt+I`** | Document Metadata editor (Title, Author, Language, Date, Publisher, ID, Rights, Cover, CSS) |
 | **`F6` / `Alt+H`** | Insert hypertext file link `[Label](relative/file.md)` via file picker |
 | **`F7` / `Alt+O`** | Follow Markdown file link or `#heading` anchor under cursor |
@@ -474,10 +496,11 @@ mde/
 │   ├── buffer.h / .c   # Text buffer with UTF-8 & dynamic reallocation
 │   ├── editor.h / .c   # Editor state, auto line break, selection & Markdown helpers
 │   ├── epub.h          # Native EPUB2/EPUB3 converter API
-│   ├── export.h / .c   # Export dispatcher (HTML, XML, EPUB, LaTeX)
+│   ├── export.h / .c   # Export dispatcher (HTML, XML, EPUB, LaTeX, Man)
 │   ├── export_epub.c   # Native C11 EPUB 2/3 builder using libzip
 │   ├── export_html.c   # Built-in HTML5 exporter
 │   ├── export_latex.c  # Built-in unified LaTeX exporter
+│   ├── export_man.c    # Built-in UNIX/Linux troff/groff man(7) exporter
 │   ├── export_xml.c    # Built-in structured XML exporter
 │   ├── md2epub_main.c  # Standalone CLI binary entry point
 │   ├── markdown.h / .c # Markdown lexer, AST spans & block/inline tokenizer

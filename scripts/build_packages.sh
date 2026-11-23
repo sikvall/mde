@@ -71,7 +71,7 @@ mkdir -p "$BIN_DIR"
 BIN_DIR_ABS=$(abs_path "$BIN_DIR")
 
 VERSION="${VERSION:-$(awk -F'"' '/#define[[:space:]]+MDE_VERSION_STRING/{print $2; exit}' "$SRCDIR_ABS/src/version.h")}"
-: "${VERSION:=0.1.3}"
+: "${VERSION:=0.2.0}"
 
 resolve_deb_arch() {
     local arch_raw

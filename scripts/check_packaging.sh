@@ -13,7 +13,7 @@ BUILDDIR_ABS=$(cd "$BUILDDIR" && pwd)
 BIN_DIR_ABS=$(mkdir -p "$BIN_DIR" && cd "$BIN_DIR" && pwd)
 
 VERSION=$(awk -F'"' '/#define[[:space:]]+MDE_VERSION_STRING/{print $2; exit}' "$SRCDIR_ABS/src/version.h")
-: "${VERSION:=0.1.3}"
+: "${VERSION:=0.2.0}"
 
 PASS=0
 FAIL=0

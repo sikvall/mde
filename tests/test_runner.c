@@ -50,9 +50,9 @@ static void test_version(void) {
     printf("--- Testing Version & Build Metadata ---\n");
     TEST_ASSERT(strcmp(MDE_APP_NAME, "mde") == 0, "App name is 'mde'");
     TEST_ASSERT(strcmp(MDE_APP_TITLE, "Markdown Editor") == 0, "App title is 'Markdown Editor'");
-    TEST_ASSERT(strcmp(MDE_VERSION_STRING, "0.1.3") == 0, "Version string is '0.1.3'");
-    TEST_ASSERT(MDE_VERSION_MAJOR == 0 && MDE_VERSION_MINOR == 1 && MDE_VERSION_PATCH == 3,
-                "Numeric version macros match 0.1.3");
+    TEST_ASSERT(strcmp(MDE_VERSION_STRING, "0.2.0") == 0, "Version string is '0.2.0'");
+    TEST_ASSERT(MDE_VERSION_MAJOR == 0 && MDE_VERSION_MINOR == 2 && MDE_VERSION_PATCH == 0,
+                "Numeric version macros match 0.2.0");
     TEST_ASSERT(strlen(MDE_BUILD_DATE) > 0, "Build date is non-empty");
     TEST_ASSERT(strlen(MDE_BUILD_TIME) > 0, "Build time is non-empty");
     TEST_ASSERT(strcmp(MDE_AUTHOR, "Täpp Anders Sikvall") == 0, "Author is 'Täpp Anders Sikvall'");
@@ -757,13 +757,14 @@ static char *read_entire_file(const char *path) {
 
 /** @brief Verify built-in HTML5, XML, LaTeX, and Pandoc EPUB export pipelines. */
 static void test_export_subsystem(void) {
-    printf("--- Testing Export Subsystem (HTML, XML, EPUB, LaTeX & Pandoc) ---\n");
+    printf("--- Testing Export Subsystem (HTML, XML, EPUB, LaTeX, Man & Pandoc) ---\n");
 
     // Format names & extensions
     TEST_ASSERT(strcmp(export_format_name(EXPORT_HTML), "HTML") == 0, "HTML format name");
     TEST_ASSERT(strcmp(export_format_name(EXPORT_XML), "XML") == 0, "XML format name");
     TEST_ASSERT(strcmp(export_format_name(EXPORT_EPUB), "EPUB") == 0, "EPUB format name");
     TEST_ASSERT(strcmp(export_format_name(EXPORT_LATEX), "LaTeX") == 0, "LaTeX format name");
+    TEST_ASSERT(strcmp(export_format_name(EXPORT_MAN), "Man") == 0, "Man format name");
 
     // Default output path derivation
     char path[256];
@@ -775,6 +776,10 @@ static void test_export_subsystem(void) {
     TEST_ASSERT(strcmp(path, "book.epub") == 0, "book.md -> book.epub");
     export_default_path("paper.md", EXPORT_LATEX, path, sizeof(path));
     TEST_ASSERT(strcmp(path, "paper.tex") == 0, "paper.md -> paper.tex");
+    export_default_path("tool.md", EXPORT_MAN, path, sizeof(path));
+    TEST_ASSERT(strcmp(path, "tool.1") == 0, "tool.md -> tool.1");
+    export_default_path("tool.1", EXPORT_HTML, path, sizeof(path));
+    TEST_ASSERT(strcmp(path, "tool.html") == 0, "tool.1 -> tool.html");
     export_default_path(NULL, EXPORT_HTML, path, sizeof(path));
     TEST_ASSERT(strcmp(path, "untitled.html") == 0, "NULL -> untitled.html");
 
@@ -888,6 +893,70 @@ static void test_export_subsystem(void) {
     TEST_ASSERT(stat(epub_out, &epub_st) == 0 && epub_st.st_size > 0, "Native EPUB file generated on disk");
     remove(epub_out);
 
+    // 4b. Built-in UNIX Man page (.1) export
+    const char *man_out = "/tmp/test_mde_export.3";
+    ok = export_document(&buf, EXPORT_MAN, man_out, EXPORT_ENGINE_BUILTIN,
+                         used, sizeof(used), err, sizeof(err));
+    TEST_ASSERT(ok, "Built-in Man page export succeeded");
+    TEST_ASSERT(strcmp(used, "built-in") == 0, "Man engine reported as built-in");
+    char *man_txt = read_entire_file(man_out);
+    TEST_ASSERT(man_txt != NULL, "Read exported Man page file");
+    if (man_txt) {
+        TEST_ASSERT(strncmp(man_txt, "'\\\" t\n", 6) == 0, "Man output emits tbl header when table present");
+        TEST_ASSERT(strstr(man_txt, ".TH \"EXPORT TITLE\" \"3\"") != NULL, "Man .TH uses title and section from .3 suffix");
+        TEST_ASSERT(strstr(man_txt, ".SH \"EXPORT TITLE\"") != NULL, "Man .SH uppercases H1 heading");
+        TEST_ASSERT(strstr(man_txt, "\\fBbold\\fR") != NULL, "Man formats bold with \\fB");
+        TEST_ASSERT(strstr(man_txt, "\\fIitalic\\fR") != NULL, "Man formats italic with \\fI");
+        TEST_ASSERT(strstr(man_txt, "\\fBcode\\fR") != NULL, "Man formats inline code");
+        TEST_ASSERT(strstr(man_txt, ".IP \\(bu 2") != NULL && strstr(man_txt, "[x] Done task") != NULL,
+                    "Man formats list & task items cleanly");
+        TEST_ASSERT(strstr(man_txt, ".nf\n") != NULL && strstr(man_txt, ".fi\n") != NULL,
+                    "Man formats code blocks with .nf/.fi");
+        TEST_ASSERT(strstr(man_txt, ".TS\nallbox;\n") != NULL && strstr(man_txt, ".TE\n") != NULL,
+                    "Man formats tables using tbl .TS/.TE");
+        free(man_txt);
+    }
+    remove(man_out);
+
+    // Test leading '.' roff escape safety & YAML front-matter handling without tables
+    Buffer man_edge_buf;
+    buffer_init(&man_edge_buf);
+    const char *man_edge_lines[] = {
+        "---",
+        "title: mde-cli",
+        "date: 2026-11-24",
+        "publisher: mde suite",
+        "---",
+        "# NAME",
+        "mde-cli - manual tool",
+        "",
+        "## Usage Details",
+        ".dot-leading line should not be treated as macro.",
+        "```",
+        ".hidden-dot inside code block",
+        "```"
+    };
+    for (size_t i = 0; i < sizeof(man_edge_lines) / sizeof(man_edge_lines[0]); ++i) {
+        if (i > 0) buffer_split_line(&man_edge_buf, i - 1, buffer_line_len(&man_edge_buf, i - 1), 0);
+        buffer_replace_line(&man_edge_buf, i, man_edge_lines[i], strlen(man_edge_lines[i]), 0);
+    }
+    const char *man_edge_out = "/tmp/test_mde_edge.1";
+    ok = export_document(&man_edge_buf, EXPORT_MAN, man_edge_out, EXPORT_ENGINE_BUILTIN,
+                         used, sizeof(used), err, sizeof(err));
+    TEST_ASSERT(ok, "Built-in Man export handles YAML front matter and leading dots");
+    char *edge_txt = read_entire_file(man_edge_out);
+    if (edge_txt) {
+        TEST_ASSERT(strstr(edge_txt, ".TH \"MDE\\-CLI\" \"1\" \"2026\\-11\\-24\" \"mde suite\"") != NULL,
+                    "Man .TH extracts YAML title, date, publisher and escapes hyphens");
+        TEST_ASSERT(strstr(edge_txt, ".SS \"Usage Details\"") != NULL, "Man formats H2 with .SS");
+        TEST_ASSERT(strstr(edge_txt, "\\&.dot\\-leading") != NULL, "Man escapes leading dot in paragraph");
+        TEST_ASSERT(strstr(edge_txt, "\\&.hidden\\-dot") != NULL, "Man escapes leading dot in code block");
+        TEST_ASSERT(strstr(edge_txt, "publisher:") == NULL, "Man strips YAML front matter from body");
+        free(edge_txt);
+    }
+    remove(man_edge_out);
+    buffer_free(&man_edge_buf);
+
     // 5. Pandoc execution pipeline verified with mock pandoc script on PATH
     const char *mock_dir = "/tmp/mde_mock_bin";
     mkdir(mock_dir, 0755);
@@ -993,7 +1062,18 @@ static void test_export_subsystem(void) {
     free(t_out);
     remove(tex_no_pan);
 
-    // 6e. Multi-file linked export without pandoc
+    // 6e. Man page export without pandoc
+    const char *man_no_pan = "/tmp/test_no_pandoc.1";
+    ok = export_document(&buf, EXPORT_MAN, man_no_pan, EXPORT_ENGINE_AUTO,
+                         used_no_pan, sizeof(used_no_pan), err_no_pan, sizeof(err_no_pan));
+    TEST_ASSERT(ok, "Man export succeeds without pandoc");
+    TEST_ASSERT(strcmp(used_no_pan, "built-in") == 0, "Man engine reported as built-in without pandoc");
+    char *m_out = read_entire_file(man_no_pan);
+    TEST_ASSERT(m_out != NULL && strstr(m_out, ".TH \"EXPORT TITLE\"") != NULL, "Man output without pandoc is valid");
+    free(m_out);
+    remove(man_no_pan);
+
+    // 6f. Multi-file linked export without pandoc
     size_t multi_linked = 0;
     const char *multi_epub = "/tmp/test_no_pandoc_multi.epub";
     Buffer root_test;
@@ -1313,6 +1393,23 @@ static void test_hypertext_linking_and_export(void) {
         free(tex);
     }
     remove(tex_out);
+
+    // 6b. Built-in Man page export combines all linked files into ONE unified .1 manual
+    const char *man_book_out = "/tmp/mde_ht_test/book.1";
+    ok = export_document_ex(&root_buf, EXPORT_MAN, man_book_out, EXPORT_ENGINE_BUILTIN,
+                            true, &linked_cnt, used, sizeof(used), err, sizeof(err));
+    TEST_ASSERT(ok && linked_cnt == 2, "Man multi-file export succeeded with 2 linked files");
+    char *man_book = read_entire_file(man_book_out);
+    if (man_book) {
+        TEST_ASSERT(count_occurrences(man_book, ".TH ") == 1, "Man unified export has single .TH header");
+        TEST_ASSERT(strstr(man_book, ".SH \"BOOK OVERVIEW\"") != NULL, "Man includes root heading");
+        TEST_ASSERT(strstr(man_book, ".SH \"CHAPTER ONE\"") != NULL, "Man includes linked ch1 heading");
+        TEST_ASSERT(strstr(man_book, ".SH \"CHAPTER TWO\"") != NULL, "Man includes linked ch2 heading");
+        TEST_ASSERT(strstr(man_book, "(see \\fIChapter One\\fR)") != NULL,
+                    "Man rewrites internal linked file reference cleanly");
+        free(man_book);
+    }
+    remove(man_book_out);
 
     // 7. Excluding linked files (include_linked = false)
     ok = export_document_ex(&root_buf, EXPORT_LATEX, tex_out, EXPORT_ENGINE_BUILTIN,
@@ -2578,6 +2675,7 @@ static void test_buffer_bounds_safety(void) {
     const char *html_out = "/tmp/test_bounds_fn.html";
     const char *xml_out = "/tmp/test_bounds_fn.xml";
     const char *tex_out = "/tmp/test_bounds_fn.tex";
+    const char *man_out = "/tmp/test_bounds_fn.1";
     const char *epub_out = "/tmp/test_bounds_fn.epub";
     char err_msg[256] = {0};
 
@@ -2587,6 +2685,8 @@ static void test_buffer_bounds_safety(void) {
                 "Built-in XML export succeeds on indented footnote");
     TEST_ASSERT(export_document_ex(&fn_buf, EXPORT_LATEX, tex_out, EXPORT_ENGINE_BUILTIN, false, NULL, NULL, 0, err_msg, sizeof(err_msg)),
                 "Built-in LaTeX export succeeds on indented footnote");
+    TEST_ASSERT(export_document_ex(&fn_buf, EXPORT_MAN, man_out, EXPORT_ENGINE_BUILTIN, false, NULL, NULL, 0, err_msg, sizeof(err_msg)),
+                "Built-in Man export succeeds on indented footnote");
     TEST_ASSERT(epub_convert_buffer(&fn_buf, epub_out, NULL, err_msg, sizeof(err_msg)),
                 "Built-in EPUB export succeeds on indented footnote");
 
@@ -2601,9 +2701,15 @@ static void test_buffer_bounds_safety(void) {
                     "Indented footnote extracts clean 'ind1' ID without spaces");
     }
 
+    char *mf = read_entire_file(man_out);
+    TEST_ASSERT(mf != NULL && strstr(mf, "\\fB[ind1]\\fR") != NULL,
+                "Indented footnote extracts clean 'ind1' ID in Man export");
+    free(mf);
+
     remove(html_out);
     remove(xml_out);
     remove(tex_out);
+    remove(man_out);
     remove(epub_out);
     buffer_free(&fn_buf);
 }
