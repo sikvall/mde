@@ -10,8 +10,7 @@
 #ifndef MDE_UI_H
 #define MDE_UI_H
 
-#define _XOPEN_SOURCE_EXTENDED 1
-#include <ncursesw/curses.h>
+#include "mde_curses.h"
 #include "editor.h"
 #include <stdbool.h>
 

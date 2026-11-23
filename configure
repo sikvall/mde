@@ -1,0 +1,706 @@
+#!/bin/sh
+# configure - GNU-style configuration script for mde.
+# Generates Makefile and config.status without requiring autoconf.
+
+set -eu
+
+# Save raw invocation arguments for config.status --recheck
+ORIG_ARGS=""
+for arg in "$@"; do
+    escaped=$(printf '%s' "$arg" | sed "s/'/'\\\\''/g")
+    ORIG_ARGS="${ORIG_ARGS} '${escaped}'"
+done
+
+# Determine source directory (supports out-of-tree VPATH builds)
+case "$0" in
+    */*) srcdir=$(cd "$(dirname "$0")" && pwd) ;;
+    *)   srcdir=$(pwd) ;;
+esac
+builddir=$(pwd)
+
+# If running in-tree, keep srcdir="." for clean build commands
+if [ "$srcdir" = "$builddir" ]; then
+    rel_srcdir="."
+else
+    rel_srcdir="$srcdir"
+fi
+
+# Extract centralized package metadata from src/version.h
+if [ ! -f "$srcdir/src/version.h" ]; then
+    echo "configure: error: cannot find $srcdir/src/version.h" >&2
+    exit 1
+fi
+
+PACKAGE_NAME=$(awk -F'"' '/#define[[:space:]]+MDE_APP_NAME/{print $2; exit}' "$srcdir/src/version.h")
+PACKAGE_VERSION=$(awk -F'"' '/#define[[:space:]]+MDE_VERSION_STRING/{print $2; exit}' "$srcdir/src/version.h")
+PACKAGE_BUGREPORT=$(awk -F'"' '/#define[[:space:]]+MDE_MAINTAINER/{print $2; exit}' "$srcdir/src/version.h")
+: "${PACKAGE_NAME:=mde}"
+: "${PACKAGE_VERSION:=0.1.3}"
+
+# Default GNU installation directories
+prefix="/usr/local"
+exec_prefix=""
+bindir=""
+sbindir=""
+libexecdir=""
+sysconfdir=""
+sharedstatedir=""
+localstatedir=""
+runstatedir=""
+libdir=""
+includedir=""
+datarootdir=""
+datadir=""
+infodir=""
+localedir=""
+mandir=""
+docdir=""
+
+# Feature toggles
+enable_debug="no"
+enable_warnings="yes"
+enable_werror="yes"
+enable_sanitize="no"
+with_ncursesw=""
+with_libzip=""
+quiet="no"
+
+# Capture caller-supplied environment overrides
+USER_CC="${CC:-}"
+USER_CFLAGS="${CFLAGS:-}"
+USER_CPPFLAGS="${CPPFLAGS:-}"
+USER_LDFLAGS="${LDFLAGS:-}"
+USER_LIBS="${LIBS:-}"
+
+print_version() {
+    cat <<EOF
+${PACKAGE_NAME} configure ${PACKAGE_VERSION}
+Copyright (C) 2026 Täpp Anders Sikvall
+EOF
+}
+
+print_help() {
+    cat <<EOF
+\`configure' configures ${PACKAGE_NAME} ${PACKAGE_VERSION} to adapt to many kinds of systems.
+
+Usage: $0 [OPTION]... [VAR=VALUE]...
+
+To assign environment variables (e.g., CC, CFLAGS...), specify them as
+VAR=VALUE.  See below for descriptions of some of the useful variables.
+
+Defaults for the options are specified in brackets.
+
+Configuration:
+  -h, --help              display this help and exit
+  -V, --version           display version information and exit
+  -q, --quiet, --silent   do not print \`checking ...' messages
+      --srcdir=DIR        find the sources in DIR [${rel_srcdir}]
+
+Installation directories:
+  --prefix=PREFIX         install architecture-independent files in PREFIX
+                          [/usr/local]
+  --exec-prefix=EPREFIX   install architecture-dependent files in EPREFIX
+                          [PREFIX]
+
+Fine tuning of the installation directories:
+  --bindir=DIR            user executables [EPREFIX/bin]
+  --sysconfdir=DIR        read-only single-machine data [PREFIX/etc]
+  --datarootdir=DIR       read-only arch.-independent data root [PREFIX/share]
+  --datadir=DIR           read-only architecture-independent data [DATAROOTDIR]
+  --mandir=DIR            man documentation [DATAROOTDIR/man]
+  --docdir=DIR            documentation root [DATAROOTDIR/doc/${PACKAGE_NAME}]
+
+Optional Features:
+  --enable-debug          build with debug symbols (-g -O0 -DDEBUG) [no]
+  --disable-warnings      disable extra compiler warning flags [enabled]
+  --disable-werror        do not treat compiler warnings as errors [enabled]
+  --enable-sanitize       enable AddressSanitizer & UndefinedBehaviorSanitizer [no]
+
+Optional Packages:
+  --with-ncursesw=DIR     use ncursesw installation in DIR
+  --with-libzip=DIR       use libzip installation in DIR
+
+Some influential environment variables:
+  CC          C11 compiler command
+  CFLAGS      C compiler flags
+  CPPFLAGS    C preprocessor flags, e.g. -I<include dir>
+  LDFLAGS     linker flags, e.g. -L<lib dir>
+  LIBS        libraries to pass to the linker, e.g. -l<library>
+
+Report bugs to: ${PACKAGE_BUGREPORT}
+EOF
+}
+
+# Parse command-line arguments (supports --opt=val, --opt val, and VAR=val)
+prev_opt=""
+_ignored_opt=""
+for arg in "$@"; do
+    if [ -n "$prev_opt" ]; then
+        eval "$prev_opt=\$arg"
+        prev_opt=""
+        continue
+    fi
+
+    case "$arg" in
+        -h|--help)
+            print_help
+            exit 0
+            ;;
+        -V|--version)
+            print_version
+            exit 0
+            ;;
+        -q|--quiet|--silent)
+            quiet="yes"
+            ;;
+        --srcdir=*)
+            srcdir="${arg#*=}"
+            rel_srcdir="$srcdir"
+            ;;
+        --srcdir)
+            prev_opt="srcdir"
+            ;;
+        --prefix=*)         prefix="${arg#*=}" ;;
+        --prefix)           prev_opt="prefix" ;;
+        --exec-prefix=*)    exec_prefix="${arg#*=}" ;;
+        --exec-prefix)      prev_opt="exec_prefix" ;;
+        --bindir=*)         bindir="${arg#*=}" ;;
+        --bindir)           prev_opt="bindir" ;;
+        --sbindir=*)        sbindir="${arg#*=}" ;;
+        --sbindir)          prev_opt="sbindir" ;;
+        --libexecdir=*)     libexecdir="${arg#*=}" ;;
+        --libexecdir)       prev_opt="libexecdir" ;;
+        --sysconfdir=*)     sysconfdir="${arg#*=}" ;;
+        --sysconfdir)       prev_opt="sysconfdir" ;;
+        --sharedstatedir=*) sharedstatedir="${arg#*=}" ;;
+        --sharedstatedir)   prev_opt="sharedstatedir" ;;
+        --localstatedir=*)  localstatedir="${arg#*=}" ;;
+        --localstatedir)    prev_opt="localstatedir" ;;
+        --runstatedir=*)    runstatedir="${arg#*=}" ;;
+        --runstatedir)      prev_opt="runstatedir" ;;
+        --libdir=*)         libdir="${arg#*=}" ;;
+        --libdir)           prev_opt="libdir" ;;
+        --includedir=*)     includedir="${arg#*=}" ;;
+        --includedir)       prev_opt="includedir" ;;
+        --datarootdir=*)    datarootdir="${arg#*=}" ;;
+        --datarootdir)      prev_opt="datarootdir" ;;
+        --datadir=*)        datadir="${arg#*=}" ;;
+        --datadir)          prev_opt="datadir" ;;
+        --infodir=*)        infodir="${arg#*=}" ;;
+        --infodir)          prev_opt="infodir" ;;
+        --localedir=*)      localedir="${arg#*=}" ;;
+        --localedir)        prev_opt="localedir" ;;
+        --mandir=*)         mandir="${arg#*=}" ;;
+        --mandir)           prev_opt="mandir" ;;
+        --docdir=*)         docdir="${arg#*=}" ;;
+        --docdir)           prev_opt="docdir" ;;
+        --htmldir=*|--dvidir=*|--pdfdir=*|--psdir=*) ;;
+        --htmldir|--dvidir|--pdfdir|--psdir) prev_opt="_ignored_opt" ;;
+        --program-prefix=*|--program-suffix=*|--program-transform-name=*) ;;
+        --program-prefix|--program-suffix|--program-transform-name) prev_opt="_ignored_opt" ;;
+        --cache-file=*) ;;
+        --cache-file) prev_opt="_ignored_opt" ;;
+        -C|--config-cache) ;;
+        --enable-debug)     enable_debug="yes" ;;
+        --disable-debug)    enable_debug="no" ;;
+        --enable-warnings)  enable_warnings="yes" ;;
+        --disable-warnings) enable_warnings="no" ;;
+        --enable-werror)    enable_werror="yes" ;;
+        --disable-werror)   enable_werror="no" ;;
+        --enable-sanitize)  enable_sanitize="yes" ;;
+        --disable-sanitize) enable_sanitize="no" ;;
+        --enable-option-checking|--disable-option-checking) ;;
+        --enable-silent-rules|--disable-silent-rules) ;;
+        --enable-maintainer-mode|--disable-maintainer-mode) ;;
+        --enable-dependency-tracking|--disable-dependency-tracking) ;;
+        --enable-static|--disable-static|--enable-shared|--disable-shared) ;;
+        --enable-nls|--disable-nls) ;;
+        --with-pic|--without-pic|--with-gnu-ld|--without-gnu-ld|--with-sysroot=*) ;;
+        --with-ncursesw=*)  with_ncursesw="${arg#*=}" ;;
+        --with-ncursesw)    prev_opt="with_ncursesw" ;;
+        --without-ncursesw) with_ncursesw="" ;;
+        --with-libzip=*)    with_libzip="${arg#*=}" ;;
+        --with-libzip)      prev_opt="with_libzip" ;;
+        --without-libzip)   with_libzip="" ;;
+        --host=*|--build=*|--target=*)
+            ;;
+        --host|--build|--target)
+            prev_opt="_ignored_opt"
+            ;;
+        CC=*)       USER_CC="${arg#*=}" ;;
+        CFLAGS=*)   USER_CFLAGS="${arg#*=}" ;;
+        CPPFLAGS=*) USER_CPPFLAGS="${arg#*=}" ;;
+        LDFLAGS=*)  USER_LDFLAGS="${arg#*=}" ;;
+        LIBS=*)     USER_LIBS="${arg#*=}" ;;
+        PREFIX=*)   prefix="${arg#*=}" ;;
+        -*)
+            echo "configure: error: unrecognized option: '$arg'" >&2
+            echo "Try '$0 --help' for more information." >&2
+            exit 1
+            ;;
+        *)
+            echo "configure: error: unexpected argument: '$arg'" >&2
+            echo "Try '$0 --help' for more information." >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [ -n "$prev_opt" ]; then
+    echo "configure: error: missing argument to --${prev_opt}" >&2
+    exit 1
+fi
+
+# Resolve GNU directory hierarchy defaults
+: "${exec_prefix:=\${prefix\}}"
+: "${bindir:=\${exec_prefix\}/bin}"
+: "${sysconfdir:=\${prefix\}/etc}"
+: "${datarootdir:=\${prefix\}/share}"
+: "${datadir:=\${datarootdir\}}"
+: "${mandir:=\${datarootdir\}/man}"
+: "${docdir:=\${datarootdir\}/doc/${PACKAGE_NAME}}"
+
+# Initialize config.log
+LOG_FILE="config.log"
+{
+    printf 'This file contains any messages produced by compilers while\n'
+    printf 'running configure, to aid debugging if configure makes a mistake.\n\n'
+    printf 'It was created by %s configure %s\n' "$PACKAGE_NAME" "$PACKAGE_VERSION"
+    printf 'Invocation: %s%s\n\n' "$0" "$ORIG_ARGS"
+} > "$LOG_FILE"
+
+msg_checking() {
+    if [ "$quiet" != "yes" ]; then
+        printf 'checking %s... ' "$1"
+    fi
+    printf 'checking %s...\n' "$1" >> "$LOG_FILE"
+}
+
+msg_result() {
+    if [ "$quiet" != "yes" ]; then
+        printf '%s\n' "$1"
+    fi
+    printf 'result: %s\n' "$1" >> "$LOG_FILE"
+}
+
+die() {
+    echo "configure: error: $1" >&2
+    echo "See '$LOG_FILE' for more details." >&2
+    exit 1
+}
+
+# Temp directory for compile probes
+TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/mde_conf.XXXXXX")
+trap 'rm -rf "$TMP_DIR"' EXIT HUP INT TERM
+
+# 1. Detect C compiler
+msg_checking "for C compiler"
+CC=""
+if [ -n "$USER_CC" ]; then
+    if command -v "$USER_CC" >/dev/null 2>&1; then
+        CC="$USER_CC"
+    else
+        msg_result "not found"
+        die "C compiler '$USER_CC' not found"
+    fi
+else
+    for cand in gcc clang cc; do
+        if command -v "$cand" >/dev/null 2>&1; then
+            CC="$cand"
+            break
+        fi
+    done
+fi
+if [ -z "$CC" ]; then
+    msg_result "no"
+    die "no acceptable C compiler found in PATH (install gcc or clang)"
+fi
+msg_result "$CC"
+
+# 2. Verify C11 compiler support
+msg_checking "whether $CC supports C11 (-std=c11)"
+cat > "$TMP_DIR/c11_test.c" <<'EOF'
+#include <stdint.h>
+#include <stdbool.h>
+_Static_assert(sizeof(int) >= 2, "int size");
+int main(void) { return 0; }
+EOF
+if $CC -std=c11 "$TMP_DIR/c11_test.c" -o "$TMP_DIR/c11_test" >>"$LOG_FILE" 2>&1; then
+    msg_result "yes"
+else
+    msg_result "no"
+    die "$CC does not support C11 (-std=c11)"
+fi
+
+# 3. Check standard build utilities
+msg_checking "for a BSD-compatible install"
+INSTALL=""
+if command -v install >/dev/null 2>&1; then
+    INSTALL="install"
+else
+    INSTALL="cp"
+fi
+msg_result "$INSTALL"
+
+msg_checking "for strip"
+STRIP="true"
+if command -v strip >/dev/null 2>&1; then
+    STRIP="strip"
+fi
+msg_result "$STRIP"
+
+msg_checking "for gzip"
+GZIP="gzip"
+if command -v gzip >/dev/null 2>&1; then
+    GZIP="gzip"
+fi
+msg_result "$GZIP"
+
+check_optional_tool() {
+    var_name="$1"
+    tool_name="$2"
+    default_val="${3:-}"
+    msg_checking "for $tool_name"
+    if command -v "$tool_name" >/dev/null 2>&1; then
+        eval "$var_name=\$tool_name"
+        msg_result "$tool_name"
+    else
+        eval "$var_name=\$default_val"
+        if [ -n "$default_val" ]; then
+            msg_result "$default_val"
+        else
+            msg_result "no"
+        fi
+    fi
+}
+
+check_optional_tool PKG_CONFIG pkg-config
+check_optional_tool DPKG_DEB dpkg-deb
+check_optional_tool DPKG_BUILDPACKAGE dpkg-buildpackage
+check_optional_tool RPMBUILD rpmbuild
+check_optional_tool MAKEPKG makepkg
+check_optional_tool ABUILD abuild
+
+# 4. Assemble CPPFLAGS, CFLAGS, LDFLAGS, LIBS
+CPPFLAGS="-D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700 -D_XOPEN_SOURCE_EXTENDED=1"
+if [ "$enable_debug" = "yes" ]; then
+    CPPFLAGS="$CPPFLAGS -DDEBUG"
+fi
+if [ -n "$USER_CPPFLAGS" ]; then
+    CPPFLAGS="$CPPFLAGS $USER_CPPFLAGS"
+fi
+
+WARN_FLAGS=""
+if [ "$enable_warnings" = "yes" ]; then
+    msg_checking "supported compiler warning flags"
+    cat > "$TMP_DIR/warn_test.c" <<'EOF'
+int warn_probe(void);
+int warn_probe(void) { return 0; }
+EOF
+    CANDIDATE_WARNS="
+        -Wall -Wextra -Wpedantic -Wshadow -Wformat=2
+        -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations
+        -Wold-style-definition -Wundef -Wwrite-strings -Wcast-qual
+        -Wcast-align -Wpointer-arith -Wredundant-decls -Wnull-dereference
+        -Wdouble-promotion -Wfloat-equal -Wbad-function-cast
+        -Wnested-externs -Wswitch-default -Wconversion -Wsign-conversion
+        -Wvla -Wstrict-overflow=2
+    "
+    if [ "$enable_werror" = "yes" ]; then
+        CANDIDATE_WARNS="$CANDIDATE_WARNS -Werror"
+    fi
+    for wf in $CANDIDATE_WARNS; do
+        if $CC -std=c11 "$wf" -c "$TMP_DIR/warn_test.c" -o "$TMP_DIR/warn_test.o" >>"$LOG_FILE" 2>&1; then
+            if [ -z "$WARN_FLAGS" ]; then
+                WARN_FLAGS="$wf"
+            else
+                WARN_FLAGS="$WARN_FLAGS $wf"
+            fi
+        fi
+    done
+    msg_result "enabled"
+fi
+
+if [ -n "$USER_CFLAGS" ]; then
+    OPT_CFLAGS="$USER_CFLAGS"
+elif [ "$enable_debug" = "yes" ]; then
+    OPT_CFLAGS="-g -O0"
+else
+    OPT_CFLAGS="-O2"
+fi
+
+CFLAGS="-std=c11 -MMD -MP"
+if [ -n "$WARN_FLAGS" ]; then
+    CFLAGS="$CFLAGS $WARN_FLAGS"
+fi
+CFLAGS="$CFLAGS $OPT_CFLAGS"
+
+LDFLAGS="$USER_LDFLAGS"
+LIBS="$USER_LIBS"
+
+if [ "$enable_sanitize" = "yes" ]; then
+    msg_checking "whether $CC supports AddressSanitizer & UBSan"
+    if $CC -std=c11 -fsanitize=address,undefined -g "$TMP_DIR/c11_test.c" -o "$TMP_DIR/san_test" >>"$LOG_FILE" 2>&1; then
+        CFLAGS="$CFLAGS -fsanitize=address,undefined -g"
+        LDFLAGS="$LDFLAGS -fsanitize=address,undefined"
+        msg_result "yes"
+    else
+        msg_result "no"
+        die "$CC does not support -fsanitize=address,undefined"
+    fi
+fi
+
+# 5. Locate ncursesw headers and library (<ncursesw/curses.h>, or wide <curses.h>)
+msg_checking "for ncursesw (wide curses header and -lncursesw)"
+cat > "$TMP_DIR/ncurses_hdr_test.c" <<'EOF'
+#define _XOPEN_SOURCE_EXTENDED 1
+#include <ncursesw/curses.h>
+int main(void) {
+    cchar_t ch;
+    (void)ch;
+    (void)stdscr;
+    return 0;
+}
+EOF
+cat > "$TMP_DIR/curses_hdr_test.c" <<'EOF'
+#define _XOPEN_SOURCE_EXTENDED 1
+#include <curses.h>
+int main(void) {
+    cchar_t ch;
+    (void)ch;
+    (void)stdscr;
+    return 0;
+}
+EOF
+
+NCURSESW_FOUND="no"
+NCURSESW_CPPFLAGS=""
+NCURSESW_LDFLAGS=""
+NCURSESW_LIBS="-lncursesw"
+
+if [ -n "$with_ncursesw" ]; then
+    NCURSESW_CPPFLAGS="-I${with_ncursesw}/include"
+    NCURSESW_LDFLAGS="-L${with_ncursesw}/lib"
+fi
+
+probe_ncurses_candidate() {
+    test_src="$1"
+    extra_cpp="$2"
+    cand_cpp="$3"
+    cand_ld="$4"
+    cand_libs="$5"
+    if $CC $CPPFLAGS $cand_cpp $extra_cpp -std=c11 "$test_src" $LDFLAGS $cand_ld $cand_libs -o "$TMP_DIR/ncurses_probe" >>"$LOG_FILE" 2>&1; then
+        NCURSESW_FOUND="yes"
+        NCURSESW_CPPFLAGS="${cand_cpp}${extra_cpp:+ }${extra_cpp}"
+        NCURSESW_LDFLAGS="$cand_ld"
+        NCURSESW_LIBS="$cand_libs"
+        return 0
+    fi
+    return 1
+}
+
+for hdr_pair in "ncurses_hdr_test.c:" "curses_hdr_test.c:-DMDE_USE_CURSES_H"; do
+    test_file="$TMP_DIR/${hdr_pair%%:*}"
+    extra_def="${hdr_pair#*:}"
+
+    if probe_ncurses_candidate "$test_file" "$extra_def" "$NCURSESW_CPPFLAGS" "$NCURSESW_LDFLAGS" "$NCURSESW_LIBS"; then
+        break
+    fi
+
+    if [ -z "$with_ncursesw" ] && [ -n "$PKG_CONFIG" ] && $PKG_CONFIG --exists ncursesw 2>/dev/null; then
+        pkg_cpp=$($PKG_CONFIG --cflags ncursesw)
+        pkg_libs=$($PKG_CONFIG --libs ncursesw)
+        if probe_ncurses_candidate "$test_file" "$extra_def" "$pkg_cpp" "" "$pkg_libs"; then
+            break
+        fi
+    fi
+
+    if [ -z "$with_ncursesw" ] && [ "$(uname -s)" = "Darwin" ]; then
+        for hb_dir in /opt/homebrew/opt/ncurses /usr/local/opt/ncurses; do
+            if [ -d "$hb_dir/include" ] && \
+               probe_ncurses_candidate "$test_file" "$extra_def" "-I${hb_dir}/include" "-L${hb_dir}/lib" "-lncursesw"; then
+                break 2
+            fi
+        done
+    fi
+done
+
+if [ "$NCURSESW_FOUND" = "yes" ]; then
+    [ -n "$NCURSESW_CPPFLAGS" ] && CPPFLAGS="$CPPFLAGS $NCURSESW_CPPFLAGS"
+    [ -n "$NCURSESW_LDFLAGS" ] && LDFLAGS="$LDFLAGS $NCURSESW_LDFLAGS"
+    LIBS="$LIBS $NCURSESW_LIBS"
+    msg_result "yes ($NCURSESW_LIBS)"
+else
+    msg_result "no"
+    die "ncursesw development headers/libraries not found. Run ./scripts/install_prerequisites.sh or use --with-ncursesw=DIR"
+fi
+
+# 6. Locate libzip headers and library
+msg_checking "for libzip (<zip.h> and -lzip)"
+cat > "$TMP_DIR/zip_test.c" <<'EOF'
+#include <zip.h>
+int main(void) {
+    (void)zip_libzip_version();
+    return 0;
+}
+EOF
+
+LIBZIP_FOUND="no"
+LIBZIP_CPPFLAGS=""
+LIBZIP_LDFLAGS=""
+LIBZIP_LIBS="-lzip"
+
+if [ -n "$with_libzip" ]; then
+    LIBZIP_CPPFLAGS="-I${with_libzip}/include"
+    LIBZIP_LDFLAGS="-L${with_libzip}/lib"
+fi
+
+if $CC $CPPFLAGS $LIBZIP_CPPFLAGS -std=c11 "$TMP_DIR/zip_test.c" $LDFLAGS $LIBZIP_LDFLAGS $LIBZIP_LIBS -o "$TMP_DIR/zip_test" >>"$LOG_FILE" 2>&1; then
+    LIBZIP_FOUND="yes"
+elif [ -z "$with_libzip" ] && [ -n "$PKG_CONFIG" ] && $PKG_CONFIG --exists libzip 2>/dev/null; then
+    LIBZIP_CPPFLAGS=$($PKG_CONFIG --cflags libzip)
+    LIBZIP_LIBS=$($PKG_CONFIG --libs libzip)
+    if $CC $CPPFLAGS $LIBZIP_CPPFLAGS -std=c11 "$TMP_DIR/zip_test.c" $LDFLAGS $LIBZIP_LIBS -o "$TMP_DIR/zip_test" >>"$LOG_FILE" 2>&1; then
+        LIBZIP_FOUND="yes"
+    fi
+elif [ -z "$with_libzip" ] && [ "$(uname -s)" = "Darwin" ]; then
+    for hb_dir in /opt/homebrew/opt/libzip /usr/local/opt/libzip; do
+        if [ -d "$hb_dir/include" ]; then
+            LIBZIP_CPPFLAGS="-I${hb_dir}/include"
+            LIBZIP_LDFLAGS="-L${hb_dir}/lib"
+            if $CC $CPPFLAGS $LIBZIP_CPPFLAGS -std=c11 "$TMP_DIR/zip_test.c" $LDFLAGS $LIBZIP_LDFLAGS $LIBZIP_LIBS -o "$TMP_DIR/zip_test" >>"$LOG_FILE" 2>&1; then
+                LIBZIP_FOUND="yes"
+                break
+            fi
+        fi
+    done
+fi
+
+ZIP_LIBS="$USER_LIBS"
+ZIP_LDFLAGS="$LIBZIP_LDFLAGS"
+if [ "$LIBZIP_FOUND" = "yes" ]; then
+    [ -n "$LIBZIP_CPPFLAGS" ] && CPPFLAGS="$CPPFLAGS $LIBZIP_CPPFLAGS"
+    [ -n "$LIBZIP_LDFLAGS" ] && LDFLAGS="$LDFLAGS $LIBZIP_LDFLAGS"
+    LIBS="$LIBS $LIBZIP_LIBS"
+    ZIP_LIBS=$(printf '%s %s' "$ZIP_LIBS" "$LIBZIP_LIBS" | awk '{$1=$1; print}')
+    msg_result "yes ($LIBZIP_LIBS)"
+else
+    msg_result "no"
+    die "libzip development headers/libraries not found. Run ./scripts/install_prerequisites.sh or use --with-libzip=DIR"
+fi
+
+# 7. Optional runtime / helper tool checks (informational)
+msg_checking "for pandoc (optional export backend)"
+if command -v pandoc >/dev/null 2>&1; then
+    PANDOC_STATUS="yes ($(command -v pandoc))"
+else
+    PANDOC_STATUS="no (built-in C11 exporters active)"
+fi
+msg_result "$PANDOC_STATUS"
+
+# Trim leading/trailing spaces on flags
+CPPFLAGS=$(printf '%s' "$CPPFLAGS" | awk '{$1=$1; print}')
+CFLAGS=$(printf '%s' "$CFLAGS" | awk '{$1=$1; print}')
+LDFLAGS=$(printf '%s' "$LDFLAGS" | awk '{$1=$1; print}')
+LIBS=$(printf '%s' "$LIBS" | awk '{$1=$1; print}')
+ZIP_LDFLAGS=$(printf '%s' "$ZIP_LDFLAGS" | awk '{$1=$1; print}')
+ZIP_LIBS=$(printf '%s' "$ZIP_LIBS" | awk '{$1=$1; print}')
+
+# 8. Write config.status (supports --recheck and Makefile regeneration)
+cat > config.status <<EOF
+#!/bin/sh
+set -eu
+
+if [ "\${1:-}" = "--recheck" ]; then
+    exec sh '${srcdir}/configure'${ORIG_ARGS}
+fi
+
+if [ "\${1:-}" = "--help" ] || [ "\${1:-}" = "-h" ]; then
+    echo "Usage: ./config.status [--recheck]"
+    echo "Regenerates Makefile from ${srcdir}/Makefile.in."
+    exit 0
+fi
+
+export SUBST_PACKAGE_NAME='${PACKAGE_NAME}'
+export SUBST_PACKAGE_VERSION='${PACKAGE_VERSION}'
+export SUBST_srcdir='${rel_srcdir}'
+export SUBST_prefix='${prefix}'
+export SUBST_exec_prefix='${exec_prefix}'
+export SUBST_bindir='${bindir}'
+export SUBST_sysconfdir='${sysconfdir}'
+export SUBST_datarootdir='${datarootdir}'
+export SUBST_datadir='${datadir}'
+export SUBST_mandir='${mandir}'
+export SUBST_docdir='${docdir}'
+export SUBST_CC='${CC}'
+export SUBST_CPPFLAGS='${CPPFLAGS}'
+export SUBST_CFLAGS='${CFLAGS}'
+export SUBST_LDFLAGS='${LDFLAGS}'
+export SUBST_LIBS='${LIBS}'
+export SUBST_ZIP_LDFLAGS='${ZIP_LDFLAGS}'
+export SUBST_ZIP_LIBS='${ZIP_LIBS}'
+export SUBST_INSTALL='${INSTALL}'
+export SUBST_STRIP='${STRIP}'
+export SUBST_GZIP='${GZIP}'
+export SUBST_DPKG_DEB='${DPKG_DEB}'
+export SUBST_DPKG_BUILDPACKAGE='${DPKG_BUILDPACKAGE}'
+export SUBST_RPMBUILD='${RPMBUILD}'
+export SUBST_MAKEPKG='${MAKEPKG}'
+export SUBST_ABUILD='${ABUILD}'
+
+awk '
+{
+    gsub("@PACKAGE_NAME@", ENVIRON["SUBST_PACKAGE_NAME"])
+    gsub("@PACKAGE_VERSION@", ENVIRON["SUBST_PACKAGE_VERSION"])
+    gsub("@srcdir@", ENVIRON["SUBST_srcdir"])
+    gsub("@prefix@", ENVIRON["SUBST_prefix"])
+    gsub("@exec_prefix@", ENVIRON["SUBST_exec_prefix"])
+    gsub("@bindir@", ENVIRON["SUBST_bindir"])
+    gsub("@sysconfdir@", ENVIRON["SUBST_sysconfdir"])
+    gsub("@datarootdir@", ENVIRON["SUBST_datarootdir"])
+    gsub("@datadir@", ENVIRON["SUBST_datadir"])
+    gsub("@mandir@", ENVIRON["SUBST_mandir"])
+    gsub("@docdir@", ENVIRON["SUBST_docdir"])
+    gsub("@CC@", ENVIRON["SUBST_CC"])
+    gsub("@CPPFLAGS@", ENVIRON["SUBST_CPPFLAGS"])
+    gsub("@CFLAGS@", ENVIRON["SUBST_CFLAGS"])
+    gsub("@LDFLAGS@", ENVIRON["SUBST_LDFLAGS"])
+    gsub("@LIBS@", ENVIRON["SUBST_LIBS"])
+    gsub("@ZIP_LDFLAGS@", ENVIRON["SUBST_ZIP_LDFLAGS"])
+    gsub("@ZIP_LIBS@", ENVIRON["SUBST_ZIP_LIBS"])
+    gsub("@INSTALL@", ENVIRON["SUBST_INSTALL"])
+    gsub("@STRIP@", ENVIRON["SUBST_STRIP"])
+    gsub("@GZIP@", ENVIRON["SUBST_GZIP"])
+    gsub("@DPKG_DEB@", ENVIRON["SUBST_DPKG_DEB"])
+    gsub("@DPKG_BUILDPACKAGE@", ENVIRON["SUBST_DPKG_BUILDPACKAGE"])
+    gsub("@RPMBUILD@", ENVIRON["SUBST_RPMBUILD"])
+    gsub("@MAKEPKG@", ENVIRON["SUBST_MAKEPKG"])
+    gsub("@ABUILD@", ENVIRON["SUBST_ABUILD"])
+    print
+}' '${rel_srcdir}/Makefile.in' > Makefile
+
+echo "config.status: creating Makefile"
+EOF
+chmod +x config.status
+
+# Generate Makefile via config.status
+./config.status
+
+if [ "$quiet" != "yes" ]; then
+    cat <<EOF
+
+Configuration summary for ${PACKAGE_NAME} ${PACKAGE_VERSION}:
+  Source directory:    ${rel_srcdir}
+  Install prefix:      ${prefix}
+  Compiler (CC):       ${CC}
+  Warnings (-Werror):  ${enable_warnings} (${enable_werror})
+  Sanitizer:           ${enable_sanitize}
+  Libraries:           ${LIBS}
+  Pandoc (optional):   ${PANDOC_STATUS}
+
+Now run:
+  make
+  make check
+  sudo make install
+EOF
+fi

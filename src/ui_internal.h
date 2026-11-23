@@ -6,8 +6,7 @@
 #ifndef MDE_UI_INTERNAL_H
 #define MDE_UI_INTERNAL_H
 
-#define _XOPEN_SOURCE_EXTENDED 1
-#include <ncursesw/curses.h>
+#include "mde_curses.h"
 #include "ui.h"
 #include "theme.h"
 #include "utf8.h"

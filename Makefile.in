@@ -1,0 +1,178 @@
+# Makefile.in - GNU-style build template for mde (processed by ./configure)
+
+PACKAGE_NAME    := @PACKAGE_NAME@
+PACKAGE_VERSION := @PACKAGE_VERSION@
+srcdir          := @srcdir@
+
+# GNU standard installation directories
+prefix          := @prefix@
+exec_prefix     := @exec_prefix@
+bindir          := @bindir@
+sysconfdir      := @sysconfdir@
+datarootdir     := @datarootdir@
+datadir         := @datadir@
+mandir          := @mandir@
+man1dir         := $(mandir)/man1
+docdir          := @docdir@
+DESTDIR         :=
+
+# Backwards-compatible PREFIX override (e.g., make install PREFIX=/usr)
+ifdef PREFIX
+prefix          := $(PREFIX)
+exec_prefix     := $(PREFIX)
+bindir          := $(PREFIX)/bin
+sysconfdir      := $(PREFIX)/etc
+datarootdir     := $(PREFIX)/share
+datadir         := $(PREFIX)/share
+mandir          := $(PREFIX)/share/man
+man1dir         := $(mandir)/man1
+docdir          := $(PREFIX)/share/doc/$(PACKAGE_NAME)
+endif
+
+# Toolchain and flags configured by ./configure
+CC              := @CC@
+CPPFLAGS        := @CPPFLAGS@
+CFLAGS          := @CFLAGS@
+LDFLAGS         := @LDFLAGS@
+LIBS            := @LIBS@
+INSTALL         := @INSTALL@
+INSTALL_PROGRAM := $(INSTALL) -m 755
+INSTALL_DATA    := $(INSTALL) -m 644
+STRIP           := @STRIP@
+GZIP            := @GZIP@
+DPKG_DEB        := @DPKG_DEB@
+DPKG_BUILDPACKAGE := @DPKG_BUILDPACKAGE@
+RPMBUILD        := @RPMBUILD@
+MAKEPKG         := @MAKEPKG@
+ABUILD          := @ABUILD@
+ZIP_LDFLAGS     := @ZIP_LDFLAGS@
+ZIP_LIBS        := @ZIP_LIBS@
+
+SRC_DIR         := $(srcdir)/src
+TEST_DIR        := $(srcdir)/tests
+MAN_DIR         := $(srcdir)/man
+BIN_DIR         := bin
+OBJ_DIR         := obj
+
+VERSION         := $(PACKAGE_VERSION)
+
+SRCS            := $(wildcard $(SRC_DIR)/*.c)
+OBJS            := $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(SRCS))
+TARGET          := $(BIN_DIR)/mde
+MD2EPUB_TARGET  := $(BIN_DIR)/md2epub
+TEST_TARGET     := $(BIN_DIR)/test_runner
+
+MDE_OBJS        := $(filter-out $(OBJ_DIR)/md2epub_main.o,$(OBJS))
+MD2EPUB_OBJS    := $(OBJ_DIR)/md2epub_main.o $(OBJ_DIR)/export_epub.o $(OBJ_DIR)/export.o \
+                   $(OBJ_DIR)/export_html.o $(OBJ_DIR)/export_xml.o $(OBJ_DIR)/export_latex.o \
+                   $(OBJ_DIR)/buffer.o $(OBJ_DIR)/markdown.o $(OBJ_DIR)/utf8.o $(OBJ_DIR)/undo.o
+LIB_OBJS        := $(filter-out $(OBJ_DIR)/main.o $(OBJ_DIR)/md2epub_main.o,$(OBJS))
+
+DEPS            := $(OBJS:.o=.d) $(TEST_TARGET).d
+
+.PHONY: all check test sanitize install install-strip uninstall \
+        mostlyclean clean distclean maintainer-clean deb deb-src rpm arch \
+        alpine pkg-tarball packages check-packaging dist reconfigure
+
+all: $(TARGET) $(MD2EPUB_TARGET)
+
+$(TARGET): $(MDE_OBJS) | $(BIN_DIR)
+	$(CC) $(MDE_OBJS) $(LDFLAGS) $(LIBS) -o $@
+
+$(MD2EPUB_TARGET): $(MD2EPUB_OBJS) | $(BIN_DIR)
+	$(CC) $(MD2EPUB_OBJS) $(LDFLAGS) $(ZIP_LIBS) -o $@
+
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -I$(SRC_DIR) -c $< -o $@
+
+$(BIN_DIR) $(OBJ_DIR):
+	mkdir -p $@
+
+$(TEST_TARGET): $(LIB_OBJS) $(TEST_DIR)/test_runner.c | $(BIN_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -I$(SRC_DIR) -DMDE_SRCDIR=\"$(srcdir)\" $(TEST_DIR)/test_runner.c $(LIB_OBJS) $(LDFLAGS) $(LIBS) -o $@
+
+check: $(MD2EPUB_TARGET) $(TEST_TARGET)
+	./$(TEST_TARGET)
+
+test: check
+
+sanitize: clean
+	$(MAKE) all check CFLAGS="$(CFLAGS) -fsanitize=address,undefined -g" LDFLAGS="$(LDFLAGS) -fsanitize=address,undefined"
+
+install: $(TARGET) $(MD2EPUB_TARGET)
+	mkdir -p $(DESTDIR)$(bindir)
+	$(INSTALL_PROGRAM) $(TARGET) $(DESTDIR)$(bindir)/mde
+	$(INSTALL_PROGRAM) $(MD2EPUB_TARGET) $(DESTDIR)$(bindir)/md2epub
+	mkdir -p $(DESTDIR)$(man1dir)
+	$(INSTALL_DATA) $(MAN_DIR)/mde.1 $(DESTDIR)$(man1dir)/mde.1
+	$(INSTALL_DATA) $(MAN_DIR)/md2epub.1 $(DESTDIR)$(man1dir)/md2epub.1
+	mkdir -p $(DESTDIR)$(docdir)
+	$(INSTALL_DATA) $(srcdir)/README.md $(DESTDIR)$(docdir)/README.md
+	$(INSTALL_DATA) $(srcdir)/CHANGELOG.md $(DESTDIR)$(docdir)/CHANGELOG.md
+	$(INSTALL_DATA) $(srcdir)/LICENSE.md $(DESTDIR)$(docdir)/LICENSE.md
+
+install-strip: install
+	$(STRIP) $(DESTDIR)$(bindir)/mde
+	$(STRIP) $(DESTDIR)$(bindir)/md2epub
+
+uninstall:
+	rm -f $(DESTDIR)$(bindir)/mde $(DESTDIR)$(bindir)/md2epub
+	rm -f $(DESTDIR)$(man1dir)/mde.1 $(DESTDIR)$(man1dir)/md2epub.1
+	rm -f $(DESTDIR)$(docdir)/README.md $(DESTDIR)$(docdir)/CHANGELOG.md $(DESTDIR)$(docdir)/LICENSE.md
+	-rmdir $(DESTDIR)$(docdir) 2>/dev/null || true
+
+mostlyclean:
+	rm -rf $(OBJ_DIR)
+
+clean:
+	rm -rf $(OBJ_DIR) $(BIN_DIR)
+
+distclean: clean
+	rm -f Makefile config.log config.status
+
+maintainer-clean: distclean
+
+reconfigure:
+	./config.status --recheck
+
+Makefile: $(srcdir)/Makefile.in config.status
+	./config.status
+
+DIST_NAME := $(PACKAGE_NAME)-$(PACKAGE_VERSION)
+dist:
+	rm -rf $(DIST_NAME) $(DIST_NAME).tar.gz
+	mkdir -p $(DIST_NAME)
+	cp -p $(srcdir)/configure $(srcdir)/Makefile.in $(srcdir)/README.md \
+	      $(srcdir)/CHANGELOG.md $(srcdir)/LICENSE.md $(srcdir)/project-description.md \
+	      $(DIST_NAME)/
+	cp -Rp $(srcdir)/src $(srcdir)/tests $(srcdir)/man $(srcdir)/examples $(srcdir)/scripts $(srcdir)/packaging $(DIST_NAME)/
+	tar -czf $(DIST_NAME).tar.gz $(DIST_NAME)
+	rm -rf $(DIST_NAME)
+
+PKG_ENV := SRCDIR="$(srcdir)" BUILDDIR="." BIN_DIR="$(BIN_DIR)" VERSION="$(VERSION)" MDE_STRIP="$(STRIP)" MDE_GZIP="$(GZIP)"
+
+deb: $(TARGET) $(MD2EPUB_TARGET)
+	$(PKG_ENV) $(srcdir)/scripts/build_packages.sh --target deb
+
+deb-src: dist
+	$(PKG_ENV) $(srcdir)/scripts/build_packages.sh --target deb-src
+
+rpm: dist
+	$(PKG_ENV) $(srcdir)/scripts/build_packages.sh --target rpm
+
+arch: dist
+	$(PKG_ENV) $(srcdir)/scripts/build_packages.sh --target arch
+
+alpine: dist
+	$(PKG_ENV) $(srcdir)/scripts/build_packages.sh --target alpine
+
+pkg-tarball: $(TARGET) $(MD2EPUB_TARGET)
+	$(PKG_ENV) $(srcdir)/scripts/build_packages.sh --target tarball
+
+packages: all dist
+	$(PKG_ENV) $(srcdir)/scripts/build_packages.sh --target all
+
+check-packaging:
+	$(PKG_ENV) $(srcdir)/scripts/check_packaging.sh
+
+-include $(DEPS)

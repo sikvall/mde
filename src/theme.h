@@ -10,8 +10,7 @@
 #ifndef MDE_THEME_H
 #define MDE_THEME_H
 
-#define _XOPEN_SOURCE_EXTENDED 1
-#include <ncursesw/curses.h>
+#include "mde_curses.h"
 #include "markdown.h"
 #include <stdbool.h>
 

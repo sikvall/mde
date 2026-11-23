@@ -1,5 +1,9 @@
 bin/
 obj/
+/Makefile
+/config.log
+/config.status
+mde-*.tar.gz
 *.epub
 *.tex
 *.aux
@@ -9,4 +13,13 @@ obj/
 \#*#
 local
 *.deb
+*.rpm
+*.pkg.tar.*
+*.apk
+*.sha256
+*.orig.tar.*
+*.debian.tar.*
+*.dsc
+*.buildinfo
+*.changes
 dst

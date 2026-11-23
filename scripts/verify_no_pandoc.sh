@@ -5,8 +5,11 @@ echo "=========================================================="
 echo " verifying all mde exports work without pandoc "
 echo "=========================================================="
 
-# Ensure binaries are built
-make -s test >/dev/null
+# Ensure Makefile is configured and binaries are built
+if [ ! -f Makefile ]; then
+    ./configure >/dev/null
+fi
+make -s check >/dev/null
 
 # Create an isolated bin directory without pandoc
 ISOLATED_DIR="/tmp/mde_verify_no_pandoc_bin"

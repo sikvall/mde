@@ -11,8 +11,7 @@
 #ifndef MDE_RENDERER_H
 #define MDE_RENDERER_H
 
-#define _XOPEN_SOURCE_EXTENDED 1
-#include <ncursesw/curses.h>
+#include "mde_curses.h"
 #include <stddef.h>
 #include <stdbool.h>
 #include "buffer.h"

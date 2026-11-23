@@ -245,8 +245,9 @@ verify_toolchain() {
 
     echo ""
     echo "Ready to build mde:"
+    echo "  ./configure"
     echo "  make"
-    echo "  make test"
+    echo "  make check"
 }
 
 main() {
