@@ -197,9 +197,11 @@ static void export_builtin_latex_body(FILE *f, const ExportDocList *docs, size_t
             fputs("\\noindent\\rule{\\textwidth}{0.4pt}\n\n", f);
         } else if (pl.is_footnote_def) {
             latex_close_block(f, &blk);
-            const char *raw_fn = raw + pl.spans[0].start + 2;
+            const char *raw_fn = "";
             size_t id_len = 0;
-            while (id_len < pl.spans[0].end - pl.spans[0].start && raw_fn[id_len] != ']') id_len++;
+            if (pl.span_count > 0) {
+                extract_footnote_def_id(raw, &pl.spans[0], &raw_fn, &id_len);
+            }
             fprintf(f, "\\footnotetext[%.*s]{", (int)id_len, raw_fn);
             latex_write_spans(f, raw, &pl, 1, pl.span_count, docs, doc_idx);
             fputs("}\n\n", f);

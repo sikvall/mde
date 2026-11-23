@@ -378,17 +378,19 @@ bool editor_resolve_link_path(const Editor *ed, const char *link_target,
     }
 
     char combined[PATH_MAX * 2];
+    int cn;
     if (link_target[0] == '/') {
-        snprintf(combined, sizeof(combined), "%s", link_target);
+        cn = snprintf(combined, sizeof(combined), "%s", link_target);
     } else {
         char base_dir[PATH_MAX];
         get_base_dir(ed->buffer.file_path, base_dir, sizeof(base_dir));
         if (strcmp(base_dir, "/") == 0) {
-            snprintf(combined, sizeof(combined), "/%s", link_target);
+            cn = snprintf(combined, sizeof(combined), "/%s", link_target);
         } else {
-            snprintf(combined, sizeof(combined), "%s/%s", base_dir, link_target);
+            cn = snprintf(combined, sizeof(combined), "%s/%s", base_dir, link_target);
         }
     }
+    if (cn < 0 || (size_t)cn >= sizeof(combined)) return false;
 
     normalize_abs_path(combined, out_path, out_cap);
     return true;
@@ -502,7 +504,9 @@ static void push_link_history(Editor *ed) {
     if (fpath[0]) {
         normalize_abs_path(fpath, norm, sizeof(norm));
     }
-    ed->link_history[ed->link_history_count].file_path = strdup(norm);
+    char *norm_copy = strdup(norm);
+    if (!norm_copy) return;
+    ed->link_history[ed->link_history_count].file_path = norm_copy;
     ed->link_history[ed->link_history_count].cursor_row = ed->cursor_row;
     ed->link_history[ed->link_history_count].cursor_col = ed->cursor_col;
     ed->link_history_count++;

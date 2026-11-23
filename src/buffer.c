@@ -45,9 +45,14 @@ static void line_free(Line *line) {
  * @brief Ensure line buffer has enough room for needed bytes plus null terminator.
  */
 static bool line_reserve(Line *line, size_t needed) {
+    if (needed > SIZE_MAX - 1) return false;
     if (needed + 1 <= line->cap) return true;
-    size_t new_cap = line->cap == 0 ? 16 : line->cap * 2;
+    size_t new_cap = line->cap == 0 ? 16 : line->cap;
     while (new_cap < needed + 1) {
+        if (new_cap > SIZE_MAX / 2) {
+            new_cap = needed + 1;
+            break;
+        }
         new_cap *= 2;
     }
     char *new_chars = (char*)realloc(line->chars, new_cap);
@@ -61,9 +66,15 @@ static bool line_reserve(Line *line, size_t needed) {
 void buffer_init(Buffer *buf) {
     if (!buf) return;
     buf->lines = (Line*)malloc(sizeof(Line));
-    line_init(&buf->lines[0]);
-    buf->count = 1;
-    buf->cap = 1;
+    if (buf->lines && line_init(&buf->lines[0])) {
+        buf->count = 1;
+        buf->cap = 1;
+    } else {
+        free(buf->lines);
+        buf->lines = NULL;
+        buf->count = 0;
+        buf->cap = 0;
+    }
     buf->file_path = NULL;
     buf->is_dirty = false;
     undo_stack_init(&buf->undo_stack);
@@ -116,8 +127,13 @@ size_t buffer_line_count(const Buffer *buf) {
  */
 static bool buffer_ensure_cap(Buffer *buf, size_t needed) {
     if (needed <= buf->cap) return true;
-    size_t new_cap = buf->cap == 0 ? 16 : buf->cap * 2;
+    if (needed > SIZE_MAX / sizeof(Line)) return false;
+    size_t new_cap = buf->cap == 0 ? 16 : buf->cap;
     while (new_cap < needed) {
+        if (new_cap > SIZE_MAX / 2) {
+            new_cap = needed;
+            break;
+        }
         new_cap *= 2;
     }
     Line *new_lines = (Line*)realloc(buf->lines, new_cap * sizeof(Line));
@@ -163,6 +179,11 @@ bool buffer_load(Buffer *buf, const char *file_path) {
         Line *l = &buf->lines[buf->count];
         l->cap = (size_t)read_bytes + 1;
         l->chars = (char*)malloc(l->cap);
+        if (!l->chars) {
+            fclose(f);
+            free(line_buf);
+            return false;
+        }
         memcpy(l->chars, line_buf, (size_t)read_bytes);
         l->chars[read_bytes] = '\0';
         l->len = (size_t)read_bytes;
@@ -174,8 +195,9 @@ bool buffer_load(Buffer *buf, const char *file_path) {
 
     // Ensure at least 1 empty line
     if (buf->count == 0) {
-        buffer_ensure_cap(buf, 1);
-        line_init(&buf->lines[0]);
+        if (!buffer_ensure_cap(buf, 1) || !line_init(&buf->lines[0])) {
+            return false;
+        }
         buf->count = 1;
     }
 
@@ -209,13 +231,14 @@ static void buffer_record_mutation(Buffer *buf) {
 /**
  * @brief Resolve the real target path for atomic saving when path is a symlink.
  */
-static void resolve_save_target(const char *path, char *out_target, size_t cap) {
+static bool resolve_save_target(const char *path, char *out_target, size_t cap) {
+    if (!path || !out_target || cap == 0) return false;
     struct stat lst;
     if (lstat(path, &lst) == 0 && S_ISLNK(lst.st_mode)) {
         char resolved[PATH_MAX];
         if (realpath(path, resolved)) {
-            snprintf(out_target, cap, "%s", resolved);
-            return;
+            int n = snprintf(out_target, cap, "%s", resolved);
+            return (n > 0 && (size_t)n < cap);
         }
         // Dangling symlink: resolve relative link target against symlink's parent directory
         char link_buf[PATH_MAX];
@@ -223,8 +246,8 @@ static void resolve_save_target(const char *path, char *out_target, size_t cap) 
         if (n > 0) {
             link_buf[n] = '\0';
             if (link_buf[0] == '/') {
-                snprintf(out_target, cap, "%s", link_buf);
-                return;
+                int pn = snprintf(out_target, cap, "%s", link_buf);
+                return (pn > 0 && (size_t)pn < cap);
             }
             const char *slash = strrchr(path, '/');
             if (slash) {
@@ -233,14 +256,16 @@ static void resolve_save_target(const char *path, char *out_target, size_t cap) 
                     memcpy(out_target, path, dlen);
                     out_target[dlen] = '/';
                     memcpy(out_target + dlen + 1, link_buf, (size_t)n + 1);
-                    return;
+                    return true;
                 }
+                return false;
             }
-            snprintf(out_target, cap, "%s", link_buf);
-            return;
+            int pn = snprintf(out_target, cap, "%s", link_buf);
+            return (pn > 0 && (size_t)pn < cap);
         }
     }
-    snprintf(out_target, cap, "%s", path);
+    int pn = snprintf(out_target, cap, "%s", path);
+    return (pn > 0 && (size_t)pn < cap);
 }
 
 /** @brief Atomically write all lines of buf to file_path (resolving symlinks) and clear dirty flag. */
@@ -251,7 +276,7 @@ bool buffer_save(Buffer *buf, const char *file_path) {
 
     // Resolve symlinks so the symlink itself stays intact while its target is replaced atomically
     char dest_path[PATH_MAX];
-    resolve_save_target(path, dest_path, sizeof(dest_path));
+    if (!resolve_save_target(path, dest_path, sizeof(dest_path))) return false;
 
     // Preserve existing permissions if destination already exists
     struct stat st;
@@ -267,16 +292,19 @@ bool buffer_save(Buffer *buf, const char *file_path) {
     // Create sibling temp file in the same directory so rename() is atomic on the same filesystem
     char tmp_path[PATH_MAX + 32];
     const char *slash = strrchr(dest_path, '/');
+    int tn;
     if (slash) {
         size_t dir_len = (size_t)(slash - dest_path);
         if (dir_len == 0) {
-            snprintf(tmp_path, sizeof(tmp_path), "/.mde_tmp_XXXXXX");
+            tn = snprintf(tmp_path, sizeof(tmp_path), "/.mde_tmp_XXXXXX");
         } else {
-            snprintf(tmp_path, sizeof(tmp_path), "%.*s/.mde_tmp_XXXXXX", (int)dir_len, dest_path);
+            if (dir_len > (size_t)INT_MAX) return false;
+            tn = snprintf(tmp_path, sizeof(tmp_path), "%.*s/.mde_tmp_XXXXXX", (int)dir_len, dest_path);
         }
     } else {
-        snprintf(tmp_path, sizeof(tmp_path), ".mde_tmp_XXXXXX");
+        tn = snprintf(tmp_path, sizeof(tmp_path), ".mde_tmp_XXXXXX");
     }
+    if (tn < 0 || (size_t)tn >= sizeof(tmp_path)) return false;
 
     int fd = mkstemp(tmp_path);
     if (fd < 0) return false;
@@ -399,13 +427,22 @@ bool buffer_split_line(Buffer *buf, size_t row, size_t col, uint64_t group) {
         remainder[remainder_len] = '\0';
     }
 
-    cur->len = col;
-    cur->chars[col] = '\0';
-
-    if (!buffer_ensure_cap(buf, buf->count + 1)) {
+    size_t next_cap = remainder_len + 16;
+    char *next_chars = (char*)malloc(next_cap);
+    if (!next_chars) {
         free(remainder);
         return false;
     }
+
+    if (!buffer_ensure_cap(buf, buf->count + 1)) {
+        free(next_chars);
+        free(remainder);
+        return false;
+    }
+
+    cur = &buf->lines[row];
+    cur->len = col;
+    cur->chars[col] = '\0';
 
     size_t lines_to_shift = buf->count - (row + 1);
     if (lines_to_shift > 0) {
@@ -414,12 +451,8 @@ bool buffer_split_line(Buffer *buf, size_t row, size_t col, uint64_t group) {
     buf->count++;
 
     Line *next_line = &buf->lines[row + 1];
-    next_line->cap = remainder_len + 16;
-    next_line->chars = (char*)malloc(next_line->cap);
-    if (!next_line->chars) {
-        free(remainder);
-        return false;
-    }
+    next_line->cap = next_cap;
+    next_line->chars = next_chars;
 
     if (remainder && remainder_len > 0) {
         memcpy(next_line->chars, remainder, remainder_len);
@@ -582,10 +615,17 @@ static void apply_raw_action(Buffer *buf, const UndoAction *act, bool is_undo,
                             rem_buf[rem] = '\0';
                         }
                     }
+                    size_t next_cap = rem + 16;
+                    char *next_chars = (char*)malloc(next_cap);
+                    if (!next_chars || !buffer_ensure_cap(buf, buf->count + 1)) {
+                        free(next_chars);
+                        free(rem_buf);
+                        break;
+                    }
+                    cur = &buf->lines[act->row];
                     cur->len = c;
                     cur->chars[c] = '\0';
 
-                    buffer_ensure_cap(buf, buf->count + 1);
                     size_t lines_to_shift = buf->count - (act->row + 1);
                     if (lines_to_shift > 0) {
                         memmove(&buf->lines[act->row + 2], &buf->lines[act->row + 1],
@@ -593,8 +633,8 @@ static void apply_raw_action(Buffer *buf, const UndoAction *act, bool is_undo,
                     }
                     buf->count++;
                     Line *next_l = &buf->lines[act->row + 1];
-                    next_l->cap = rem + 16;
-                    next_l->chars = (char*)malloc(next_l->cap);
+                    next_l->cap = next_cap;
+                    next_l->chars = next_chars;
                     if (rem_buf && rem > 0) {
                         memcpy(next_l->chars, rem_buf, rem);
                     }
@@ -606,6 +646,8 @@ static void apply_raw_action(Buffer *buf, const UndoAction *act, bool is_undo,
                 }
                 break;
             }
+            default:
+                break;
         }
     } else {
         // Redo operations
@@ -651,10 +693,17 @@ static void apply_raw_action(Buffer *buf, const UndoAction *act, bool is_undo,
                             rem_buf[rem] = '\0';
                         }
                     }
+                    size_t next_cap = rem + 16;
+                    char *next_chars = (char*)malloc(next_cap);
+                    if (!next_chars || !buffer_ensure_cap(buf, buf->count + 1)) {
+                        free(next_chars);
+                        free(rem_buf);
+                        break;
+                    }
+                    cur = &buf->lines[act->row];
                     cur->len = c;
                     cur->chars[c] = '\0';
 
-                    buffer_ensure_cap(buf, buf->count + 1);
                     size_t lines_to_shift = buf->count - (act->row + 1);
                     if (lines_to_shift > 0) {
                         memmove(&buf->lines[act->row + 2], &buf->lines[act->row + 1],
@@ -662,8 +711,8 @@ static void apply_raw_action(Buffer *buf, const UndoAction *act, bool is_undo,
                     }
                     buf->count++;
                     Line *next_l = &buf->lines[act->row + 1];
-                    next_l->cap = rem + 16;
-                    next_l->chars = (char*)malloc(next_l->cap);
+                    next_l->cap = next_cap;
+                    next_l->chars = next_chars;
                     if (rem_buf && rem > 0) {
                         memcpy(next_l->chars, rem_buf, rem);
                     }
@@ -695,6 +744,8 @@ static void apply_raw_action(Buffer *buf, const UndoAction *act, bool is_undo,
                 }
                 break;
             }
+            default:
+                break;
         }
     }
 }

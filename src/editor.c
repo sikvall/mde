@@ -105,6 +105,8 @@ void editor_cycle_view_mode(Editor *ed) {
         case VIEW_PREVIEW:
             editor_set_status(ed, "View: Fullscreen Rendered Reader");
             break;
+        default:
+            break;
     }
 }
 
@@ -1411,47 +1413,58 @@ void editor_smart_enter(Editor *ed) {
             return;
         }
 
+        // Copy leading indentation BEFORE splitting the line so cur_line is never read after truncation
+        size_t indent = 0;
+        while (indent < cur_len && (cur_line[indent] == ' ' || cur_line[indent] == '\t')) indent++;
+        if (ed->cursor_col < indent) indent = ed->cursor_col;
+
+        char next_prefix[64] = {0};
+        size_t copy_indent = indent < sizeof(next_prefix) - 20 ? indent : 0;
+        if (copy_indent > 0) {
+            memcpy(next_prefix, cur_line, copy_indent);
+        }
+        next_prefix[copy_indent] = '\0';
+
+        if (is_task) {
+            snprintf(next_prefix + copy_indent, sizeof(next_prefix) - copy_indent, "- [ ] ");
+        } else if (isdigit((unsigned char)bullet[0])) {
+            int num = atoi(bullet);
+            snprintf(next_prefix + copy_indent, sizeof(next_prefix) - copy_indent, "%d. ", num + 1);
+        } else {
+            snprintf(next_prefix + copy_indent, sizeof(next_prefix) - copy_indent, "%s", bullet);
+        }
+
         // Split current line at cursor position
         buffer_split_line(&ed->buffer, ed->cursor_row, ed->cursor_col, group);
         ed->cursor_row++;
         ed->cursor_col = 0;
 
-        // Construct continuation prefix matching indentation
-        char next_prefix[64] = {0};
-
-        size_t indent = 0;
-        while (indent < cur_len && (cur_line[indent] == ' ' || cur_line[indent] == '\t')) indent++;
-        size_t copy_indent = indent < sizeof(next_prefix) - 20 ? indent : 0;
-        memcpy(next_prefix, cur_line, copy_indent);
-        next_prefix[copy_indent] = '\0';
-
-        if (is_task) {
-            strncat(next_prefix, "- [ ] ", sizeof(next_prefix) - strlen(next_prefix) - 1);
-        } else if (isdigit((unsigned char)bullet[0])) {
-            int num = atoi(bullet);
-            char num_buf[32];
-            snprintf(num_buf, sizeof(num_buf), "%d. ", num + 1);
-            strncat(next_prefix, num_buf, sizeof(next_prefix) - strlen(next_prefix) - 1);
-        } else {
-            strncat(next_prefix, bullet, sizeof(next_prefix) - strlen(next_prefix) - 1);
-        }
-
         size_t nplen = strlen(next_prefix);
         buffer_insert_string(&ed->buffer, ed->cursor_row, 0, next_prefix, nplen, group);
         ed->cursor_col = nplen;
     } else {
-        // Standard auto-indent matching leading whitespace
+        // Standard auto-indent matching leading whitespace (copied before split)
         size_t indent = 0;
         while (indent < cur_len && (cur_line[indent] == ' ' || cur_line[indent] == '\t')) indent++;
+        if (ed->cursor_col < indent) indent = ed->cursor_col;
+
+        char indent_stack[128];
+        char *indent_buf = indent_stack;
+        if (indent > sizeof(indent_stack)) {
+            indent_buf = (char *)malloc(indent);
+            if (!indent_buf) indent = 0;
+        }
+        if (indent > 0) memcpy(indent_buf, cur_line, indent);
 
         buffer_split_line(&ed->buffer, ed->cursor_row, ed->cursor_col, group);
         ed->cursor_row++;
         ed->cursor_col = 0;
 
         if (indent > 0) {
-            buffer_insert_string(&ed->buffer, ed->cursor_row, 0, cur_line, indent, group);
+            buffer_insert_string(&ed->buffer, ed->cursor_row, 0, indent_buf, indent, group);
             ed->cursor_col = indent;
         }
+        if (indent_buf != indent_stack) free(indent_buf);
     }
 
     const char *line = buffer_line(&ed->buffer, ed->cursor_row);
@@ -1709,11 +1722,20 @@ void editor_wrap_format(Editor *ed, const char *marker) {
         buffer_insert_string(&ed->buffer, s_row, e_col + mlen, marker, mlen, group);
         ed->cursor_col = e_col + 2 * mlen;
         ed->mark_active = false;
-    } else {
+    } else if (mlen > 0) {
         // Insert marker twice (opening and closing), leaving cursor in the middle
-        char both[32];
-        snprintf(both, sizeof(both), "%s%s", marker, marker);
-        buffer_insert_string(&ed->buffer, ed->cursor_row, ed->cursor_col, both, mlen * 2, group);
+        char both_stack[64];
+        char *both = both_stack;
+        size_t both_len = mlen * 2;
+        if (both_len + 1 > sizeof(both_stack)) {
+            both = (char *)malloc(both_len + 1);
+            if (!both) return;
+        }
+        memcpy(both, marker, mlen);
+        memcpy(both + mlen, marker, mlen);
+        both[both_len] = '\0';
+        buffer_insert_string(&ed->buffer, ed->cursor_row, ed->cursor_col, both, both_len, group);
+        if (both != both_stack) free(both);
         ed->cursor_col += mlen;
     }
 
@@ -2255,6 +2277,13 @@ bool editor_update_front_matter(Editor *ed, const EpubMetadata *meta) {
         lines[nlines++] = strdup(buf);
     }
     lines[nlines++] = strdup("---");
+
+    for (size_t i = 0; i < nlines; ++i) {
+        if (!lines[i]) {
+            for (size_t j = 0; j < nlines; ++j) free(lines[j]);
+            return false;
+        }
+    }
 
     uint64_t group = buffer_next_group(&ed->buffer);
 

@@ -55,30 +55,33 @@ static void strbuf_free(EpubStrBuf *sb) {
     sb->cap = 0;
 }
 
-static void strbuf_ensure(EpubStrBuf *sb, size_t extra) {
-    if (sb->len + extra + 1 > sb->cap) {
-        size_t new_cap = (sb->cap * 2 > sb->len + extra + 1024) ? sb->cap * 2 : sb->len + extra + 1024;
+static bool strbuf_ensure(EpubStrBuf *sb, size_t extra) {
+    if (!sb || !sb->data) return false;
+    if (extra > SIZE_MAX - sb->len - 1) return false;
+    size_t need = sb->len + extra + 1;
+    if (need > sb->cap) {
+        size_t min_grow = (need <= SIZE_MAX - 1024) ? (need + 1024) : need;
+        size_t doubled = (sb->cap <= SIZE_MAX / 2) ? (sb->cap * 2) : SIZE_MAX;
+        size_t new_cap = (doubled > min_grow) ? doubled : min_grow;
         char *n = (char *)realloc(sb->data, new_cap);
-        if (n) {
-            sb->data = n;
-            sb->cap = new_cap;
-        }
+        if (!n) return false;
+        sb->data = n;
+        sb->cap = new_cap;
     }
+    return true;
 }
 
 static void strbuf_puts(EpubStrBuf *sb, const char *s) {
     if (!s) return;
     size_t slen = strlen(s);
-    strbuf_ensure(sb, slen);
-    if (!sb->data) return;
+    if (!strbuf_ensure(sb, slen)) return;
     memcpy(sb->data + sb->len, s, slen);
     sb->len += slen;
     sb->data[sb->len] = '\0';
 }
 
 static void strbuf_putc(EpubStrBuf *sb, char c) {
-    strbuf_ensure(sb, 1);
-    if (!sb->data) return;
+    if (!strbuf_ensure(sb, 1)) return;
     sb->data[sb->len++] = c;
     sb->data[sb->len] = '\0';
 }
@@ -94,12 +97,13 @@ static void strbuf_printf(EpubStrBuf *sb, const char *fmt, ...) {
     if ((size_t)n < sizeof(tmp)) {
         strbuf_puts(sb, tmp);
     } else {
-        strbuf_ensure(sb, (size_t)n + 1);
-        if (!sb->data) return;
+        if (!strbuf_ensure(sb, (size_t)n)) return;
         va_start(ap, fmt);
-        vsnprintf(sb->data + sb->len, (size_t)n + 1, fmt, ap);
+        int written = vsnprintf(sb->data + sb->len, sb->cap - sb->len, fmt, ap);
         va_end(ap);
-        sb->len += (size_t)n;
+        if (written > 0 && (size_t)written < sb->cap - sb->len) {
+            sb->len += (size_t)written;
+        }
         sb->data[sb->len] = '\0';
     }
 }
@@ -246,7 +250,8 @@ bool epub_parse_front_matter(const Buffer *buf, EpubMetadata *meta, size_t *out_
 
         const char *colon = (const char *)memchr(l, ':', len);
         if (colon) {
-            size_t klen = (size_t)(colon - l);
+            size_t raw_klen = (size_t)(colon - l);
+            size_t klen = raw_klen;
             char key[64];
             if (klen >= sizeof(key)) klen = sizeof(key) - 1;
             memcpy(key, l, klen);
@@ -254,7 +259,7 @@ bool epub_parse_front_matter(const Buffer *buf, EpubMetadata *meta, size_t *out_
             trim_whitespace(key);
             for (char *p = key; *p; ++p) *p = (char)tolower((unsigned char)*p);
 
-            size_t vlen = len - (klen + 1);
+            size_t vlen = len - (raw_klen + 1);
             char val[512];
             if (vlen >= sizeof(val)) vlen = sizeof(val) - 1;
             memcpy(val, colon + 1, vlen);
@@ -375,7 +380,8 @@ static const char *bundle_image_file(EpubBookContext *ctx, const char *doc_base_
         set_str(abs_img, sizeof(abs_img), url_str);
     } else {
         char combined[PATH_MAX * 2];
-        snprintf(combined, sizeof(combined), "%s/%s", doc_base_dir, url_str);
+        int cn = snprintf(combined, sizeof(combined), "%s/%s", doc_base_dir, url_str);
+        if (cn < 0 || (size_t)cn >= sizeof(abs_img)) return NULL;
         set_str(abs_img, sizeof(abs_img), combined);
     }
 
@@ -398,7 +404,9 @@ static const char *bundle_image_file(EpubBookContext *ctx, const char *doc_base_
     memset(img, 0, sizeof(*img));
 
     snprintf(img->id, sizeof(img->id), is_cover ? "cover-img" : "img_%03zu", idx + 1);
-    const char *ext = strrchr(abs_img, '.');
+    const char *slash = strrchr(abs_img, '/');
+    const char *base = slash ? slash + 1 : abs_img;
+    const char *ext = strrchr(base, '.');
     snprintf(img->filename, sizeof(img->filename), "images/%s%s", img->id, ext ? ext : ".png");
     snprintf(img->disk_path, sizeof(img->disk_path), "%s", abs_img);
     snprintf(img->media_type, sizeof(img->media_type), "%s", get_image_media_type(abs_img));
@@ -661,9 +669,11 @@ static void process_doc_lines(EpubBookContext *ctx, const ExportDocList *docs, s
 
         } else if (pl.is_footnote_def) {
             close_xhtml_block(&cur_ch->body, &blk);
-            const char *raw_fn = raw + pl.spans[0].start + 2;
+            const char *raw_fn = "";
             size_t id_len = 0;
-            while (id_len < pl.spans[0].end - pl.spans[0].start && raw_fn[id_len] != ']') id_len++;
+            if (pl.span_count > 0) {
+                extract_footnote_def_id(raw, &pl.spans[0], &raw_fn, &id_len);
+            }
 
             if (cur_ch->footnote_count < EPUB_MAX_FOOTNOTES) {
                 EpubFootnote *fn = &cur_ch->footnotes[cur_ch->footnote_count++];
@@ -1259,8 +1269,18 @@ bool export_builtin_epub(const ExportDocList *docs, const char *out_path,
     report_progress(&opts, 3, 6, "Generating XHTML chapter documents");
 
     char **chapter_htmls = (char **)calloc(ctx->chapter_count, sizeof(char *));
+    if (!chapter_htmls) {
+        set_str(err_msg, err_cap, "Out of memory generating chapter XHTML");
+        free_book_context(ctx, NULL, NULL, NULL, NULL);
+        return false;
+    }
     for (size_t i = 0; i < ctx->chapter_count; ++i) {
         chapter_htmls[i] = build_chapter_complete_xhtml(ctx, i);
+        if (!chapter_htmls[i]) {
+            set_str(err_msg, err_cap, "Out of memory generating chapter XHTML");
+            free_book_context(ctx, chapter_htmls, NULL, NULL, NULL);
+            return false;
+        }
     }
 
     // Step 4: Generate Navigation & TOC
@@ -1273,6 +1293,11 @@ bool export_builtin_epub(const ExportDocList *docs, const char *out_path,
     report_progress(&opts, 5, 6, "Building package manifest & metadata (package.opf)");
 
     char *package_opf = build_package_opf(ctx);
+    if ((ctx->version == EPUB_VERSION_3 && !nav_html) || !toc_ncx || !package_opf) {
+        set_str(err_msg, err_cap, "Out of memory generating EPUB metadata");
+        free_book_context(ctx, chapter_htmls, nav_html, toc_ncx, package_opf);
+        return false;
+    }
     const char *container_xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
                                 "<container version=\"1.0\" xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\">\n"
                                 "  <rootfiles>\n"
@@ -1336,16 +1361,21 @@ bool export_builtin_epub(const ExportDocList *docs, const char *out_path,
     // 6. EPUB/stylesheet.css
     if (ctx->meta.css_path[0]) {
         char abs_css[PATH_MAX];
+        bool css_path_ok = true;
         if (ctx->meta.css_path[0] == '/') {
             set_str(abs_css, sizeof(abs_css), ctx->meta.css_path);
         } else if (docs->nodes[0].base_dir[0] != '\0') {
             char combined[PATH_MAX * 2];
-            snprintf(combined, sizeof(combined), "%s/%s", docs->nodes[0].base_dir, ctx->meta.css_path);
-            set_str(abs_css, sizeof(abs_css), combined);
+            int cn = snprintf(combined, sizeof(combined), "%s/%s", docs->nodes[0].base_dir, ctx->meta.css_path);
+            if (cn < 0 || (size_t)cn >= sizeof(abs_css)) {
+                css_path_ok = false;
+            } else {
+                set_str(abs_css, sizeof(abs_css), combined);
+            }
         } else {
             set_str(abs_css, sizeof(abs_css), ctx->meta.css_path);
         }
-        if (!zip_add_disk_file(za, "EPUB/stylesheet.css", abs_css)) {
+        if (!css_path_ok || !zip_add_disk_file(za, "EPUB/stylesheet.css", abs_css)) {
             const char *def_css = get_default_epub_css();
             zip_add_memory(za, "EPUB/stylesheet.css", def_css, strlen(def_css), ZIP_CM_DEFLATE);
         }
@@ -1367,7 +1397,7 @@ bool export_builtin_epub(const ExportDocList *docs, const char *out_path,
 
     // 8. Bundled Images
     for (size_t i = 0; i < ctx->image_count; ++i) {
-        char img_entry[128];
+        char img_entry[160];
         snprintf(img_entry, sizeof(img_entry), "EPUB/%s", ctx->images[i].filename);
         zip_add_disk_file(za, img_entry, ctx->images[i].disk_path);
     }

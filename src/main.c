@@ -685,12 +685,14 @@ static void handle_key_event(int ch, char *search_buf, size_t search_cap,
         char utf8_buf[8] = {0};
         utf8_buf[0] = (char)ch;
         size_t ulen = utf8_char_len((unsigned char)ch);
+        if (ulen >= sizeof(utf8_buf)) ulen = sizeof(utf8_buf) - 1;
+        size_t actual_len = 1;
         for (size_t b = 1; b < ulen; ++b) {
             int next_b = getch();
             if (next_b == ERR) break;
-            utf8_buf[b] = (char)next_b;
+            utf8_buf[actual_len++] = (char)next_b;
         }
-        editor_insert_char(&g_editor, utf8_buf, ulen);
+        editor_insert_char(&g_editor, utf8_buf, actual_len);
     } else if (ch >= 32 && ch <= 126) {
         // Printable ASCII character
         char c = (char)ch;

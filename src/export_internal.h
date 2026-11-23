@@ -53,6 +53,8 @@ size_t extract_link_or_image_span(const char *raw, const MdParsedLine *pl,
                                   size_t start_idx, size_t end_idx,
                                   const char **out_label, size_t *out_label_len,
                                   const char **out_url, size_t *out_url_len);
+void extract_footnote_def_id(const char *raw, const MdSpan *def_span,
+                             const char **out_id, size_t *out_len);
 ssize_t find_linked_doc_index(const ExportDocList *list, size_t from_idx,
                               const char *url, size_t url_len,
                               char *out_frag, size_t frag_cap);

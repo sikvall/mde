@@ -433,7 +433,7 @@ void md_parse_line(const char *line, size_t len,
                     if (l >= lang_cap) l = lang_cap - 1;
                     memcpy(code_lang, line + lang_start, l);
                     code_lang[l] = '\0';
-                    strncpy(out_line->code_lang, code_lang, sizeof(out_line->code_lang) - 1);
+                    snprintf(out_line->code_lang, sizeof(out_line->code_lang), "%s", code_lang);
                 }
             }
             if (lang_end < len) {
@@ -447,7 +447,7 @@ void md_parse_line(const char *line, size_t len,
     if (in_code_block && *in_code_block) {
         out_line->is_code_block = true;
         if (code_lang && code_lang[0]) {
-            strncpy(out_line->code_lang, code_lang, sizeof(out_line->code_lang) - 1);
+            snprintf(out_line->code_lang, sizeof(out_line->code_lang), "%s", code_lang);
         }
         md_parsed_line_add_span(out_line, 0, len, MD_CODE_BLOCK_LINE);
         return;

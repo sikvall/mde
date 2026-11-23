@@ -455,7 +455,10 @@ static void emit_table_border(RenderedDoc *out_doc, size_t source_row,
     char bar[2048];
     size_t b = 0;
     size_t ll = strlen(left);
-    memcpy(bar + b, left, ll); b += ll;
+    if (ll < sizeof(bar)) {
+        memcpy(bar + b, left, ll);
+        b += ll;
+    }
 
     for (size_t c = 0; c < num_cols; ++c) {
         int seg = col_widths[c] + 2; // 1 space padding on each side
@@ -887,12 +890,13 @@ void render_document_range(const Buffer *buf, int width, size_t start_row, size_
                     break;
                 }
             }
+            if (initial_indent < 0) initial_indent = 0;
             if (initial_indent > 24) initial_indent = 24;
-            memset(cont_indent, ' ', initial_indent);
+            memset(cont_indent, ' ', (size_t)initial_indent);
             cont_indent[initial_indent] = 0;
             int max_w = width > 4 ? (width - 4) : 80;
             render_inline_spans_wrapped(out_doc, &rl, row, max_w,
-                                        cont_indent, initial_indent, COLOR_PAIR(CP_DEFAULT),
+                                        cont_indent, (size_t)initial_indent, COLOR_PAIR(CP_DEFAULT),
                                         initial_indent, raw_line, &pl, body_start, pl.span_count, false, 0);
         } else {
             RenderedLine *rl = doc_add_line(out_doc, row);
@@ -994,11 +998,13 @@ int renderer_get_cursor_vcol(const Buffer *buf, const RenderedDoc *doc, size_t r
             if (col < sp->start) break;
             if (col <= seq_end) {
                 // Inside label text: map proportionally; inside URL: clamp to end of rendered label
-                size_t lbl_start = (size_t)(lbl - raw_line);
-                if (ll > 0 && col >= lbl_start && col <= lbl_start + ll) {
-                    vcol += utf8_visual_width_range(raw_line, lbl_start, col);
-                } else {
-                    vcol += (ll > 0 ? utf8_visual_width(lbl, ll) : 0);
+                if (ll > 0) {
+                    size_t lbl_start = (size_t)(lbl - raw_line);
+                    if (col >= lbl_start && col <= lbl_start + ll) {
+                        vcol += utf8_visual_width_range(raw_line, lbl_start, col);
+                    } else {
+                        vcol += utf8_visual_width(lbl, ll);
+                    }
                 }
                 break;
             }

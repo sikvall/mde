@@ -13,9 +13,9 @@
 #include <ctype.h>
 
 /** @brief Portable case-insensitive substring search (C11 equivalent of strcasestr). */
-static char *strcasestr_custom(const char *haystack, const char *needle) {
+static const char *strcasestr_custom(const char *haystack, const char *needle) {
     if (!haystack || !needle) return NULL;
-    if (!*needle) return (char*)haystack;
+    if (!*needle) return haystack;
     for (; *haystack; ++haystack) {
         if (tolower((unsigned char)*haystack) == tolower((unsigned char)*needle)) {
             const char *h = haystack;
@@ -24,7 +24,7 @@ static char *strcasestr_custom(const char *haystack, const char *needle) {
                 h++;
                 n++;
             }
-            if (!*n) return (char*)haystack;
+            if (!*n) return haystack;
         }
     }
     return NULL;
@@ -55,7 +55,7 @@ bool editor_search_find_next(Editor *ed, const char *query, bool forward) {
                     continue;
                 }
             }
-            char *found = strcasestr_custom(search_from, query);
+            const char *found = strcasestr_custom(search_from, query);
             if (found && (step < total_lines || (size_t)(found - line) <= start_col)) {
                 ed->cursor_row = r;
                 ed->cursor_col = (size_t)(found - line);
@@ -80,10 +80,10 @@ bool editor_search_find_next(Editor *ed, const char *query, bool forward) {
             }
             size_t limit = (step == 0) ? start_col : line_len;
 
-            char *last_found = NULL;
+            const char *last_found = NULL;
             const char *curr = line;
             while (curr < line + limit) {
-                char *f = strcasestr_custom(curr, query);
+                const char *f = strcasestr_custom(curr, query);
                 if (f && (size_t)(f - line) < limit) {
                     last_found = f;
                     curr = f + 1;
@@ -138,7 +138,7 @@ bool editor_search_find_from(Editor *ed, const char *query,
                 continue;
             }
         }
-        char *found = strcasestr_custom(search_from, query);
+        const char *found = strcasestr_custom(search_from, query);
         if (found && (!wrap || step < total_lines || (size_t)(found - line) < from_col)) {
             ed->search_active = true;
             ed->cursor_row = r;

@@ -174,7 +174,7 @@ void ui_show_help(Editor *ed) {
         snprintf(title_buf, sizeof(title_buf), "%s v%s - Help & Reference", MDE_APP_NAME, MDE_VERSION_STRING);
         int title_x = (box_w - (int)strlen(title_buf)) / 2;
         if (title_x < 2) title_x = 2;
-        mvwaddstr(win, 1, title_x, title_buf);
+        if (box_w > 4) mvwaddnstr(win, 1, title_x, title_buf, box_w - 4);
         wattroff(win, COLOR_PAIR(CP_HEADER1) | A_BOLD);
 
         // Tab Bar on row 2
@@ -295,7 +295,7 @@ void ui_show_help(Editor *ed) {
         int footer_len = (int)strlen(footer);
         int footer_x = (box_w - footer_len) / 2;
         if (footer_x < 2) footer_x = 2;
-        mvwaddstr(win, box_h - 2, footer_x, footer);
+        if (box_w > 4) mvwaddnstr(win, box_h - 2, footer_x, footer, box_w - 4);
         wattroff(win, COLOR_PAIR(CP_MARKER) | A_DIM);
 
         wrefresh(win);

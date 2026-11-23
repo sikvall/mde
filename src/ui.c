@@ -215,6 +215,7 @@ static void draw_editor_pane(Editor *ed, int start_col, int width, int start_row
                     size_t byte_pos = sp->start;
                     while (byte_pos < sp->end) {
                         size_t ch_len = utf8_char_len((unsigned char)raw[byte_pos]);
+                        if (byte_pos + ch_len > sp->end) ch_len = sp->end - byte_pos;
                         int ch_w = utf8_visual_width_range(raw, byte_pos, byte_pos + ch_len);
 
                         if (render_x + ch_w > start_col + width) {
@@ -250,17 +251,17 @@ static void draw_editor_pane(Editor *ed, int start_col, int width, int start_row
 
                         if (is_sel) {
                             attron(A_REVERSE);
-                            mvaddnstr(screen_y, render_x, raw + byte_pos, ch_len);
+                            mvaddnstr(screen_y, render_x, raw + byte_pos, (int)ch_len);
                             attroff(A_REVERSE);
                         } else if (ed->search_active && row_idx == ed->search_match_row &&
                             byte_pos >= ed->search_match_col &&
                             byte_pos < ed->search_match_col + ed->search_match_len) {
                             attron(COLOR_PAIR(CP_SEARCH_CUR) | A_BOLD);
-                            mvaddnstr(screen_y, render_x, raw + byte_pos, ch_len);
+                            mvaddnstr(screen_y, render_x, raw + byte_pos, (int)ch_len);
                             attroff(COLOR_PAIR(CP_SEARCH_CUR) | A_BOLD);
                             attron(a);
                         } else {
-                            mvaddnstr(screen_y, render_x, raw + byte_pos, ch_len);
+                            mvaddnstr(screen_y, render_x, raw + byte_pos, (int)ch_len);
                         }
                         render_x += ch_w;
                         byte_pos += ch_len;
@@ -348,6 +349,7 @@ static void draw_editor_pane(Editor *ed, int start_col, int width, int start_row
                 size_t byte_pos = sp->start;
                 while (byte_pos < sp->end && render_x < start_col + width) {
                     size_t ch_len = utf8_char_len((unsigned char)raw[byte_pos]);
+                    if (byte_pos + ch_len > sp->end) ch_len = sp->end - byte_pos;
                     int ch_w = utf8_visual_width_range(raw, byte_pos, byte_pos + ch_len);
 
                     if (cur_vcol >= (int)ed->scroll_col && render_x + ch_w <= start_col + width) {
@@ -366,18 +368,18 @@ static void draw_editor_pane(Editor *ed, int start_col, int width, int start_row
 
                         if (is_sel) {
                             attron(A_REVERSE);
-                            mvaddnstr(screen_y, render_x, raw + byte_pos, ch_len);
+                            mvaddnstr(screen_y, render_x, raw + byte_pos, (int)ch_len);
                             attroff(A_REVERSE);
                         } else if (ed->search_active && row_idx == ed->search_match_row &&
                             byte_pos >= ed->search_match_col &&
                             byte_pos < ed->search_match_col + ed->search_match_len) {
                             // Active search match highlight
                             attron(COLOR_PAIR(CP_SEARCH_CUR) | A_BOLD);
-                            mvaddnstr(screen_y, render_x, raw + byte_pos, ch_len);
+                            mvaddnstr(screen_y, render_x, raw + byte_pos, (int)ch_len);
                             attroff(COLOR_PAIR(CP_SEARCH_CUR) | A_BOLD);
                             attron(a);
                         } else {
-                            mvaddnstr(screen_y, render_x, raw + byte_pos, ch_len);
+                            mvaddnstr(screen_y, render_x, raw + byte_pos, (int)ch_len);
                         }
                         render_x += ch_w;
                     }
@@ -469,10 +471,11 @@ static void draw_preview_pane(Editor *ed, int start_col, int width, int start_ro
                 RenderChunk *rc = &rl->chunks[c];
                 if (render_x >= start_col + width) break;
 
-                attrset(rc->attr);
+                attrset((int)rc->attr);
                 size_t byte_pos = 0;
                 while (byte_pos < rc->text_len && render_x < start_col + width) {
                     size_t ch_len = utf8_char_len((unsigned char)rc->text[byte_pos]);
+                    if (byte_pos + ch_len > rc->text_len) ch_len = rc->text_len - byte_pos;
                     int ch_w = utf8_visual_width_range(rc->text, byte_pos, byte_pos + ch_len);
 
                     if (render_x + ch_w <= start_col + width) {
@@ -482,11 +485,11 @@ static void draw_preview_pane(Editor *ed, int start_col, int width, int start_ro
                                                current_rel_col + ch_w > cur_vcol);
                         if (is_cursor_cell) {
                             attron(A_REVERSE | A_BOLD);
-                            mvaddnstr(screen_y, render_x, rc->text + byte_pos, ch_len);
+                            mvaddnstr(screen_y, render_x, rc->text + byte_pos, (int)ch_len);
                             attroff(A_REVERSE | A_BOLD);
-                            attrset(rc->attr);
+                            attrset((int)rc->attr);
                         } else {
-                            mvaddnstr(screen_y, render_x, rc->text + byte_pos, ch_len);
+                            mvaddnstr(screen_y, render_x, rc->text + byte_pos, (int)ch_len);
                         }
                         render_x += ch_w;
                     }
@@ -756,6 +759,8 @@ void ui_draw(Editor *ed) {
             new_editor_width = 0;
             new_preview_width = cols;
             break;
+        default:
+            break;
     }
 
     if (new_preview_width != ed->preview_width) {
@@ -792,6 +797,8 @@ void ui_draw(Editor *ed) {
             break;
         case VIEW_PREVIEW:
             draw_preview_pane(ed, 0, cols, 0, body_height);
+            break;
+        default:
             break;
     }
 
@@ -902,6 +909,7 @@ void ui_draw(Editor *ed) {
  * @brief Draw a full-width horizontal box divider with left/right T-junctions.
  */
 void draw_box_hrule(WINDOW *win, int y, int width) {
+    if (!win || width < 2) return;
     mvwaddch(win, y, 0, ACS_LTEE);
     for (int x = 1; x < width - 1; ++x) {
         mvwaddch(win, y, x, ACS_HLINE);
@@ -963,7 +971,9 @@ static bool ui_prompt_internal(Editor *ed, const char *prompt, char *out_buf,
         if (max_vis > 0) {
             const char *disp = out_buf;
             while (utf8_visual_width(disp, strlen(disp)) > max_vis && *disp) {
-                disp += utf8_char_len((unsigned char)*disp);
+                size_t step = utf8_char_len((unsigned char)*disp);
+                size_t rem = strlen(disp);
+                disp += (step <= rem) ? step : rem;
             }
             attron(COLOR_PAIR(CP_DEFAULT));
             mvaddstr(y, input_x, disp);

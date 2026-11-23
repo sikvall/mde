@@ -723,23 +723,35 @@ static bool export_via_pandoc(const ExportDocList *docs, ExportFormat fmt, const
         char **argv = (char **)calloc(max_args, sizeof(char *));
         if (!argv) _exit(126);
 
+        char arg_pandoc[] = "pandoc";
+        char arg_f[] = "-f";
+        char arg_md[] = "markdown";
+        char arg_t[] = "-t";
+        char arg_s[] = "-s";
+        char arg_meta[] = "--metadata";
+        char arg_res[] = "--resource-path";
+        char arg_o[] = "-o";
+        char *arg_to = strdup(pandoc_to);
+        char *arg_out = strdup(out_path);
+        if (!arg_to || !arg_out) _exit(126);
+
         size_t argc = 0;
-        argv[argc++] = "pandoc";
-        argv[argc++] = "-f";
-        argv[argc++] = "markdown";
-        argv[argc++] = "-t";
-        argv[argc++] = (char *)pandoc_to;
+        argv[argc++] = arg_pandoc;
+        argv[argc++] = arg_f;
+        argv[argc++] = arg_md;
+        argv[argc++] = arg_t;
+        argv[argc++] = arg_to;
         if (standalone) {
-            argv[argc++] = "-s";
+            argv[argc++] = arg_s;
         }
-        argv[argc++] = "--metadata";
+        argv[argc++] = arg_meta;
         argv[argc++] = meta_title;
         if (resource_path[0]) {
-            argv[argc++] = "--resource-path";
+            argv[argc++] = arg_res;
             argv[argc++] = resource_path;
         }
-        argv[argc++] = "-o";
-        argv[argc++] = (char *)out_path;
+        argv[argc++] = arg_o;
+        argv[argc++] = arg_out;
         for (size_t i = 0; i < docs->count; ++i) {
             argv[argc++] = tmp_files[i];
         }
@@ -839,6 +851,27 @@ size_t extract_link_or_image_span(const char *raw, const MdParsedLine *pl,
         if (done) break;
     }
     return k;
+}
+
+/**
+ * @brief Safely extract the footnote identifier inside a `[^id]:` definition span.
+ */
+void extract_footnote_def_id(const char *raw, const MdSpan *def_span,
+                             const char **out_id, size_t *out_len) {
+    if (out_id) *out_id = "";
+    if (out_len) *out_len = 0;
+    if (!raw || !def_span || def_span->end <= def_span->start) return;
+
+    size_t pos = def_span->start;
+    size_t end = def_span->end;
+    while (pos < end && raw[pos] != '[') pos++;
+    if (pos + 2 > end || raw[pos] != '[' || raw[pos + 1] != '^') return;
+    pos += 2;
+
+    size_t id_start = pos;
+    while (pos < end && raw[pos] != ']') pos++;
+    if (out_id) *out_id = raw + id_start;
+    if (out_len) *out_len = pos - id_start;
 }
 
 /** @brief Test whether a line is a Markdown table alignment separator row (e.g. `| --- | --- |`). */

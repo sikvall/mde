@@ -20,7 +20,8 @@ bool backup_create_tilde(const char *file_path) {
     if (stat(file_path, &st) != 0) return false;
 
     char backup_path[PATH_MAX];
-    snprintf(backup_path, sizeof(backup_path), "%s~", file_path);
+    int bn = snprintf(backup_path, sizeof(backup_path), "%s~", file_path);
+    if (bn < 0 || (size_t)bn >= sizeof(backup_path)) return false;
 
     FILE *src = fopen(file_path, "rb");
     if (!src) return false;
@@ -53,14 +54,18 @@ bool backup_create_tilde(const char *file_path) {
  * @param out Buffer to receive the generated autosave file path.
  * @param cap Capacity of the output buffer in bytes.
  */
-static void get_autosave_path(const char *file_path, char *out, size_t cap) {
+static bool get_autosave_path(const char *file_path, char *out, size_t cap) {
+    if (!file_path || !out || cap == 0) return false;
     const char *slash = strrchr(file_path, '/');
+    int n;
     if (slash) {
         size_t dlen = (size_t)(slash - file_path);
-        snprintf(out, cap, "%.*s/#%s#", (int)dlen, file_path, slash + 1);
+        if (dlen > (size_t)INT_MAX) return false;
+        n = snprintf(out, cap, "%.*s/#%s#", (int)dlen, file_path, slash + 1);
     } else {
-        snprintf(out, cap, "#%s#", file_path);
+        n = snprintf(out, cap, "#%s#", file_path);
     }
+    return (n > 0 && (size_t)n < cap);
 }
 
 bool backup_create_autosave(const char *file_path, const void *buf_ptr) {
@@ -68,7 +73,7 @@ bool backup_create_autosave(const char *file_path, const void *buf_ptr) {
     const Buffer *buf = (const Buffer *)buf_ptr;
 
     char as_path[PATH_MAX];
-    get_autosave_path(file_path, as_path, sizeof(as_path));
+    if (!get_autosave_path(file_path, as_path, sizeof(as_path))) return false;
 
     FILE *f = fopen(as_path, "wb");
     if (!f) return false;
@@ -93,7 +98,7 @@ bool backup_create_autosave(const char *file_path, const void *buf_ptr) {
 bool backup_remove_autosave(const char *file_path) {
     if (!file_path || !file_path[0]) return false;
     char as_path[PATH_MAX];
-    get_autosave_path(file_path, as_path, sizeof(as_path));
+    if (!get_autosave_path(file_path, as_path, sizeof(as_path))) return false;
     unlink(as_path);
     return true;
 }

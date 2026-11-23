@@ -95,9 +95,12 @@ bool ui_show_document_stats(Editor *ed) {
     int box_w = 60;
     if (box_w > cols - 4) box_w = cols - 4;
     if (box_w < 44) box_w = 44;
+    if (box_w > cols) box_w = cols;
+    if (box_w < 12) box_w = cols > 0 ? cols : 12;
 
     int box_h = stats.has_selection ? 18 : 13;
     if (box_h > rows - 2) box_h = rows - 2;
+    if (box_h < 6) box_h = rows > 0 ? rows : 6;
 
     int start_y = (rows - box_h) / 2;
     int start_x = (cols - box_w) / 2;
@@ -131,19 +134,23 @@ bool ui_show_document_stats(Editor *ed) {
     draw_box_hrule(win, 2, box_w);
 
     int y = 3;
-    wattron(win, COLOR_PAIR(CP_BOLD) | A_BOLD);
-    mvwprintw(win, y++, 3, "File: %.*s", box_w - 10, doc_name);
-    wattroff(win, COLOR_PAIR(CP_BOLD) | A_BOLD);
+    if (y < box_h - 3 && box_w > 10) {
+        wattron(win, COLOR_PAIR(CP_BOLD) | A_BOLD);
+        mvwprintw(win, y++, 3, "File: %.*s", box_w - 10, doc_name);
+        wattroff(win, COLOR_PAIR(CP_BOLD) | A_BOLD);
+    }
 
-    mvwprintw(win, y++, 3, "%-26s %10zu", "Total Lines:", stats.total_lines);
-    mvwprintw(win, y++, 3, "%-26s %10zu", "Total Words:", stats.total_words);
-    mvwprintw(win, y++, 3, "%-26s %10zu", "Total Characters:", stats.total_chars);
-    mvwprintw(win, y++, 3, "%-26s %10zu", "Chars (no whitespace):", stats.total_chars_no_spaces);
+    if (y < box_h - 3) mvwprintw(win, y++, 3, "%-26s %10zu", "Total Lines:", stats.total_lines);
+    if (y < box_h - 3) mvwprintw(win, y++, 3, "%-26s %10zu", "Total Words:", stats.total_words);
+    if (y < box_h - 3) mvwprintw(win, y++, 3, "%-26s %10zu", "Total Characters:", stats.total_chars);
+    if (y < box_h - 3) mvwprintw(win, y++, 3, "%-26s %10zu", "Chars (no whitespace):", stats.total_chars_no_spaces);
 
-    if (stats.read_time_min > 0) {
-        mvwprintw(win, y++, 3, "%-26s %d min %d sec", "Reading Time (200 wpm):", stats.read_time_min, stats.read_time_sec);
-    } else {
-        mvwprintw(win, y++, 3, "%-26s %d sec", "Reading Time (200 wpm):", stats.read_time_sec);
+    if (y < box_h - 3) {
+        if (stats.read_time_min > 0) {
+            mvwprintw(win, y++, 3, "%-26s %d min %d sec", "Reading Time (200 wpm):", stats.read_time_min, stats.read_time_sec);
+        } else {
+            mvwprintw(win, y++, 3, "%-26s %d sec", "Reading Time (200 wpm):", stats.read_time_sec);
+        }
     }
 
     if (stats.has_selection && y + 4 < box_h - 2) {
@@ -160,7 +167,7 @@ bool ui_show_document_stats(Editor *ed) {
     const char *foot = "[Esc / Enter / q / Alt+D] Close";
     int fx = (box_w - (int)strlen(foot)) / 2;
     wattron(win, COLOR_PAIR(CP_MARKER));
-    mvwaddstr(win, box_h - 2, fx > 1 ? fx : 1, foot);
+    if (box_w > 2) mvwaddnstr(win, box_h - 2, fx > 1 ? fx : 1, foot, box_w - 2);
     wattroff(win, COLOR_PAIR(CP_MARKER));
 
     wrefresh(win);

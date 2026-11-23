@@ -113,8 +113,7 @@ static FileItem *load_directory_items(const char *dir_path, size_t *out_count) {
 
     // Always add ".." if not root "/"
     if (strcmp(dir_path, "/") != 0) {
-        strncpy(items[0].name, "..", sizeof(items[0].name) - 1);
-        items[0].name[sizeof(items[0].name) - 1] = '\0';
+        snprintf(items[0].name, sizeof(items[0].name), "..");
         items[0].is_dir = true;
         items[0].size = 0;
         *out_count = 1;
@@ -170,7 +169,7 @@ static FileItem *load_directory_items(const char *dir_path, size_t *out_count) {
 
 /** @brief Trim the last path component from dir_buf to ascend to its parent directory. */
 static void navigate_to_parent(char *dir_buf, size_t buf_size) {
-    (void)buf_size;
+    if (!dir_buf || buf_size == 0) return;
     if (strcmp(dir_buf, "/") == 0) return;
 
     size_t len = strlen(dir_buf);
@@ -184,7 +183,7 @@ static void navigate_to_parent(char *dir_buf, size_t buf_size) {
     } else if (last_slash) {
         *last_slash = '\0';
     } else {
-        strncpy(dir_buf, "/", buf_size);
+        snprintf(dir_buf, buf_size, "/");
     }
 }
 
@@ -256,17 +255,16 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
     char current_dir[PATH_MAX];
     if (ed->buffer.file_path && ed->buffer.file_path[0]) {
         char dir_copy[PATH_MAX];
-        strncpy(dir_copy, ed->buffer.file_path, sizeof(dir_copy) - 1);
-        dir_copy[sizeof(dir_copy) - 1] = '\0';
+        snprintf(dir_copy, sizeof(dir_copy), "%s", ed->buffer.file_path);
         char *d = dirname(dir_copy);
         if (!realpath(d, current_dir)) {
             if (!getcwd(current_dir, sizeof(current_dir))) {
-                strncpy(current_dir, ".", sizeof(current_dir));
+                snprintf(current_dir, sizeof(current_dir), ".");
             }
         }
     } else {
         if (!getcwd(current_dir, sizeof(current_dir))) {
-            strncpy(current_dir, ".", sizeof(current_dir));
+            snprintf(current_dir, sizeof(current_dir), ".");
         }
     }
 
@@ -274,12 +272,11 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
     if (mode == FILE_DIALOG_SAVE_AS) {
         if (ed->buffer.file_path && ed->buffer.file_path[0]) {
             char file_copy[PATH_MAX];
-            strncpy(file_copy, ed->buffer.file_path, sizeof(file_copy) - 1);
-            file_copy[sizeof(file_copy) - 1] = '\0';
+            snprintf(file_copy, sizeof(file_copy), "%s", ed->buffer.file_path);
             char *b = basename(file_copy);
-            strncpy(input_buf, b, sizeof(input_buf) - 1);
+            snprintf(input_buf, sizeof(input_buf), "%s", b);
         } else {
-            strncpy(input_buf, "untitled.md", sizeof(input_buf) - 1);
+            snprintf(input_buf, sizeof(input_buf), "untitled.md");
         }
     }
 
@@ -332,7 +329,9 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
             size_t dlen = strlen(current_dir);
             if ((int)dlen > max_dir_disp) {
                 char short_dir[256];
-                snprintf(short_dir, sizeof(short_dir), "...%s", current_dir + dlen - (max_dir_disp - 3));
+                int tail = max_dir_disp - 3;
+                if (tail > (int)sizeof(short_dir) - 4) tail = (int)sizeof(short_dir) - 4;
+                snprintf(short_dir, sizeof(short_dir), "...%s", current_dir + dlen - (size_t)tail);
                 wattron(win, COLOR_PAIR(CP_LINK));
                 mvwaddnstr(win, 1, 7, short_dir, max_dir_disp);
                 wattroff(win, COLOR_PAIR(CP_LINK));
@@ -382,21 +381,21 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
                     } else {
                         snprintf(dname, sizeof(dname), "%s/", fi->name);
                     }
-                    mvwaddnstr(win, y, 4, dname, win_w - 18);
+                    if (win_w > 18) mvwaddnstr(win, y, 4, dname, win_w - 18);
                     wattroff(win, COLOR_PAIR(CP_HEADER2) | A_BOLD);
 
                     // Right column: <DIR>
-                    mvwaddstr(win, y, win_w - 8, "<DIR>");
+                    if (win_w > 9) mvwaddstr(win, y, win_w - 8, "<DIR>");
                 } else {
                     wattron(win, COLOR_PAIR(CP_DEFAULT));
-                    mvwaddnstr(win, y, 4, fi->name, win_w - 18);
+                    if (win_w > 18) mvwaddnstr(win, y, 4, fi->name, win_w - 18);
                     wattroff(win, COLOR_PAIR(CP_DEFAULT));
 
                     // Right column: File size
                     char sz_buf[32];
                     format_file_size(fi->size, sz_buf, sizeof(sz_buf));
                     int sz_len = (int)strlen(sz_buf);
-                    mvwaddstr(win, y, win_w - sz_len - 3, sz_buf);
+                    if (win_w - sz_len - 3 > 4) mvwaddstr(win, y, win_w - sz_len - 3, sz_buf);
                 }
 
                 if (is_sel) {
@@ -430,14 +429,20 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
             // Input field box
             int box_start_x = 13;
             int box_width = win_w - 16;
-            wattron(win, COLOR_PAIR(CP_DEFAULT) | (is_input_focused ? A_REVERSE : 0));
-            for (int x = 0; x < box_width; ++x) mvwaddch(win, input_y, box_start_x + x, ' ');
-            mvwaddnstr(win, input_y, box_start_x, input_buf, box_width - 1);
-            wattroff(win, COLOR_PAIR(CP_DEFAULT) | (is_input_focused ? A_REVERSE : 0));
+            if (box_width > 1) {
+                wattron(win, COLOR_PAIR(CP_DEFAULT) | (is_input_focused ? A_REVERSE : 0));
+                for (int x = 0; x < box_width; ++x) mvwaddch(win, input_y, box_start_x + x, ' ');
+                mvwaddnstr(win, input_y, box_start_x, input_buf, box_width - 1);
+                wattroff(win, COLOR_PAIR(CP_DEFAULT) | (is_input_focused ? A_REVERSE : 0));
 
-            if (is_input_focused && !confirm_overwrite) {
-                curs_set(1);
-                wmove(win, input_y, box_start_x + (int)strlen(input_buf));
+                if (is_input_focused && !confirm_overwrite) {
+                    curs_set(1);
+                    int cx = box_start_x + (int)strlen(input_buf);
+                    if (cx >= box_start_x + box_width) cx = box_start_x + box_width - 1;
+                    wmove(win, input_y, cx);
+                } else {
+                    curs_set(0);
+                }
             } else {
                 curs_set(0);
             }
@@ -533,12 +538,17 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
             if (ch == '\n' || ch == '\r') {
                 if (input_buf[0] != '\0') {
                     char candidate[PATH_MAX * 2];
+                    int cand_n;
                     if (input_buf[0] == '/') {
-                        snprintf(candidate, sizeof(candidate), "%s", input_buf);
+                        cand_n = snprintf(candidate, sizeof(candidate), "%s", input_buf);
                     } else if (strcmp(current_dir, "/") == 0) {
-                        snprintf(candidate, sizeof(candidate), "/%s", input_buf);
+                        cand_n = snprintf(candidate, sizeof(candidate), "/%s", input_buf);
                     } else {
-                        snprintf(candidate, sizeof(candidate), "%s/%s", current_dir, input_buf);
+                        cand_n = snprintf(candidate, sizeof(candidate), "%s/%s", current_dir, input_buf);
+                    }
+                    if (cand_n < 0 || (size_t)cand_n >= max_len || (size_t)cand_n >= sizeof(pending_path)) {
+                        snprintf(warn_msg, sizeof(warn_msg), " WARNING: Path exceeds maximum length ");
+                        continue;
                     }
 
                     if (mode == FILE_DIALOG_SAVE_AS) {
@@ -625,8 +635,9 @@ bool ui_file_dialog(Editor *ed, FileDialogMode mode, char *out_path, size_t max_
             } else if (ch >= 32 && ch <= 126) {
                 // Quick search / jump to next entry starting with that char
                 char target = (char)tolower(ch);
+                size_t base = selected_idx >= 0 ? (size_t)selected_idx : 0;
                 for (size_t i = 1; i <= count; ++i) {
-                    size_t candidate = (selected_idx + i) % count;
+                    size_t candidate = (base + i) % count;
                     if (tolower((unsigned char)items[candidate].name[0]) == target) {
                         selected_idx = (int)candidate;
                         break;
