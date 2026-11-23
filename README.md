@@ -97,7 +97,7 @@ All application metadata, title, version, and build date are defined centrally i
 
 ```c
 #define MDE_APP_NAME        "mde"
-#define MDE_VERSION_STRING  "0.1.2"
+#define MDE_VERSION_STRING  "0.1.3"
 #define MDE_BUILD_DATE      __DATE__
 #define MDE_BUILD_TIME      __TIME__
 ```
@@ -372,41 +372,60 @@ md2epub -q -o release/handbook.epub handbook.md
 
 - A C11-compliant compiler (`gcc` or `clang`)
 - `make`
-- `ncursesw` development headers (`libncursesw5-dev` on Debian/Ubuntu, `ncurses-devel` on Fedora/RHEL, `ncurses` on Arch/macOS)
+- `ncursesw` development headers (`libncursesw5-dev` / `libncurses-dev` on Debian/Ubuntu, `ncurses-devel` on Fedora/RHEL, `ncurses` on Arch/macOS)
 - `libzip` development headers (`libzip-dev` on Debian/Ubuntu, `libzip-devel` on Fedora/RHEL, `libzip` on Arch/macOS)
+
+You can install all required build dependencies automatically with:
+
+```bash
+./scripts/install_prerequisites.sh
+```
 
 ### Compile
 
 ```bash
+./configure
 make
 ```
 
-The compiled binary will be placed at `bin/mde`.
+The compiled binaries will be placed at `bin/mde` and `bin/md2epub`.
+
+Common `./configure` options:
+- `--prefix=/usr`: Install into `/usr` instead of `/usr/local`
+- `--enable-debug`: Build with `-g -O0 -DDEBUG`
+- `--enable-sanitize`: Enable AddressSanitizer & UndefinedBehaviorSanitizer
+- `--disable-werror`: Do not treat compiler warnings as errors
+- `--with-ncursesw=DIR` / `--with-libzip=DIR`: Custom library prefixes (e.g. Homebrew on macOS)
 
 ### Run Test Suite
 
 ```bash
-make test
+make check    # (or make test)
 ```
 
-### Build Debian Package (.deb)
+### Build Linux Packages (Debian, Ubuntu, RHEL, Fedora, Arch, Alpine, etc.)
+
+Native packaging manifests live in [`packaging/`](packaging/README.md):
+
+| Target / Command | Distribution / Output |
+|---|---|
+| `make deb` | Debian / Ubuntu / Mint binary `.deb` (auto-detects `libzip`/`ncursesw` runtime deps) |
+| `make deb-src` | Debian / Ubuntu source & binary package via `packaging/debian/` (`dpkg-buildpackage`) |
+| `make rpm` | RHEL / Fedora / Rocky / Alma / openSUSE `.rpm` via `packaging/rpm/mde.spec` (or `rpmbuild -ta`) |
+| `make arch` | Arch Linux / Manjaro `.pkg.tar.zst` via `packaging/arch/PKGBUILD` |
+| `make alpine` | Alpine Linux `.apk` via `packaging/alpine/APKBUILD` |
+| `make pkg-tarball` | Portable generic Linux tarball (`bin/mde-<ver>-linux-<arch>.tar.gz` + `.sha256` & `install.sh`) |
+| `make packages` | Build all packages supported by tools installed on the host |
+| `make check-packaging` | Verify packaging manifests, `.deb`/tarball archives, and distro configure profiles |
+
+Additional recipes are included in `packaging/` for **Void Linux** (`packaging/void/template`), **Gentoo** (`packaging/gentoo/`), **Nix / NixOS** (`packaging/nix/default.nix`), and **Snap** (`packaging/snap/snapcraft.yaml`). See [`packaging/README.md`](packaging/README.md) for container and native build commands.
+
+### Install & Uninstall
 
 ```bash
-make deb
-```
-
-Builds an installable Debian package at `bin/mde_<version>_<arch>.deb` (includes binary, man page `man1/mde.1.gz`, documentation, and control file).
-
-To install the built package:
-
-```bash
-sudo dpkg -i bin/mde_0.1.2_amd64.deb
-```
-
-### Install Directly
-
-```bash
-sudo make install
+sudo make install          # Install binaries, man pages, and docs
+sudo make install-strip    # Install stripped binaries
+sudo make uninstall        # Remove installed files
 ```
 
 ---
@@ -439,7 +458,9 @@ md2epub --help
 
 ```
 mde/
-├── Makefile            # Build system (all, test, clean, install, deb)
+├── configure           # GNU-style configuration script (generates Makefile)
+├── Makefile.in         # Build template (all, check, install, packaging targets)
+├── packaging/          # Multi-distro Linux packaging (Debian/Ubuntu, RPM, Arch, Alpine, Void, Gentoo, Nix, Snap)
 ├── README.md           # Documentation
 ├── examples/           # Sample Markdown documents demonstrating features
 │   ├── demo.md         # Comprehensive interactive showcase document

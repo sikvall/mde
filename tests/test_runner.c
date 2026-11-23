@@ -15,6 +15,10 @@
 #include <sys/stat.h>
 #include <limits.h>
 
+#ifndef MDE_SRCDIR
+#define MDE_SRCDIR "."
+#endif
+
 #include "../src/version.h"
 #include "../src/utf8.h"
 #include "../src/buffer.h"
@@ -46,9 +50,9 @@ static void test_version(void) {
     printf("--- Testing Version & Build Metadata ---\n");
     TEST_ASSERT(strcmp(MDE_APP_NAME, "mde") == 0, "App name is 'mde'");
     TEST_ASSERT(strcmp(MDE_APP_TITLE, "Markdown Editor") == 0, "App title is 'Markdown Editor'");
-    TEST_ASSERT(strcmp(MDE_VERSION_STRING, "0.1.2") == 0, "Version string is '0.1.2'");
-    TEST_ASSERT(MDE_VERSION_MAJOR == 0 && MDE_VERSION_MINOR == 1 && MDE_VERSION_PATCH == 2,
-                "Numeric version macros match 0.1.2");
+    TEST_ASSERT(strcmp(MDE_VERSION_STRING, "0.1.3") == 0, "Version string is '0.1.3'");
+    TEST_ASSERT(MDE_VERSION_MAJOR == 0 && MDE_VERSION_MINOR == 1 && MDE_VERSION_PATCH == 3,
+                "Numeric version macros match 0.1.3");
     TEST_ASSERT(strlen(MDE_BUILD_DATE) > 0, "Build date is non-empty");
     TEST_ASSERT(strlen(MDE_BUILD_TIME) > 0, "Build time is non-empty");
     TEST_ASSERT(strcmp(MDE_AUTHOR, "Täpp Anders Sikvall") == 0, "Author is 'Täpp Anders Sikvall'");
@@ -994,7 +998,7 @@ static void test_export_subsystem(void) {
     const char *multi_epub = "/tmp/test_no_pandoc_multi.epub";
     Buffer root_test;
     buffer_init(&root_test);
-    buffer_load(&root_test, "examples/demo.md");
+    buffer_load(&root_test, MDE_SRCDIR "/examples/demo.md");
     ok = export_document_ex(&root_test, EXPORT_EPUB, multi_epub, EXPORT_ENGINE_AUTO,
                             true, &multi_linked, used_no_pan, sizeof(used_no_pan), err_no_pan, sizeof(err_no_pan));
     TEST_ASSERT(ok, "Multi-file EPUB export succeeds without pandoc on demo.md");
@@ -2503,6 +2507,107 @@ static void test_epub_system(void) {
     editor_free(&ed_meta);
 }
 
+/** @brief Verify buffer bounds safety across front matter parsing, formatting, smart enter, and exports. */
+static void test_buffer_bounds_safety(void) {
+    printf("--- Testing Buffer Bounds & Overrun Fixes ---\n");
+
+    // 1. Long YAML front-matter key (> 63 bytes) before ':' with empty value (no over-read)
+    Buffer fm_buf;
+    buffer_init(&fm_buf);
+    uint64_t g = buffer_next_group(&fm_buf);
+    buffer_replace_line(&fm_buf, 0, "---", 3, g);
+    buffer_split_line(&fm_buf, 0, 3, g);
+    const char *long_key = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:";
+    buffer_insert_string(&fm_buf, 1, 0, long_key, strlen(long_key), g);
+    buffer_split_line(&fm_buf, 1, strlen(long_key), g);
+    buffer_insert_string(&fm_buf, 2, 0, "title: \"Safe\"", 13, g);
+    buffer_split_line(&fm_buf, 2, 13, g);
+    buffer_insert_string(&fm_buf, 3, 0, "---", 3, g);
+
+    EpubMetadata fm_meta;
+    memset(&fm_meta, 0, sizeof(fm_meta));
+    size_t body_start = 0;
+    bool has_fm = epub_parse_front_matter(&fm_buf, &fm_meta, &body_start);
+    TEST_ASSERT(has_fm, "epub_parse_front_matter parses block with >63 byte key safely");
+    TEST_ASSERT(strcmp(fm_meta.title, "Safe") == 0, "Title parsed after >63 byte key");
+    buffer_free(&fm_buf);
+
+    // 2. Long marker in editor_wrap_format (> 16 bytes -> > 32 bytes doubled)
+    Editor ed;
+    editor_init(&ed, NULL);
+    const char *long_marker = "======================";
+    editor_wrap_format(&ed, long_marker);
+    const char *wrapped = buffer_line(&ed.buffer, 0);
+    TEST_ASSERT(buffer_line_len(&ed.buffer, 0) == strlen(long_marker) * 2,
+                "editor_wrap_format inserts full doubled long marker without over-read");
+    TEST_ASSERT(strncmp(wrapped, long_marker, strlen(long_marker)) == 0,
+                "editor_wrap_format preserves opening long marker");
+    TEST_ASSERT(strcmp(wrapped + strlen(long_marker), long_marker) == 0,
+                "editor_wrap_format preserves closing long marker");
+
+    // 3. Smart enter inside leading indentation & deep indentation (> 128 spaces)
+    uint64_t eg = buffer_next_group(&ed.buffer);
+    char deep_line[220];
+    memset(deep_line, ' ', 160);
+    memcpy(deep_line + 160, "deep", 5);
+    buffer_replace_line(&ed.buffer, 0, deep_line, strlen(deep_line), eg);
+    ed.cursor_row = 0;
+    ed.cursor_col = 4; // inside indentation
+    editor_smart_enter(&ed);
+    TEST_ASSERT(buffer_line_count(&ed.buffer) == 2, "Smart enter inside indent splits line");
+    TEST_ASSERT(buffer_line_len(&ed.buffer, 0) == 4, "Original line truncated to cursor_col");
+    TEST_ASSERT(strlen(buffer_line(&ed.buffer, 1)) == buffer_line_len(&ed.buffer, 1),
+                "New line after smart enter inside indent contains no embedded NUL bytes");
+
+    // Test > 128 space indent at end of indentation
+    buffer_replace_line(&ed.buffer, 0, deep_line, strlen(deep_line), eg);
+    ed.cursor_row = 0;
+    ed.cursor_col = 160;
+    editor_smart_enter(&ed);
+    TEST_ASSERT(buffer_line_len(&ed.buffer, 1) == 164, "Deep >128 space indent preserved on Enter");
+    editor_free(&ed);
+
+    // 4. Indented footnote definition across built-in HTML/XML/LaTeX/EPUB exporters
+    Buffer fn_buf;
+    buffer_init(&fn_buf);
+    uint64_t fg = buffer_next_group(&fn_buf);
+    buffer_replace_line(&fn_buf, 0, "Text[^ind1]", 11, fg);
+    buffer_split_line(&fn_buf, 0, 11, fg);
+    buffer_insert_string(&fn_buf, 1, 0, "  [^ind1]: Indented footnote body", 33, fg);
+
+    const char *html_out = "/tmp/test_bounds_fn.html";
+    const char *xml_out = "/tmp/test_bounds_fn.xml";
+    const char *tex_out = "/tmp/test_bounds_fn.tex";
+    const char *epub_out = "/tmp/test_bounds_fn.epub";
+    char err_msg[256] = {0};
+
+    TEST_ASSERT(export_document_ex(&fn_buf, EXPORT_HTML, html_out, EXPORT_ENGINE_BUILTIN, false, NULL, NULL, 0, err_msg, sizeof(err_msg)),
+                "Built-in HTML export succeeds on indented footnote");
+    TEST_ASSERT(export_document_ex(&fn_buf, EXPORT_XML, xml_out, EXPORT_ENGINE_BUILTIN, false, NULL, NULL, 0, err_msg, sizeof(err_msg)),
+                "Built-in XML export succeeds on indented footnote");
+    TEST_ASSERT(export_document_ex(&fn_buf, EXPORT_LATEX, tex_out, EXPORT_ENGINE_BUILTIN, false, NULL, NULL, 0, err_msg, sizeof(err_msg)),
+                "Built-in LaTeX export succeeds on indented footnote");
+    TEST_ASSERT(epub_convert_buffer(&fn_buf, epub_out, NULL, err_msg, sizeof(err_msg)),
+                "Built-in EPUB export succeeds on indented footnote");
+
+    FILE *hf = fopen(html_out, "rb");
+    TEST_ASSERT(hf != NULL, "Indented footnote HTML file opens");
+    if (hf) {
+        char hbuf[2048] = {0};
+        size_t nr = fread(hbuf, 1, sizeof(hbuf) - 1, hf);
+        hbuf[nr] = '\0';
+        fclose(hf);
+        TEST_ASSERT(strstr(hbuf, "id=\"fn-ind1\"") != NULL,
+                    "Indented footnote extracts clean 'ind1' ID without spaces");
+    }
+
+    remove(html_out);
+    remove(xml_out);
+    remove(tex_out);
+    remove(epub_out);
+    buffer_free(&fn_buf);
+}
+
 /** @brief Run all unit test suites and return 0 on 100% pass, 1 on any failure. */
 int main(void) {
     setlocale(LC_ALL, "");
@@ -2538,6 +2643,7 @@ int main(void) {
     test_doc_navigation_and_preview_sync();
     test_footnote_navigation_and_config_persistence();
     test_epub_system();
+    test_buffer_bounds_safety();
 
     printf("==========================================\n");
     printf("Test Results: %d / %d tests passed (%.1f%%)\n",

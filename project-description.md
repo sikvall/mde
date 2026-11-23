@@ -4,8 +4,8 @@
 > **mde**. It details what the project is, its architectural design, build system, current state,
 > recent upgrades, git history, and the remaining roadmap items.
 >
-> Snapshot basis: **v0.1.2** (2026-11-22), pure C11 codebase compiling warning-free with `gcc`, `ncursesw`, and `libzip`.
-> Test runner passes **576 / 576 tests (100.0%)**.
+> Snapshot basis: **v0.1.3** (2026-11-24), pure C11 codebase compiling warning-free with `gcc`, `ncursesw`, and `libzip`.
+> Test runner passes **616 / 616 tests (100.0%)**.
 
 ---
 
@@ -18,7 +18,7 @@ navigating, and previewing Markdown (`.md`) documents. It is written in **pure C
 - **Author / owner:** Täpp Anders Sikvall.
 - **Remote:** `git@github.com:sikvall/mde.git` (branch `main`).
 - **License:** MIT.
-- **Version:** `0.1.2` (central source of truth: `src/version.h`).
+- **Version:** `0.1.3` (central source of truth: `src/version.h`).
 - **Platform:** Linux/Unix terminals (including WSL).
 
 ### Core Product Tenets
@@ -34,11 +34,16 @@ navigating, and previewing Markdown (`.md`) documents. It is written in **pure C
 ## 2. Quick Reference for Developers
 
 ```bash
-make                 # Build binary -> bin/mde (objects in obj/ with auto .d header deps)
-make test            # Build & execute test runner -> bin/test_runner (395 passing assertions)
-make clean           # Remove obj/ and bin/
-sudo make install    # Install binary and man page to $(PREFIX) (default: /usr/local)
-make deb             # Package Debian .deb package -> bin/mde_<version>_<arch>.deb
+./configure          # Detect C11 compiler, ncursesw, libzip, and generate Makefile
+make                 # Build binaries -> bin/mde, bin/md2epub (objects in obj/ with .d deps)
+make check           # Build & execute test runner -> bin/test_runner (also 'make test')
+make clean           # Remove obj/ and bin/ (use 'make distclean' to also remove Makefile)
+sudo make install    # Install binaries, man pages, and docs to $(prefix) (default: /usr/local)
+sudo make uninstall  # Remove installed binaries, man pages, and docs
+make dist            # Create distributable source tarball -> mde-<version>.tar.gz
+make deb             # Package Debian/Ubuntu .deb package -> bin/mde_<version>_<arch>.deb
+make packages        # Build all Linux packages supported by installed host tools
+make check-packaging # Validate packaging manifests, archives, and distro configure profiles
 
 # Running mde
 ./bin/mde examples/demo.md    # Open file with default responsive soft line wrapping
@@ -48,9 +53,10 @@ make deb             # Package Debian .deb package -> bin/mde_<version>_<arch>.d
 ./bin/mde -h | -v             # Usage instructions / version info
 ```
 
-- **Compiler & Flags:** `CFLAGS ?= -std=c11 -MMD -MP -Wall -Wextra -pedantic -O2 -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700 -D_XOPEN_SOURCE_EXTENDED=1`, `LDFLAGS ?= -lncursesw -lzip`.
-- **Automatic Header Dependencies:** The build system uses `-MMD -MP` and `-include $(OBJS:.o=.d)` to automatically track `.h` changes across builds.
-- **Unified Installation:** `PREFIX ?= /usr/local` applies to `make install` (`bin/mde`, `bin/md2epub` in `$(DESTDIR)$(PREFIX)/bin` and `man/mde.1`, `man/md2epub.1` in `$(DESTDIR)$(PREFIX)/share/man/man1`).
+- **Build System:** GNU-style `./configure` + `Makefile.in` generating `Makefile`, `config.status`, and `config.log` (supporting out-of-tree VPATH builds, `--prefix`, `--enable-debug`, `--enable-sanitize`, `--disable-werror`, `--with-ncursesw`, `--with-libzip`, `DESTDIR`, `install-strip`, `uninstall`, and `dist`).
+- **Compiler & Flags:** C11 (`-std=c11 -MMD -MP`) with probed strict warning flags + `-Werror`, `-O2`, `-D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700 -D_XOPEN_SOURCE_EXTENDED=1`, and `-lncursesw -lzip`.
+- **Automatic Header Dependencies:** The build system uses `-MMD -MP` and `-include $(DEPS)` to automatically track `.h` changes across builds.
+- **Unified Installation:** `prefix` (default `/usr/local`; overridable via `./configure --prefix=...` or `make install DESTDIR=...`) applies to `make install` (`bin/mde`, `bin/md2epub` in `$(DESTDIR)$(bindir)`, `man/mde.1`, `man/md2epub.1` in `$(DESTDIR)$(man1dir)`, and docs in `$(DESTDIR)$(docdir)`).
 
 ---
 
@@ -58,9 +64,11 @@ make deb             # Package Debian .deb package -> bin/mde_<version>_<arch>.d
 
 ```
 mde/
-├── Makefile               # Build, test, install, and deb packaging
+├── configure              # GNU-style POSIX configure script
+├── Makefile.in            # Build, check, install, uninstall, dist, and packaging template
+├── packaging/             # Native Linux packaging (debian/, rpm/, arch/, alpine/, void/, gentoo/, nix/, snap/)
 ├── README.md              # User documentation and keybindings guide
-├── CHANGELOG.md           # Keep a Changelog document tracking releases (0.1.0, 0.1.1, 0.1.2)
+├── CHANGELOG.md           # Plain Markdown changelog covering releases (0.1.0 to 0.1.3)
 ├── LICENSE.md             # Software license
 ├── examples/              # Interactive sample documents demonstrating mde features
 │   ├── demo.md            # Comprehensive interactive showcase document
@@ -70,7 +78,10 @@ mde/
 │   ├── mde.1              # UNIX manual page for editor
 │   └── md2epub.1          # UNIX manual page for EPUB converter
 ├── scripts/
+│   ├── build_packages.sh  # Multi-distro Linux package builder (deb, rpm, arch, alpine, tarball)
+│   ├── check_packaging.sh # Offline validation for packaging manifests and artifacts
 │   ├── generate_keybindings.py # Single-source keybinding table generator
+│   ├── install_prerequisites.sh # Cross-platform build prerequisite installer
 │   └── verify_no_pandoc.sh     # Comprehensive pandoc-free export validation script
 ├── src/
 │   ├── version.h          # Centralized version macros and app metadata
