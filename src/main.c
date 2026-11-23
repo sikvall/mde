@@ -69,7 +69,7 @@ static void print_usage(const char *prog) {
     printf("  Ctrl+L           Refresh screen\n");
     printf("  F2 / Alt+P       Cycle View Mode (Split / In-place / Preview)\n");
     printf("  F4 / Alt+L       Shift line wrap mode (Soft / Hard / Off)\n");
-    printf("  F5 / Alt+X       Open Export Menu (HTML, XML, EPUB, LaTeX; includes linked files)\n");
+    printf("  F5 / Alt+X       Open Export Menu (HTML, XML, EPUB, LaTeX, Man; includes linked files)\n");
     printf("  F6 / Alt+H       Insert hypertext file link [Label](file.md)\n");
     printf("  F7 / Alt+O / ^]  Follow file or #heading link under cursor\n");
     printf("  F8 / Alt+-       Navigate back to previous linked file\n");

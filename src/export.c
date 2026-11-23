@@ -1,6 +1,6 @@
 /**
  * @file export.c
- * @brief Implementation of Markdown export to HTML, XML, EPUB, and LaTeX,
+ * @brief Implementation of Markdown export to HTML, XML, EPUB, LaTeX, and Man,
  *        with recursive hypertext linked-file inclusion.
  */
 
@@ -38,6 +38,7 @@ const char *export_format_name(ExportFormat fmt) {
         case EXPORT_XML:   return "XML";
         case EXPORT_EPUB:  return "EPUB";
         case EXPORT_LATEX: return "LaTeX";
+        case EXPORT_MAN:   return "Man";
         default:           return "Unknown";
     }
 }
@@ -49,6 +50,7 @@ const char *export_format_ext(ExportFormat fmt) {
         case EXPORT_XML:   return ".xml";
         case EXPORT_EPUB:  return ".epub";
         case EXPORT_LATEX: return ".tex";
+        case EXPORT_MAN:   return ".1";
         default:           return ".out";
     }
 }
@@ -71,7 +73,7 @@ void export_default_path(const char *src_path, ExportFormat fmt, char *out_path,
         (strcasecmp(dot, ".md") == 0 || strcasecmp(dot, ".markdown") == 0 ||
          strcasecmp(dot, ".txt") == 0 || strcasecmp(dot, ".html") == 0 ||
          strcasecmp(dot, ".xml") == 0 || strcasecmp(dot, ".epub") == 0 ||
-         strcasecmp(dot, ".tex") == 0)) {
+         strcasecmp(dot, ".tex") == 0 || strcasecmp(dot, ".1") == 0)) {
         size_t stem_len = (size_t)(dot - src_path);
         snprintf(out_path, max_len, "%.*s%s", (int)stem_len, src_path, ext);
     } else {
@@ -684,6 +686,7 @@ static bool export_via_pandoc(const ExportDocList *docs, ExportFormat fmt, const
         case EXPORT_XML:   pandoc_to = "docbook5"; standalone = true;  break;
         case EXPORT_EPUB:  pandoc_to = "epub3";    standalone = false; break;
         case EXPORT_LATEX: pandoc_to = "latex";    standalone = true;  break;
+        case EXPORT_MAN:   pandoc_to = "man";      standalone = true;  break;
         default: break;
     }
 
@@ -943,6 +946,7 @@ bool export_document_ex(const Buffer *buf, ExportFormat fmt, const char *out_pat
             case EXPORT_XML:
             case EXPORT_EPUB:
             case EXPORT_LATEX:
+            case EXPORT_MAN:
                 use_pandoc = false;
                 break;
             default:
@@ -972,6 +976,7 @@ bool export_document_ex(const Buffer *buf, ExportFormat fmt, const char *out_pat
             case EXPORT_XML:   ok = export_builtin_xml(&docs, out_path, err_msg, err_cap); break;
             case EXPORT_EPUB:  ok = export_builtin_epub(&docs, out_path, NULL, err_msg, err_cap); break;
             case EXPORT_LATEX: ok = export_builtin_latex(&docs, out_path, err_msg, err_cap); break;
+            case EXPORT_MAN:   ok = export_builtin_man(&docs, out_path, err_msg, err_cap); break;
             default:
                 set_str(err_msg, err_cap, "Unsupported export format");
                 ok = false;

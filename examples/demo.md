@@ -150,7 +150,7 @@ int main(void) {
 | **`F2` / `Alt+P`** | Cycle View Modes (**Split** → **In-Place** → **Preview**) |
 | **`F3` / `Alt+W`** | Repeat search forward (`Alt+Q` repeats backward) |
 | **`F4` / `Alt+L`** | Set automatic line break column width (`20`–`255` or `off`) |
-| **`F5` / `Alt+X`** | Open Export Menu (**HTML5**, **XML**, **LaTeX**, **EPUB**) |
+| **`F5` / `Alt+X`** | Open Export Menu (**HTML5**, **XML**, **EPUB**, **LaTeX**, **Man**) |
 | **`F6` / `Alt+H`** | Insert relative hypertext link via modal file picker |
 | **`F7` / `Alt+O`** | Follow link or `#heading` anchor under cursor |
 | **`F8` / `Alt+-`** | Navigate back to previously visited linked file |

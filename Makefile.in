@@ -65,7 +65,8 @@ TEST_TARGET     := $(BIN_DIR)/test_runner
 MDE_OBJS        := $(filter-out $(OBJ_DIR)/md2epub_main.o,$(OBJS))
 MD2EPUB_OBJS    := $(OBJ_DIR)/md2epub_main.o $(OBJ_DIR)/export_epub.o $(OBJ_DIR)/export.o \
                    $(OBJ_DIR)/export_html.o $(OBJ_DIR)/export_xml.o $(OBJ_DIR)/export_latex.o \
-                   $(OBJ_DIR)/buffer.o $(OBJ_DIR)/markdown.o $(OBJ_DIR)/utf8.o $(OBJ_DIR)/undo.o
+                   $(OBJ_DIR)/export_man.o $(OBJ_DIR)/buffer.o $(OBJ_DIR)/markdown.o \
+                   $(OBJ_DIR)/utf8.o $(OBJ_DIR)/undo.o
 LIB_OBJS        := $(filter-out $(OBJ_DIR)/main.o $(OBJ_DIR)/md2epub_main.o,$(OBJS))
 
 DEPS            := $(OBJS:.o=.d) $(TEST_TARGET).d

@@ -21,12 +21,13 @@ This file demonstrates **multi-file authoring**, **cross-document link navigatio
 
 ## 2. Multi-File Export Bundling (`F5` / `Alt+X`)
 
-When exporting from `demo.md` to **HTML5**, **EPUB**, **LaTeX**, or **XML**:
-1. Press **`F5`** or **`Alt+X`** to open the Export Format Dialog.
-2. Press **`L`** inside the dialog to toggle linked-file bundling.
-3. When enabled, `mde` recursively traverses all local links (`advanced.md`, etc.) and bundles them into a single coherent book or chaptered export!
+When exporting from `demo.md` to **HTML5**, **XML**, **EPUB**, **LaTeX**, or **Man (`.1`)**:
+1. Press **`F5`** or **`Alt+X`** to open the Export Format Dialog (`1`–`5` selects format; `Tab` customizes the path).
+2. Press **`L`** inside the dialog to toggle linked-file bundling (`M` edits document metadata, `E` toggles Built-in vs. Pandoc when installed).
+3. When linked-file bundling is enabled, `mde` recursively traverses all local links (`advanced.md`, etc.) and bundles them into a coherent export:
    - **HTML5 & EPUB**: Converts local `.md` links into working internal chapter anchor links.
    - **LaTeX**: Combines all linked documents into a single `.tex` document with `\hypertarget` and `\hyperlink`.
+   - **Man (`.1`)**: Combines all linked documents into a unified UNIX/Linux `man(7)` roff manual with `.SH` sections and cross-references (preview with `man -l output.1`).
    - **XML**: Structures all linked files into `<linked-document>` sections.
 
 ---

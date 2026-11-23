@@ -1,8 +1,8 @@
 /**
  * @file export.h
- * @brief Document export subsystem for HTML, XML, EPUB, and LaTeX.
+ * @brief Document export subsystem for HTML, XML, EPUB, LaTeX, and UNIX man pages.
  *
- * Uses native built-in C11 converters for HTML, XML, EPUB, and LaTeX,
+ * Uses native built-in C11 converters for HTML, XML, EPUB, LaTeX, and man pages,
  * with optional pandoc delegation available when explicitly selected.
  */
 
@@ -23,8 +23,9 @@ extern "C" {
 typedef enum {
     EXPORT_HTML = 0,       /**< HTML5 web document (.html) */
     EXPORT_XML,            /**< Structured XML / DocBook 5 (.xml) */
-    EXPORT_EPUB,           /**< EPUB 3 e-book (.epub, via pandoc) */
+    EXPORT_EPUB,           /**< EPUB 3 e-book (.epub) */
     EXPORT_LATEX,          /**< LaTeX document (.tex) */
+    EXPORT_MAN,            /**< UNIX/Linux manual page (.1) */
     EXPORT_FORMAT_COUNT    /**< Sentinel count of export formats */
 } ExportFormat;
 
@@ -46,14 +47,14 @@ bool export_has_pandoc(void);
 /**
  * @brief Get human-readable display name for an export format.
  * @param fmt Export format enum value.
- * @return Constant string such as "HTML", "XML", "EPUB", "LaTeX".
+ * @return Constant string such as "HTML", "XML", "EPUB", "LaTeX", "Man".
  */
 const char *export_format_name(ExportFormat fmt);
 
 /**
  * @brief Get standard file extension (including leading dot) for an export format.
  * @param fmt Export format enum value.
- * @return Constant string such as ".html", ".xml", ".epub", ".tex".
+ * @return Constant string such as ".html", ".xml", ".epub", ".tex", ".1".
  */
 const char *export_format_ext(ExportFormat fmt);
 

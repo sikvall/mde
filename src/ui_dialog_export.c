@@ -1,6 +1,6 @@
 /**
  * @file ui_dialog_export.c
- * @brief Interactive export modal menu for HTML, XML, EPUB, and LaTeX export.
+ * @brief Interactive export modal menu for HTML, XML, EPUB, LaTeX, and Man export.
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -16,15 +16,15 @@
 
 /** @brief Compute centered geometry for the Export Menu modal dialog. */
 static void calc_export_win_geom(int rows, int cols, int *win_h, int *win_w, int *win_y, int *win_x) {
-    int h = 16;
-    int w = 72;
+    int h = 17;
+    int w = 74;
     if (w > cols - 4) w = cols - 4;
     if (w < 46) w = 46;
     if (w > cols) w = cols;
     if (w < 16) w = cols > 0 ? cols : 16;
 
     if (h > rows - 2) h = rows - 2;
-    if (h < 14) h = 14;
+    if (h < 15) h = 15;
     if (h > rows) h = rows;
     if (h < 8) h = rows > 0 ? rows : 8;
 
@@ -39,7 +39,7 @@ static void calc_export_win_geom(int rows, int cols, int *win_h, int *win_w, int
     *win_x = x;
 }
 
-/** @brief Display the interactive Export Menu modal for HTML, XML, EPUB, and LaTeX export. */
+/** @brief Display the interactive Export Menu modal for HTML, XML, EPUB, LaTeX, and Man export. */
 bool ui_export_menu(Editor *ed) {
     if (!ed) return false;
 
@@ -72,7 +72,8 @@ bool ui_export_menu(Editor *ed) {
         { EXPORT_HTML,  "1. HTML  (.html)", "Web page (HTML5)" },
         { EXPORT_XML,   "2. XML   (.xml) ", "Structured XML / DocBook 5" },
         { EXPORT_EPUB,  "3. EPUB  (.epub)", "E-book (EPUB 3)" },
-        { EXPORT_LATEX, "4. LaTeX (.tex) ", "Single-doc LaTeX source" }
+        { EXPORT_LATEX, "4. LaTeX (.tex) ", "Single-doc LaTeX source" },
+        { EXPORT_MAN,   "5. Man   (.1)   ", "UNIX/Linux reference manual" }
     };
 
     bool exported = false;
@@ -229,8 +230,8 @@ bool ui_export_menu(Editor *ed) {
                 wattroff(win, COLOR_PAIR(CP_STATUS_BAR_DIRTY) | A_BOLD | A_REVERSE);
             } else {
                 const char *hints = has_pandoc
-                    ? " [Enter] Export  [1-4] Format  [Tab] Path  [L] Links  [M] Meta  [E] Engine  [Esc] Cancel "
-                    : " [Enter] Export  [1-4] Format  [Tab] Path  [L] Links  [M] Meta  [Esc/^C] Cancel ";
+                    ? " [Enter] Export  [1-5] Format  [Tab] Path  [L] Links  [M] Meta  [E] Engine  [Esc] Cancel "
+                    : " [Enter] Export  [1-5] Format  [Tab] Path  [L] Links  [M] Meta  [Esc/^C] Cancel ";
                 wattron(win, COLOR_PAIR(CP_MARKER) | A_DIM);
                 mvwaddnstr(win, win_h - 1, 2, hints, win_w - 4);
                 wattroff(win, COLOR_PAIR(CP_MARKER) | A_DIM);
@@ -352,7 +353,7 @@ bool ui_export_menu(Editor *ed) {
                     : (ExportFormat)(selected_fmt - 1);
             } else if (ch == KEY_DOWN || ch == 'j' || ch == 'J') {
                 selected_fmt = (ExportFormat)((selected_fmt + 1) % EXPORT_FORMAT_COUNT);
-            } else if (ch >= '1' && ch <= '4') {
+            } else if (ch >= '1' && ch <= '5') {
                 selected_fmt = (ExportFormat)(ch - '1');
             } else if ((ch == 'e' || ch == 'E') && has_pandoc) {
                 engine = (engine == EXPORT_ENGINE_PANDOC) ? EXPORT_ENGINE_AUTO : EXPORT_ENGINE_PANDOC;

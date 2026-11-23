@@ -10,7 +10,7 @@ KEYBINDINGS = [
     ("Ctrl+S", "Save current file directly to disk"),
     ("Ctrl+O", "Write Out (Save As file dialogue)"),
     ("Ctrl+R", "Read / Open file dialogue to browse and open a file"),
-    ("F5 / Alt+X", "Open Export Menu (HTML, XML, EPUB, LaTeX)"),
+    ("F5 / Alt+X", "Open Export Menu (HTML, XML, EPUB, LaTeX, Man)"),
     ("Alt+I", "Document Metadata editor (Title, Author, Cover, CSS, etc.)"),
     ("F6 / Alt+H", "Insert hypertext file link [Label](file.md)"),
     ("F7 / Alt+O", "Follow Markdown link or jump between footnote & definition"),

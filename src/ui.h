@@ -185,7 +185,7 @@ void ui_show_help(Editor *ed);
 
 /**
  * @brief Display an interactive Export Menu modal for exporting Markdown to
- *        HTML, XML, EPUB, or LaTeX (using pandoc when appropriate).
+ *        HTML, XML, EPUB, LaTeX, or Man (using pandoc when appropriate).
  *
  * @param ed Pointer to the Editor instance.
  * @return true if a document was exported, false if cancelled.

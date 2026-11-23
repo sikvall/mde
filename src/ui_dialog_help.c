@@ -27,7 +27,7 @@ static const HelpEntry s_editor_help[] = {
     { HELP_LINE_ITEM, "Ctrl+S", "Save current document to disk" },
     { HELP_LINE_ITEM, "Ctrl+O", "Write Out (Save As file dialogue)" },
     { HELP_LINE_ITEM, "Ctrl+R", "Read / Open file dialogue to browse & open" },
-    { HELP_LINE_ITEM, "F5 / Alt+X", "Open Export Menu (HTML, XML, EPUB, LaTeX)" },
+    { HELP_LINE_ITEM, "F5 / Alt+X", "Open Export Menu (HTML, XML, EPUB, LaTeX, Man)" },
     { HELP_LINE_ITEM, "Ctrl+X", "Exit editor (prompts if unsaved changes)" },
     { HELP_LINE_ITEM, "Alt+D", "Document & selection statistics popover" },
     { HELP_LINE_ITEM, "Ctrl+G / F1", "Open / close this Help & Reference overlay" },
@@ -37,7 +37,7 @@ static const HelpEntry s_editor_help[] = {
     { HELP_LINE_ITEM, "F7 / Alt+O", "Follow link or jump between footnote & definition" },
     { HELP_LINE_ITEM, "F8 / Alt+-", "Navigate back in link & footnote history" },
     { HELP_LINE_ITEM, "Alt+I", "Document Metadata editor (Title, Author, Cover, etc.)" },
-    { HELP_LINE_ITEM, "F5 / Alt+X", "Export (includes linked .md files in HTML/EPUB/LaTeX/XML)" },
+    { HELP_LINE_ITEM, "F5 / Alt+X", "Export (HTML/XML/EPUB/LaTeX/Man + linked .md files)" },
     { HELP_LINE_BLANK, NULL, NULL },
     { HELP_LINE_SECTION, "VIEW MODES & DISPLAY", NULL },
     { HELP_LINE_ITEM, "F2 / Alt+P", "Cycle view: Split -> In-Place -> Preview" },
@@ -119,7 +119,7 @@ static const HelpEntry s_markdown_help[] = {
     { HELP_LINE_NOTE, "Live Preview", "Press F2 or Alt+P to toggle live rendered preview" },
     { HELP_LINE_NOTE, "Smart Lists", "Enter on empty list item automatically exits list" },
     { HELP_LINE_NOTE, "Hypertext Links", "Link local .md files (F6/Alt+H) & follow (F7/Alt+O)" },
-    { HELP_LINE_NOTE, "Multi-File Export", "Export (F5) bundles linked .md files (1 .tex for LaTeX)" }
+    { HELP_LINE_NOTE, "Multi-File Export", "Export (F5): HTML/XML/EPUB/LaTeX/Man (+linked .md)" }
 };
 
 /**

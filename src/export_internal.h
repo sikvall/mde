@@ -67,6 +67,7 @@ bool export_doc_list_collect(ExportDocList *list, const Buffer *root, bool inclu
 bool export_builtin_html(const ExportDocList *docs, const char *out_path, char *err_msg, size_t err_cap);
 bool export_builtin_xml(const ExportDocList *docs, const char *out_path, char *err_msg, size_t err_cap);
 bool export_builtin_latex(const ExportDocList *docs, const char *out_path, char *err_msg, size_t err_cap);
+bool export_builtin_man(const ExportDocList *docs, const char *out_path, char *err_msg, size_t err_cap);
 bool export_builtin_epub(const ExportDocList *docs, const char *out_path, const EpubOptions *opts, char *err_msg, size_t err_cap);
 
 #ifdef __cplusplus
