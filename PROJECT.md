@@ -523,4 +523,4 @@ make sanitize        # Build and execute test suite under ASan and UBSan
    - `CHANGELOG.md`
    - `scripts/generate_keybindings.py`
    - `src/ui_dialog_help.c`
-   - `project-description.md`
+   - `PROJECT.md`
